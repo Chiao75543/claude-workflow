@@ -1,0 +1,92 @@
+# {Project} Codex Instructions
+
+These instructions align Codex with the spec-driven development pipeline:
+see `skills/workflow-orchestrator/PIPELINE.md` (or the published copy at
+your `claude-workflow` repo).
+
+Codex does NOT load Claude Code skills (`~/.claude/skills/`). Long-lived
+project rules MUST live in this file. Per-comment / per-task context goes
+into the dispatch-time prompt.
+
+## Core Behavior
+
+- Default response language: {language} unless the user asks otherwise.
+- Tech stack: {e.g. Android/Kotlin/Compose, Node/TypeScript, Python/Django}
+- Before substantial code changes, briefly analyze the request, describe the
+  intended approach, and consider impact before editing.
+- If the request is unclear or risky, clarify before changing code.
+
+## What To Check Before Changes
+
+- Dependency chain across architectural layers ({describe yours})
+- Module boundaries and unwanted coupling
+- DI / configuration impact
+- Security-sensitive flows (auth, secrets, encryption)
+- State management correctness
+- Performance hot paths
+- Cross-feature side-effects
+
+## Common Commands
+
+```bash
+# Substitute these with your project's commands
+{build_command}      # e.g. ./gradlew build, npm run build, cargo build
+{test_command}       # e.g. ./gradlew test, npm test, pytest
+{lint_command}       # e.g. ./gradlew lint, npm run lint, ruff check
+{install_command}    # e.g. ./gradlew installDebug, npm install
+```
+
+## Development Workflow (TDD)
+
+```
+Spec → TDD Test (RED) → Implement (GREEN) → Verify → Report → Commit
+```
+
+- Specs use OpenSpec format at `openspec/changes/{feature-name}/`
+- Write failing tests BEFORE production code
+- Commit footer includes `Spec:` + `Scenarios:` + `AI-assisted: yes`
+
+## Pre-commit Verification (Stage 7.5)
+
+Before any commit, you MUST:
+
+1. Run the relevant test suite — must be green.
+2. Cross-check implementation against `openspec/changes/{name}/specs/{name}/spec.md`
+   line-by-line — 0 CRITICAL findings required.
+3. Generate / update `openspec/changes/{name}/report.md` summarizing coverage.
+
+If any of the above fails, fix before committing. Do NOT bypass this gate.
+
+## PR Comment Fix Workflow (Stage 11)
+
+When fixing a PR review comment:
+
+- Address ONE comment per commit. No batching.
+- First produce a fix PLAN (files, changes, spec mapping, risks, confidence) —
+  do NOT edit yet. Wait for human approval.
+- After plan approval, apply the minimal change — no drive-by refactoring, no
+  unrelated cleanup.
+- If the comment contradicts the spec, surface the conflict; do not silently
+  override the reviewer.
+- Commit footer for PR-comment fixes:
+
+  ```
+  fix(review): {scope} address {file}:{line} - {summary}
+
+  Comment: {reviewer_name} on {file}:{line}
+  PR: #{PR_ID}
+  Spec: openspec/changes/{name}/specs/{name}/spec.md
+  Scenarios: {scenario-name}
+  AI-assisted: codex
+  ```
+
+- Do NOT push. Do NOT mark the discussion as resolved — the human verifies
+  the diff first, then the pipeline resolves it.
+
+## Branching And Worktree
+
+- New specs MUST work in a fresh worktree at `.worktrees/{name}` on
+  `feat/{branch_name}`. Do not work in the main repo for new specs.
+- Never push directly to protected branches ({integration_branch}, `main`).
+- Never use `git push --force` or `--force-with-lease` without explicit user
+  approval.
