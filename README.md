@@ -5,6 +5,7 @@ A portable, spec-driven development pipeline for AI-assisted coding. Designed fo
 This repo packages:
 
 - The **workflow-orchestrator skill** — a 12-stage pipeline from ticket to archived spec, with mandatory verification gates and per-comment user checkpoints in PR review fixes.
+- **Slash commands** — `/workflow` (full pipeline) plus 7 namespaced sub-commands (`/workflow:spec`, `/workflow:test`, `/workflow:implement`, `/workflow:verify`, `/workflow:fix`, `/workflow:review-mr`, `/workflow:report`) for invoking each stage individually.
 - **AGENTS.md templates** — global Codex preferences + project-level rules that Codex needs (Codex does not load Claude Code skills).
 - A **setup script** to install on a new machine.
 
@@ -25,6 +26,16 @@ claude-workflow/
 │           ├── file-mapping.md
 │           ├── reviewer-prompts.md
 │           └── codex-prompt-template.md
+├── commands/
+│   ├── workflow.md               # /workflow — full end-to-end pipeline
+│   └── workflow/                 # /workflow:* — per-stage entry points
+│       ├── spec.md               # /workflow:spec
+│       ├── test.md               # /workflow:test
+│       ├── implement.md          # /workflow:implement
+│       ├── verify.md             # /workflow:verify
+│       ├── fix.md                # /workflow:fix
+│       ├── review-mr.md          # /workflow:review-mr
+│       └── report.md             # /workflow:report
 ├── templates/
 │   ├── codex-AGENTS.md           # global ~/.codex/AGENTS.md
 │   └── project-AGENTS.md.template # per-repo AGENTS.md (customize)
@@ -60,8 +71,30 @@ git clone https://github.com/<you>/claude-workflow.git ~/code/claude-workflow
 
 - Check tool dependencies.
 - Symlink `skills/workflow-orchestrator/` into `~/.claude/skills/`.
+- Symlink `commands/workflow.md` and `commands/workflow/` into `~/.claude/commands/` (enables `/workflow` and `/workflow:*` slash commands).
 - Optionally copy `templates/codex-AGENTS.md` to `~/.codex/AGENTS.md`.
 - Print next steps for project-level setup.
+
+---
+
+## Slash commands
+
+Once installed, the following slash commands are available in Claude Code:
+
+| Command | Purpose | Underlying skill |
+| --- | --- | --- |
+| `/workflow <feature>` | Full end-to-end pipeline (default entry point) | `workflow-orchestrator` |
+| `/workflow:spec <feature>` | Author a new spec only (stops at spec checkpoint) | `workflow-orchestrator` (spec stages 3–5) |
+| `/workflow:test` | Write TDD tests from approved spec | `test-writer` |
+| `/workflow:implement` | Implement code from approved spec | `rd-implementer` |
+| `/workflow:verify` | Verify implementation against spec | `code-reviewer` |
+| `/workflow:fix` | Fix review / MR comments and reply resolved | `review-fixer` |
+| `/workflow:review-mr <MR>` | Review a GitLab MR with inline DiffNotes | `gitlab-mr-reviewer` |
+| `/workflow:report` | Generate spec-vs-impl coverage report (.md/.html) | `reporter` |
+
+Flags: `/workflow --fast` (1 combined reviewer per stage) / `/workflow --full` (2–3 parallel reviewers, default). To archive a completed change, use the existing `/opsx:archive`.
+
+The `workflow:` namespace prefix avoids collisions with other plugins or skills that may register similarly named commands (`/test`, `/implement`, `/verify`, etc.).
 
 ---
 
@@ -167,11 +200,11 @@ Edit the template at `templates/project-AGENTS.md.template`, swap commands at St
 
 ## Maintenance
 
-If you change the skill on one machine, push to this repo so other machines pick it up:
+If you change the skill or commands on one machine, push to this repo so other machines pick it up:
 
 ```bash
 cd ~/code/claude-workflow
-git add skills/workflow-orchestrator/
+git add skills/workflow-orchestrator/ commands/
 git commit -m "..."
 git push
 ```
