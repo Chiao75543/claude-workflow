@@ -15,6 +15,19 @@ set -euo pipefail
 
 CLAUDE_DIR="${CLAUDE_DIR:-$HOME/.claude}"
 REPO_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+BACKUP_DIR="$CLAUDE_DIR/backups/setup-$(date +%Y%m%d-%H%M%S)"
+BACKUP_USED=0
+
+backup_path() {
+  # Move an existing path into BACKUP_DIR (created lazily so empty runs leave no folder).
+  local src="$1"
+  if [ "$BACKUP_USED" -eq 0 ]; then
+    mkdir -p "$BACKUP_DIR"
+    BACKUP_USED=1
+  fi
+  mv "$src" "$BACKUP_DIR/$(basename "$src")"
+  echo "    Backed up: $src -> $BACKUP_DIR/$(basename "$src")"
+}
 
 echo "==> claude-workflow setup"
 echo "    Repo:   $REPO_DIR"
@@ -48,13 +61,13 @@ if [ -L "$SKILL_DST" ]; then
     echo "==> Symlink already correct: $SKILL_DST -> $SKILL_SRC"
   else
     echo "==> Existing symlink points elsewhere ($current_target). Backing up."
-    mv "$SKILL_DST" "$SKILL_DST.bak.$(date +%s)"
+    backup_path "$SKILL_DST"
     ln -s "$SKILL_SRC" "$SKILL_DST"
     echo "    Re-linked: $SKILL_DST -> $SKILL_SRC"
   fi
 elif [ -e "$SKILL_DST" ]; then
-  echo "==> Existing directory at $SKILL_DST — backing up to $SKILL_DST.bak.$(date +%s)"
-  mv "$SKILL_DST" "$SKILL_DST.bak.$(date +%s)"
+  echo "==> Existing directory at $SKILL_DST — backing up."
+  backup_path "$SKILL_DST"
   ln -s "$SKILL_SRC" "$SKILL_DST"
   echo "    Linked: $SKILL_DST -> $SKILL_SRC"
 else
@@ -78,10 +91,10 @@ link_command() {
       return
     fi
     echo "==> Existing symlink points elsewhere ($current_target). Backing up."
-    mv "$dst" "$dst.bak.$(date +%s)"
+    backup_path "$dst"
   elif [ -e "$dst" ]; then
-    echo "==> Existing path at $dst — backing up to $dst.bak.$(date +%s)"
-    mv "$dst" "$dst.bak.$(date +%s)"
+    echo "==> Existing path at $dst — backing up."
+    backup_path "$dst"
   fi
   ln -s "$src" "$dst"
   echo "    Linked: $dst -> $src"
@@ -107,6 +120,10 @@ fi
 echo ""
 
 echo "==> Done."
+if [ "$BACKUP_USED" -eq 1 ]; then
+  echo "    Pre-existing paths were backed up to: $BACKUP_DIR"
+  echo "    Delete that directory once you've confirmed the new symlinks work."
+fi
 echo ""
 echo "Next steps:"
 echo "  - For each project repo, copy and customize the template:"
