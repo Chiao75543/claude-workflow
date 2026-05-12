@@ -7,8 +7,9 @@
 # What it does:
 #   1. Checks required tools (claude, codex, git, node)
 #   2. Symlinks skills/workflow-orchestrator/ into ~/.claude/skills/
-#   3. Optionally copies templates/codex-AGENTS.md to ~/.codex/AGENTS.md
-#   4. Prints next steps for project-level AGENTS.md and memory
+#   3. Symlinks commands/workflow.md and commands/workflow/ into ~/.claude/commands/
+#   4. Optionally copies templates/codex-AGENTS.md to ~/.codex/AGENTS.md
+#   5. Prints next steps for project-level AGENTS.md and memory
 
 set -euo pipefail
 
@@ -62,7 +63,35 @@ else
 fi
 echo ""
 
-# 3. Optional: Copy global codex AGENTS.md
+# 3. Symlink slash commands (/workflow + /workflow:* sub-commands)
+mkdir -p "$CLAUDE_DIR/commands"
+
+link_command() {
+  # $1 = source path inside repo, $2 = destination path in ~/.claude/commands
+  local src="$1"
+  local dst="$2"
+  if [ -L "$dst" ]; then
+    local current_target
+    current_target="$(readlink "$dst")"
+    if [ "$current_target" = "$src" ]; then
+      echo "==> Symlink already correct: $dst -> $src"
+      return
+    fi
+    echo "==> Existing symlink points elsewhere ($current_target). Backing up."
+    mv "$dst" "$dst.bak.$(date +%s)"
+  elif [ -e "$dst" ]; then
+    echo "==> Existing path at $dst — backing up to $dst.bak.$(date +%s)"
+    mv "$dst" "$dst.bak.$(date +%s)"
+  fi
+  ln -s "$src" "$dst"
+  echo "    Linked: $dst -> $src"
+}
+
+link_command "$REPO_DIR/commands/workflow.md" "$CLAUDE_DIR/commands/workflow.md"
+link_command "$REPO_DIR/commands/workflow"    "$CLAUDE_DIR/commands/workflow"
+echo ""
+
+# 4. Optional: Copy global codex AGENTS.md
 if [ -t 0 ]; then
   read -r -p "==> Copy templates/codex-AGENTS.md to ~/.codex/AGENTS.md? [y/N] " yn
   if [[ "${yn:-}" =~ ^[Yy]$ ]]; then
