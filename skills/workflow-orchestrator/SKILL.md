@@ -20,6 +20,21 @@ End-to-end pipeline. The user sees two checkpoints: spec approval, and pre-push.
 - auto-detect at end of Stage 5: count Scenarios in `specs/{name}/spec.md`; if ≤ 3, propose fast mode to user, confirm before continuing
 - override: `--full` forces full mode regardless of scope
 
+**Project bindings:** This orchestrator is **stack-agnostic**. It delegates stack/framework specifics to **project-local skills** under `<repo>/.claude/skills/<name>/SKILL.md` (auto-loaded by Claude Code when that repo is the working tree). The orchestrator invokes these by convention name; **each project provides its own implementation**:
+
+| Convention name | Invoked at | Project provides |
+| --- | --- | --- |
+| `test-writer` | Stage 6 | How to author tests for this stack/framework |
+| `rd-implementer` | Stage 7 | How to implement code layer-by-layer for this stack |
+| `code-reviewer` | Stages 7.5, 11 | What "correct" means here (lint, layering, invariants) |
+| `reporter` | Stages 7.5, 11 | Report format + coverage rules |
+| `gitlab-mr-reviewer` | Stage 10.5 | Stack-specific MR review dimensions |
+| `review-fixer` | Stage 11 | How to resolve review findings per stack conventions |
+
+Project-level config lives in `<repo>/AGENTS.md`. When this document refers to `{TEST_COMMAND}`, `{BUILD_COMMAND}`, or `{LAYERING_CONVENTION}`, substitute from AGENTS.md.
+
+To bootstrap a project: run `scripts/init-project.sh <stack> <target-repo>` to scaffold the skill set from `templates/skills/<stack>/` (e.g. `android`). Hand-author new stacks by following any existing template.
+
 ## Process
 
 ```dot
@@ -72,11 +87,11 @@ digraph workflow {
 
 ### Stage 1: Identify
 
-1. Ask for **Linear ticket ID** (or skip — personal/optimization work)
+1. Ask for **ticket ID** (Linear, Jira, GitHub Issues, etc.; or skip — personal/optimization work)
 2. Ask for a one-line feature description (if not in trigger args)
 3. Derive `{name}` (kebab-case):
-   - With ticket: `aip-3756-proguard-keep`
-   - Without ticket: `pinning-error-message-cleanup`
+   - With ticket: `<ticket-id-lowercase>-<feature-slug>` (e.g. `aip-3756-fix-data-pinning`)
+   - Without ticket: `<feature-slug>` (e.g. `error-message-cleanup`)
 4. List existing capabilities (**check both already-accumulated and in-progress**):
    - Archived: `ls openspec/specs/`
    - In-progress (not yet archived): `ls openspec/changes/*/specs/` — these capabilities exist on other branches but will appear in main spec tree after their respective MR merges + `/opsx:archive`
@@ -177,9 +192,9 @@ First **classify the spec type** by inspecting the Scenarios in `openspec/change
 
 | Spec type | Scenario fingerprints | Stage 6 mode |
 |---|---|---|
-| **behavioural** | mentions `ViewModel`, `UseCase`, `Repository`, `StateFlow`, `UiState`, `WHEN user taps`, `WHEN API returns` | **6a Unit-test mode** |
+| **behavioural** | mentions runtime entities (state holders, controllers, data sources, etc.) or `WHEN <user action>` / `WHEN <external system returns>` | **6a Unit-test mode** |
 | **static-content** | `WHEN 檢視 <file>`, `THEN <file> NOT contains <pattern>`, `WHEN grep`, `WHEN find` | **6b Static-validation mode** |
-| **manual-smoke** | mentions `實機 smoke`, `apk`, `apkanalyzer`, `反編譯`, `jadx`, `installDevRelease` | **6c Manual-smoke mode** |
+| **manual-smoke** | mentions on-device or post-build artifact inspection (binary decompilation, install-and-verify, etc.) | **6c Manual-smoke mode** |
 
 A spec may be **mixed** — fall through modes for the matching subset of Scenarios.
 
@@ -187,11 +202,7 @@ A spec may be **mixed** — fall through modes for the matching subset of Scenar
 
 **Pre-RED**: tests cannot compile if production code doesn't exist. Two acceptable paths:
 
-A. **Stub-first** (recommended): write a minimal production stub returning `TODO()` so test compiles. Test then runs and fails (true RED). Stage 7 fills the stub.
-   ```kotlin
-   // app/src/main/java/.../ThrowableExt.kt
-   fun Throwable.toUserVisibleMessageRes(overrides: Map<KClass<out Throwable>, Int> = emptyMap()): Int = TODO()
-   ```
+A. **Stub-first** (recommended): write a minimal production stub at the target file (function/class/module declared, body throws "not implemented" or returns a placeholder) so tests compile. Tests then run and fail with the placeholder's runtime error (true RED). Stage 7 fills the stubs.
 
 B. **Compile-fail-as-RED**: skip stub, accept "compile error" as RED state. Document this explicitly to reviewers in the dispatch prompt. Less rigorous but faster.
 
@@ -200,16 +211,18 @@ Then dispatch **3 parallel reviewer agents** (or **1 combined** in fast mode):
 - `review-test-isolation` — mocks correct, no shared state
 - `review-test-quality` — naming, assertions, project conventions
 
-#### Mode 6b: Static-validation (config / proguard / xml resource / build.gradle specs)
+#### Mode 6b: Static-validation (config / build / resource files)
 
 Write **assertion script** (`tests/static_validation.sh` or inline) that translates each Scenario into `grep` / `find` / `xmllint` / `jq` checks against the target file.
 
-Example: Scenario "`-keep class com.aipocket.aifund.model.data.**` 已被刪除" →
+Example: Scenario "`<offending pattern>` removed from `<config-file>`" →
 ```bash
-grep -q "com.aipocket.aifund.model.data" app/proguard-rules.pro && \
-  { echo "FAIL: dead keep rule still present"; exit 1; } || \
-  echo "PASS: dead keep rule removed"
+grep -q "<pattern>" <config-file> && \
+  { echo "FAIL: pattern still present"; exit 1; } || \
+  echo "PASS: pattern removed"
 ```
+
+Stack-specific concrete examples live in the project-local `test-writer` skill (see **Project bindings**).
 
 Confirm the script **fails as expected** with the current (pre-change) file (RED). Then dispatch **2 parallel reviewer agents** (simpler than 6a):
 - `review-static-coverage` — every static Scenario has a corresponding check
@@ -231,7 +244,7 @@ Invoke `rd-implementer` OR implement directly. Run tests until GREEN.
 
 Dispatch **3 parallel reviewer agents** (Implement personas):
 - `review-spec-compliance` — every SHALL / Scenario satisfied
-- `review-code-quality` — lint, conventions, Clean Architecture, DI, null safety
+- `review-code-quality` — linting, project conventions, layering rules, error-handling and safety invariants (specifics defined by the project's `code-reviewer` skill)
 - `review-edge-cases` — error paths, boundaries, concurrent access, off-by-one
 
 Aggregate. CRITICAL → fix → re-dispatch.
@@ -240,7 +253,7 @@ Aggregate. CRITICAL → fix → re-dispatch.
 
 After Stage 7 reviewers PASS, before any commit. Mandated by MEMORY `feedback_auto_workflow_discipline` — auto/autonomous mode must NOT skip.
 
-1. **Test gate**: `./gradlew test` (scoped to changed modules if large repo). Must be green. RED → loop back to Stage 7.
+1. **Test gate**: run the project's `{TEST_COMMAND}` (from `<repo>/AGENTS.md`; scoped to changed modules if large repo). Must be green. RED → loop back to Stage 7.
 2. **Verify**: invoke `code-reviewer` skill — spec ↔ code line-by-line. Must return **0 CRITICAL**. CRITICAL → loop back to Stage 7.
 3. **Report**: invoke `reporter` skill — write `openspec/changes/{name}/report.md` (Requirement × Scenario 覆蓋率 + 實作對照 + 問題清單).
 4. Surface report summary inline; user sees coverage before commit.
@@ -279,7 +292,7 @@ git push origin "feat/${branch_name}"   # hook protects developer/main
 glab mr create --target-branch developer --title "$(git log -1 --pretty=%s)" --description "..."
 ```
 
-MR description includes spec path + Linear ticket link. **After MR is created, immediately proceed to Stage 10.5** — do NOT jump straight to Stage 11.
+MR description includes spec path + ticket link (from Stage 1's tracker — Linear, Jira, GitHub Issues, etc.). **After MR is created, immediately proceed to Stage 10.5** — do NOT jump straight to Stage 11.
 
 ### Stage 10.5: Codex auto-review (advisory, runs immediately after push)
 
@@ -572,8 +585,8 @@ One file, append-only, one section per stage. Token usage tracked for retrospect
 - `superpowers:dispatching-parallel-agents` — technique used for multi-reviewer
 - `superpowers:brainstorming` — principles borrowed inline, NOT invoked
 - `superpowers:grill-me` — principles borrowed inline, NOT invoked
-- `test-writer`, `rd-implementer`, `code-reviewer`, `reporter` — invoked at relevant stages
-- `gitlab-mr-reviewer` — invoked at Stage 10.5 (real codex via codex-rescue agent, not Claude self-roleplay)
+- `test-writer`, `rd-implementer`, `code-reviewer`, `reporter`, `review-fixer` — **project-local** skills (auto-loaded from `<repo>/.claude/skills/<name>/`), invoked at relevant stages; see **Project bindings** for the contract
+- `gitlab-mr-reviewer` — **project-local** skill invoked at Stage 10.5 (real codex via codex-rescue agent, not Claude self-roleplay)
 - `codex:codex-rescue` — the codex CLI forwarder used by Stages 10.5 + 11
 - `/opsx:propose` — alternative entry without pipeline
 - `/opsx:archive` — runs separately after MR merge
