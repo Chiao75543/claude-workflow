@@ -2,9 +2,9 @@
 name: test-writer
 description: >
   依據規格文件的驗收條件撰寫 Android 單元測試。當使用者輸入 /test 指令，或說「幫我寫測試」「依照規格寫單元測試」「test-writer」「按驗收條件寫測試」時，必須使用此技能包。
-  Claude 扮演資深 QA/RD 角色，從 OpenSpec 或 SDD 讀取規格與 production code，撰寫涵蓋 UseCase、Repository、ViewModel 的單元測試，並回報 Scenario 覆蓋率與發現的問題。
+  Claude 扮演資深 QA/RD 角色，從 OpenSpec change 讀取規格與 production code，撰寫涵蓋 UseCase、Repository、ViewModel 的單元測試，並回報 Scenario 覆蓋率與發現的問題。
   只要任務牽涉到依照規格文件生成測試、驗證業務邏輯、確認 Scenario 覆蓋，一律觸發此技能包。
-compatibility: "需要 bash / 檔案系統（讀取 production code 與寫入測試，必要）、Notion MCP（選用，fallback 讀取舊 SDD）"
+compatibility: "需要 bash / 檔案系統（讀取 production code 與寫入測試，必要）"
 ---
 
 # Test Writer — Android 單元測試 Agent
@@ -15,14 +15,12 @@ Claude 扮演資深 QA/RD，以規格驗收條件為基準撰寫完整單元測�
 
 ```
 /test <OpenSpec change 名稱或路徑>
-/test <Notion SDD 連結或 SDD 編號>    ← fallback（舊格式）
 ```
 
 ### 範例
 ```
 /test etf-curated-themes
 /test openspec/changes/etf-curated-themes/
-/test SDD-3                              ← fallback 舊 SDD
 ```
 
 ---
@@ -90,7 +88,7 @@ openspec/changes/{name}/
 
 將每個 Scenario 記錄，供後續覆蓋率報告使用。
 
-**Fallback（僅舊功能）：** 若 OpenSpec 不存在，改用 Notion MCP 讀取 SDD 頁面，聚焦 Chapter 4（錯誤情境）、Chapter 6（UI 行為）、Chapter 9（驗收條件）、Chapter 11（注意事項）。
+**找不到 OpenSpec**：先要求使用者建立 OpenSpec change（或將舊規格遷移成 canonical spec），不另走 fallback。
 
 ---
 
@@ -355,11 +353,7 @@ cd {PROJECT_ROOT}
 
 ### Step 6 — 更新規格 Test Coverage
 
-**OpenSpec**：在 `.openspec.yaml` 補充 test coverage 資訊（若有欄位）。
-
-**Fallback（舊 SDD）**：使用 Notion MCP 更新 SDD 頁面的 `Test Coverage` 欄位：
-- 將 `__NO__` 改為實際覆蓋率百分比（如 `92%`）
-- 若無法跑覆蓋率工具，填入 Scenario 覆蓋率（如 `Scenario 10/10 100%`）
+在 OpenSpec change 內補充 test coverage 資訊（若 spec 有欄位），或在 `tasks.md` 勾選 test 任務完成。
 
 ---
 
@@ -397,5 +391,5 @@ cd {PROJECT_ROOT}
 | Production code 不存在（TDD 模式） | 正常，依據規格的介面定義撰寫測試 |
 | specs/*.md 的 Scenario 不存在 | 停止，提示先完善規格再執行 /test |
 | 程式碼與規格行為不一致 | 不自行決定，回報給使用者 |
-| Notion MCP 無法存取 | 跳過 Notion 相關步驟，使用本地 OpenSpec 檔案 |
+| OpenSpec change 不存在 | 停止，請使用者先建立或遷移成 canonical OpenSpec spec |
 | UiState / Event 型別定義與預期不符 | 列出差異，確認後再撰寫 |

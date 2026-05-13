@@ -2,27 +2,25 @@
 name: rd-implementer
 description: >
   依據已核准的規格文件，逐層實作 Android 程式碼。當使用者輸入 /implement 指令，或說「幫我實作」「依照規格寫程式」「rd-implementer」「按規格實作」時，必須使用此技能包。
-  Claude 扮演資深 RD 角色，從 OpenSpec 或 SDD 讀取規格，按 Domain → Data → DI → Presentation → Navigation 五個 Phase 逐層實作。
+  Claude 扮演資深 RD 角色，從 OpenSpec change 讀取規格，按 Domain → Data → DI → Presentation → Navigation 五個 Phase 逐層實作。
   只要任務牽涉到依照規格文件生成 Android 程式碼、串接 API、建立 ViewModel、Navigation，一律觸發此技能包。
-compatibility: "需要 bash / 檔案系統（寫入程式碼，必要）、Notion MCP（選用，fallback 用）"
+compatibility: "需要 bash / 檔案系統（寫入程式碼，必要）"
 ---
 
 # RD Implementer — Android 實作 Agent
 
-Claude 扮演資深 Android RD，嚴格依照核准的規格逐層實作程式碼，不自行修改或補充規格。
+Claude 扮演資深 Android RD，嚴格依照核准的 OpenSpec 規格逐層實作程式碼，不自行修改或補充規格。
 
 ## 觸發方式
 
 ```
 /implement <OpenSpec change 名稱或路徑>
-/implement <Notion SDD 連結或 SDD 編號>    ← fallback（舊格式）
 ```
 
 ### 範例
 ```
 /implement etf-curated-themes
 /implement openspec/changes/etf-curated-themes/
-/implement SDD-3                              ← fallback 舊 SDD
 ```
 
 ---
@@ -67,15 +65,15 @@ openspec/changes/{name}/
 └── proposal.md    → 取得功能動機與範圍
 ```
 
-**Fallback（僅舊功能）：** 若 OpenSpec 不存在，改用 Notion MCP 讀取 SDD 頁面。
+**找不到 OpenSpec change**：先要求使用者建立或將舊規格遷移成 canonical OpenSpec spec，不另走 fallback。
 
 擷取以下資訊：
 - 功能名稱
-- 實作清單（tasks.md 或 SDD Chapter 10）
-- API 契約（android.md 或 SDD Chapter 5）
-- Domain Model（design.md 或 SDD Chapter 3）
-- UI 行為規格（specs/*.md 或 SDD Chapter 6）
-- Navigation（android.md 或 SDD Chapter 7）
+- 實作清單（`tasks.md`）
+- API 契約（`android.md`）
+- Domain Model（`design.md`）
+- UI 行為規格（`specs/*.md`）
+- Navigation（`android.md`）
 
 ---
 
@@ -214,7 +212,7 @@ Phase 5: Navigation
 
 | 狀況 | 處理方式 |
 |---|---|
-| OpenSpec 與舊 SDD 都存在 | 優先使用 OpenSpec |
+| 找不到 OpenSpec change | 停止，請使用者先建立或將舊規格遷移成 canonical OpenSpec spec |
 | 規格有欄位未定義 | 停止，回報使用者補充規格 |
 | 既有檔案已存在同名 class | 停止，確認是否覆蓋或合併 |
 | 發現規格章節有矛盾 | 停止，明確列出矛盾之處，等待使用者裁示 |
