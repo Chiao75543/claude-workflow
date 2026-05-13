@@ -9,7 +9,7 @@ End-to-end pipeline. The user sees two checkpoints: spec approval, and pre-push.
 
 **Core rule:** Every change is traceable to a spec. Prefer attaching to an **existing** capability (`## MODIFIED Requirements`) over creating a new one. Single `openspec/changes/{name}/spec.md` is the source; 5 derived files live in the same folder.
 
-**Lifecycle rule:** Pipeline ends at **archive (Stage 12)**, not at push. Stage 11 (MR review loop) re-enters after MR comments arrive; Stage 12 runs after the MR is merged. Don't treat push as "done".
+**Lifecycle rule:** Pipeline ends at **archive (Stage 12)**, not at push. Stage 10.5 (codex auto-review) runs immediately after push as an advisory layer; Stage 11 (MR review loop) re-enters after **human** MR comments arrive; Stage 12 runs after the MR is merged. Don't treat push as "done".
 
 **Reviewer rule:** Each automated review stage dispatches **2–3 parallel agents** with distinct personas (Agent tool, single message with multiple tool_use blocks per `superpowers:dispatching-parallel-agents`). Aggregate findings. Block on CRITICAL issues; surface WARNING/SUGGESTION to user but proceed.
 
@@ -55,11 +55,13 @@ digraph workflow {
   commit -> rev_c;
   rev_c -> commit [label="CRITICAL"];
   rev_c -> user2 [label="pass"];
+  codex_rev [shape=box, label="Stage 10.5 Codex auto-review\n(advisory, posts inline + summary)"];
   mr_loop [shape=box, label="Stage 11 MR review loop\n(codex/claude engine + ⏸ per-comment)"];
   archive [shape=box, label="Stage 12 Archive\n(/opsx:archive, post-merge)"];
   user2 -> push [label="ok"];
   user2 -> done [label="hold"];
-  push -> mr_loop [label="deferred"];
+  push -> codex_rev [label="auto"];
+  codex_rev -> mr_loop [label="findings posted (deferred for humans)"];
   mr_loop -> mr_loop [label="CRITICAL/WARNING"];
   mr_loop -> archive [label="merged"];
   archive -> done;
@@ -277,7 +279,74 @@ git push origin "feat/${branch_name}"   # hook protects developer/main
 glab mr create --target-branch developer --title "$(git log -1 --pretty=%s)" --description "..."
 ```
 
-MR description includes spec path + Linear ticket link.
+MR description includes spec path + Linear ticket link. **After MR is created, immediately proceed to Stage 10.5** — do NOT jump straight to Stage 11.
+
+### Stage 10.5: Codex auto-review (advisory, runs immediately after push)
+
+**Why**: prior reviewer passes (Stages 6/7/8) reviewed the change against the spec; Stage 10.5 gives the MR-as-deliverable one final pass through the actual GitLab MR surface, using `codex:codex-rescue` to mimic a senior human reviewer. Findings appear as inline DiffNotes on the MR before humans look at it — sets baseline quality + saves human reviewer cycles.
+
+**Mode**: **advisory** (does NOT block pipeline). If codex finds CRITICAL, you surface it in chat and ask the user whether to fix-and-amend (re-push) or close MR. Default: leave findings on the MR and proceed to Stage 11 deferred state.
+
+#### 0. Engine detection (mirrors Stage 11 Step 0)
+
+```bash
+codex_available=false
+if command -v codex >/dev/null 2>&1 \
+   && [ -d "$HOME/.claude/plugins/marketplaces/openai-codex" ]; then
+    codex_available=true
+fi
+```
+
+- `codex_available=true` → dispatch `Agent(subagent_type="codex:codex-rescue", prompt=…)`
+- `codex_available=false` → fallback `Agent(subagent_type="general-purpose")` + load `gitlab-mr-reviewer` skill content into the prompt
+- User override: `/workflow --skip-codex-review` or `/workflow --engine=claude`
+
+#### 1. Pre-flight (in main shell, before dispatch)
+
+The dispatcher (main Claude shell) MUST gather these and pass them into the codex prompt — codex sandbox cannot reach the GitLab API host:
+
+```bash
+glab mr view {MR_ID}                                          # title + state
+glab mr diff {MR_ID}                                          # diff
+glab api projects/<encoded>/merge_requests/{MR_ID} | jq '.diff_refs, .web_url'
+# capture base_sha / head_sha / start_sha / gitlab_host / project_path_encoded
+```
+
+#### 2. Dispatch codex with explicit instructions
+
+Use the prompt at `references/codex-mr-review-prompt-template.md` (see Templates section). Key clauses to include:
+
+- Worktree path
+- SHA refs
+- Project path (URL-encoded)
+- Files in scope (production code only; **skip** `openspec/changes/**/*.md`)
+- "Set the bar HIGH — N prior reviewer passes already covered the obvious"
+- "**DO NOT** post comments yourself — return findings as structured payload; dispatcher will post via main-shell glab/curl"
+
+#### 3. Sandbox limitation — relay-post pattern
+
+Codex sandbox network access to GitLab API host is typically blocked (`connect: operation not permitted`). The skill contract is:
+
+| Step | Who | Action |
+|---|---|---|
+| Analysis | Codex | Read diff + files, classify CRITICAL/WARNING/SUGGESTION/SIMPLIFY |
+| Findings emit | Codex | Return findings JSON or markdown back to dispatcher |
+| DiffNote post | **Dispatcher** | `curl` each finding with PRIVATE-TOKEN + SHA position |
+| Summary post | **Dispatcher** | `glab mr note {MR_ID}` with weighted score |
+
+Do NOT let codex try `curl http://<gitlab_host>/...` — it will silently fail. Always relay.
+
+#### 4. After posting
+
+- 0 CRITICAL → log score in chat + proceed to Stage 11 deferred state. **No user checkpoint needed** (advisory mode).
+- ≥1 CRITICAL → surface findings in chat with `⏸` prompt:
+  - `fix` → user fixes locally; re-dispatch Stage 6.5/7.5 if needed; force-push (with explicit user consent per `no-force-push` memory) or new commit + push; re-run Stage 10.5 once
+  - `accept` → leave MR open with codex CRITICAL visible; proceed to Stage 11 deferred (human reviewers will see codex findings too)
+  - `close` → `glab mr close {MR_ID}`; pipeline ends at Stage 10.5
+
+#### 5. Idempotency
+
+Re-running Stage 10.5 on the same MR posts a **new** summary note + may duplicate inline comments. To avoid duplication, the dispatcher SHOULD `glab api projects/.../merge_requests/{MR_ID}/discussions` first, check if a discussion with `*🤖 Reviewed by Codex*` signature already exists, and skip / supersede if so. User can force re-review with `/workflow --re-review {MR_ID}`.
 
 ### Stage 11: MR review loop (deferred trigger)
 
@@ -438,7 +507,9 @@ One file, append-only, one section per stage. Token usage tracked for retrospect
 /workflow --from {stage} --spec {name}
 ```
 
-`{stage}` ∈ `tests`, `implement`, `commit`, `push`. Skip Stages 1–4, jump to specified stage. Reuses existing `openspec/changes/{name}/`.
+`{stage}` ∈ `tests`, `implement`, `commit`, `push`, `review`. Skip Stages 1–4, jump to specified stage. Reuses existing `openspec/changes/{name}/`.
+
+- `review` resumes at Stage 10.5 against an already-pushed MR. Equivalent to `/workflow --re-review {MR_ID}` if the MR ID is known.
 
 ## Quick Reference
 
@@ -455,6 +526,7 @@ One file, append-only, one section per stage. Token usage tracked for retrospect
 | 8 Commit | conventional + footer | 2 agents |
 | 9 ⏸ | user confirms push | — |
 | 10 Push | push + MR | — |
+| 10.5 Codex review | dispatch codex → relay-post inline + summary | advisory, auto after Stage 10 |
 | 11 MR loop | codex/claude engine + ⏸ per-comment (plan + verify) + auto-resolve | deferred + ✋ × 2 per comment |
 | 12 Archive | `/opsx:archive` + worktree cleanup | post-merge, user-triggered |
 
@@ -483,6 +555,9 @@ One file, append-only, one section per stage. Token usage tracked for retrospect
 | Skipping Stage 11 Step 0 engine detection | codex CLI absence + still dispatching `codex:codex-rescue` agent → silent failure. Detect once at loop entry; cache `codex_available` flag. |
 | Switching fix engine mid-loop | Stay on the engine chosen at Step 0. Mid-loop swap breaks "fix quality归因 by engine" + may double-apply or miss commits. |
 | Using engine to write code at Step 2b | Step 2b is **plan only**, no code. User approves the plan before any file changes. Engine writing code at 2b violates checkpoint contract. |
+| Skipping Stage 10.5 codex review after push | Pipeline contract: every push triggers codex advisory pass. Skipping leaves the MR un-reviewed until humans look at it (could be hours). User override is `--skip-codex-review`. |
+| Acting as Codex yourself (Claude doing the review) | The skill name is "Codex 扮演..."; dispatch via `Agent(subagent_type="codex:codex-rescue")` to use the real codex CLI. Claude self-roleplay defeats the multi-engine quality goal. |
+| Letting codex curl GitLab directly from sandbox | Codex sandbox typically blocks the GitLab API host (`connect: operation not permitted`). Codex emits findings; **dispatcher** posts via main-shell glab/curl. |
 
 ## Templates
 
@@ -490,6 +565,7 @@ One file, append-only, one section per stage. Token usage tracked for retrospect
 - `references/file-mapping.md` — split rules to 5 OpenSpec files
 - `references/reviewer-prompts.md` — persona prompts for parallel agents
 - `references/codex-prompt-template.md` — Stage 11 prompt for `codex:codex-rescue` (PLAN ONLY + APPLY variants)
+- `references/codex-mr-review-prompt-template.md` — Stage 10.5 prompt for codex auto-review (read MR diff → emit findings → dispatcher relays to GitLab)
 
 ## Related
 
@@ -497,5 +573,7 @@ One file, append-only, one section per stage. Token usage tracked for retrospect
 - `superpowers:brainstorming` — principles borrowed inline, NOT invoked
 - `superpowers:grill-me` — principles borrowed inline, NOT invoked
 - `test-writer`, `rd-implementer`, `code-reviewer`, `reporter` — invoked at relevant stages
+- `gitlab-mr-reviewer` — invoked at Stage 10.5 (real codex via codex-rescue agent, not Claude self-roleplay)
+- `codex:codex-rescue` — the codex CLI forwarder used by Stages 10.5 + 11
 - `/opsx:propose` — alternative entry without pipeline
 - `/opsx:archive` — runs separately after MR merge
