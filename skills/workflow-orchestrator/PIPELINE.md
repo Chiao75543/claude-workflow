@@ -166,9 +166,9 @@ Classify spec type by Scenario fingerprints:
 
 | Mode                       | Fingerprints                                              | Output                | Reviewers                                |
 | -------------------------- | --------------------------------------------------------- | --------------------- | ---------------------------------------- |
-| **6a Unit-test**           | `ViewModel`, `Repository`, `WHEN user X`, `WHEN API Y`    | failing unit tests    | 3 (coverage, isolation, quality)         |
+| **6a Unit-test**           | runtime entities (state holders, controllers, data sources), `WHEN <user action>`, `WHEN <external system returns>` | failing unit tests    | 3 (coverage, isolation, quality)         |
 | **6b Static-validation**   | `WHEN inspect <file>`, `THEN NOT contains <pattern>`      | assertion script      | 2 (coverage, correctness)                |
-| **6c Manual-smoke**        | `apk`, `smoke matrix`, `device install`                   | `smoke-checklist.md`  | 0 (no automated review possible)         |
+| **6c Manual-smoke**        | on-device install + verify, post-build artifact inspection, smoke matrix | `smoke-checklist.md`  | 0 (no automated review possible)         |
 
 Confirm tests/script fail with current code (true RED). For Mode 6c there is nothing to automate yet — proceed.
 
@@ -181,7 +181,7 @@ Implement production code until tests are GREEN.
 Dispatch **3 parallel reviewer agents** (single message, 3 tool calls):
 
 - `review-spec-compliance` — every `SHALL` / Scenario satisfied
-- `review-code-quality` — lint, conventions, architecture, null safety, DI
+- `review-code-quality` — linting, project conventions, layering rules, error-handling and safety invariants (specifics defined by the project's `code-reviewer` skill)
 - `review-edge-cases` — error paths, boundaries, concurrent access, off-by-one
 
 CRITICAL → fix → re-dispatch same reviewers.
