@@ -3,9 +3,9 @@ name: reporter
 description: >
   Code Review 完成後產出規格與實作對照報告，儲存為本地 .md 或 .html 檔案。當使用者輸入 /report 指令，或 /verify、/review-mr 執行完畢後，必須使用此技能包產出報告。
   報告內容包含：Requirement × Scenario 覆蓋率、每個 Scenario vs 實作對照表、問題清單摘要。
-  支援 OpenSpec（優先）與舊 SDD（fallback）兩種格式。
+  以 OpenSpec change 為單一資料來源。
   只要任務牽涉到產出 code review 報告、規格對照報告、覆蓋分析，一律觸發此技能包。
-compatibility: "需要 bash / 檔案系統（寫入報告檔案，必要）、Notion MCP（選用，fallback 用）"
+compatibility: "需要 bash / 檔案系統（寫入報告檔案，必要）"
 ---
 
 # Reporter — 規格與實作對照報告
@@ -16,7 +16,6 @@ compatibility: "需要 bash / 檔案系統（寫入報告檔案，必要）、No
 
 ```
 /report <OpenSpec change 名稱或路徑> [--format md|html]
-/report <SDD 編號>                    ← fallback（舊格式）
 ```
 
 或由 `/verify`、`/review-mr` 完成後自動呼叫。
@@ -25,7 +24,6 @@ compatibility: "需要 bash / 檔案系統（寫入報告檔案，必要）、No
 ```
 /report etf-curated-themes
 /report openspec/changes/etf-curated-themes/ --format html
-/report SDD-3                              ← fallback 舊 SDD
 ```
 
 預設輸出格式：`.md`
@@ -60,16 +58,13 @@ compatibility: "需要 bash / 檔案系統（寫入報告檔案，必要）、No
 
 **來源 A：規格文件（OpenSpec 優先）**
 
-使用 OpenSpec 時：
+OpenSpec change 內：
 - `specs/*.md` — 所有 Requirement + Scenario（作為覆蓋率基準）
 - `android.md` — API Contract + Navigation（驗證一致性）
 - `tasks.md` — 實作清單（驗證完成度）
 - `design.md` — Domain Model（驗證結構一致）
 
-Fallback 使用舊 SDD 時：
-- Chapter 9 驗收條件（AC-1、AC-2...逐條）
-- Chapter 10 實作清單
-- Chapter 4 錯誤情境清單
+**找不到 OpenSpec change**：先要求使用者建立或將舊規格遷移成 canonical OpenSpec spec，不另走 fallback。
 
 **來源 B：實作現況（從 git diff 或檔案系統）**
 
@@ -79,7 +74,7 @@ Fallback 使用舊 SDD 時：
 
 ### Step 2 — 計算覆蓋率
 
-#### OpenSpec 格式：以 Requirement × Scenario 為單位
+以 Requirement × Scenario 為單位：
 
 ```
 狀態判定規則：
@@ -87,12 +82,6 @@ Fallback 使用舊 SDD 時：
 ⚠️ 部分實作  — 程式碼存在但有缺漏或與規格有差異
 ❌ 未實作   — 完全找不到對應實作
 🔍 無法驗證  — 需人工確認（如 UI 動畫、第三方整合）
-```
-
-#### 舊 SDD 格式：以 AC 為單位
-
-```
-✅ 已實作 / ⚠️ 部分實作 / ❌ 未實作 / 🔍 無法驗證
 ```
 
 ---
@@ -219,16 +208,6 @@ report_{change-name}_{YYYYMMDD}.html
 
 ---
 
-## Markdown 報告範本 — 舊 SDD 格式（Fallback）
-
-使用 AC-01/AC-02 為單位的對照表，格式與舊版相同：
-
-| AC | 描述 | 狀態 | 對應實作 | 備註 |
-|---|---|---|---|---|
-| AC-1 | ... | ✅ 已實作 | `XxxViewModel.kt:42` | |
-
----
-
 ## HTML 報告範本（`--format html`）
 
 輸出為單一 `.html` 檔，包含：
@@ -254,7 +233,7 @@ report_{change-name}_{YYYYMMDD}.html
 
 | 狀況 | 處理方式 |
 |---|---|
-| OpenSpec 與舊 SDD 都存在 | 優先使用 OpenSpec |
+| 找不到 OpenSpec change | 停止，請使用者先建立或將舊規格遷移成 canonical OpenSpec spec |
 | 無 git diff（獨立執行） | 改用 find 掃描對應目錄，標注「靜態分析」 |
 | Scenario 描述模糊難以判定狀態 | 標記為 🔍 無法驗證，列入人工確認清單 |
 | 輸出目錄無寫入權限 | 改輸出至當前目錄 `./` |

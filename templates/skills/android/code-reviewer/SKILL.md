@@ -1,28 +1,26 @@
 ---
 name: code-reviewer
 description: >
-  對照規格文件（OpenSpec 或 SDD），驗證目前實作是否符合規格。當使用者輸入 /verify 指令，或說「幫我驗證實作」「code review」「對照規格審查程式碼」「確認實作符合規格」時，必須使用此技能包。
-  Claude 扮演資深 Code Reviewer，從 OpenSpec specs/*.md 或 SDD 讀取驗收基準，從 git diff 取得程式碼變更，逐項比對，產出 CRITICAL / WARNING / SUGGESTION 分級報告。
+  對照 OpenSpec change 規格驗證目前實作是否符合規格。當使用者輸入 /verify 指令，或說「幫我驗證實作」「code review」「對照規格審查程式碼」「確認實作符合規格」時，必須使用此技能包。
+  Claude 扮演資深 Code Reviewer，從 `openspec/changes/<name>/specs/*.md` 讀取驗收基準，從 git diff 取得程式碼變更，逐項比對，產出 CRITICAL / WARNING / SUGGESTION 分級報告。
   只要任務牽涉到驗證程式碼符合規格、審查 Android 實作品質、比對規格與程式碼差異，一律觸發此技能包。
-compatibility: "需要 bash / git（讀取 diff 與原始碼，必要）、Notion MCP（選用，fallback 用）"
+compatibility: "需要 bash / git（讀取 diff 與原始碼，必要）"
 ---
 
 # Code Reviewer — 規格合規審查 Agent
 
-Claude 扮演資深 Code Reviewer，以規格文件為黃金標準審查實作，產出分級問題清單。
+Claude 扮演資深 Code Reviewer，以 OpenSpec 規格為黃金標準審查實作，產出分級問題清單。
 
 ## 觸發方式
 
 ```
 /verify <OpenSpec change 名稱或路徑>
-/verify <Notion SDD 連結或 SDD 編號>    ← fallback（舊格式）
 ```
 
 ### 範例
 ```
 /verify etf-curated-themes
 /verify openspec/changes/etf-curated-themes/
-/verify SDD-3                              ← fallback 舊 SDD
 ```
 
 ---
@@ -56,7 +54,7 @@ Claude 扮演資深 Code Reviewer，以規格文件為黃金標準審查實作�
 | `design.md` — Domain Model | 驗證 Domain Model 結構一致 |
 | `tasks.md` | 驗證所有預期檔案是否存在 |
 
-**Fallback（僅舊功能）：** 若 OpenSpec 不存在，改用 Notion MCP 讀取 SDD。
+**找不到 OpenSpec change**：先要求使用者建立或將舊規格遷移成 canonical OpenSpec spec，不另走 fallback。
 
 ---
 
@@ -91,10 +89,6 @@ Requirement: ETF 按鈕點擊帶入商品代碼
   └── Scenario: 未登入，點擊 ETF         → ❌ AuthRequiredWrapper 未包裹
 ```
 
-#### 使用舊 SDD 時：以 AC 為單位
-
-逐一核對 Chapter 9 的每條 AC（Given/When/Then）。
-
 ---
 
 #### 3a. 介面一致性
@@ -114,7 +108,7 @@ Requirement: ETF 按鈕點擊帶入商品代碼
 - 進入點、離開點（成功 / 取消 / 錯誤）是否完整
 
 #### 3e. 檔案完整性
-- 逐一核對 `tasks.md`（或 SDD Chapter 10）的實作清單
+- 逐一核對 `tasks.md` 的實作清單
 
 #### 3f. DI 註冊完整性
 - Koin module 中是否包含所有新增的 Repository / UseCase / ViewModel
@@ -155,7 +149,6 @@ Requirement: ETF 按鈕點擊帶入商品代碼
 ════════════════════════════════════════
 
 📄 規格來源：openspec/changes/{name}/
-   （或 SDD: openspec/sdd/SDD-X-xxx.md）
 
 📊 規格合規摘要
 ┌────────────────────────┬────────┐
@@ -239,7 +232,7 @@ Reporter **不觸發**，不產出報告。
 | 狀況 | 處理方式 |
 |---|---|
 | `git diff` 無輸出（無變更） | 改用 find 列出相關檔案，對整個功能做全面審查 |
-| OpenSpec 與舊 SDD 都存在 | 優先使用 OpenSpec |
+| 找不到 OpenSpec change | 停止，請使用者先建立或將舊規格遷移成 canonical OpenSpec spec |
 | 找不到對應實作檔案 | 列為 WARNING：tasks.md 項目未完成 |
 | 規格本身有錯誤或模糊 | 標注為 `[規格待釐清]`，不自行判斷正確行為 |
 | 程式碼與規格不一致但無法判斷誰對 | 列為 WARNING，請使用者裁示 |

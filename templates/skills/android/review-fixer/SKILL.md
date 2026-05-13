@@ -2,9 +2,9 @@
 name: review-fixer
 description: >
   修復 Code Review 或 GitLab MR Review 發現的問題，修完後自動驗證並在 GitLab 回覆已解決。當使用者輸入 /fix 指令，或說「幫我修 review 問題」「修復 MR comments」「fix review issues」「修 code review」「處理 review 意見」時，必須使用此技能包。
-  Claude 扮演資深 RD 角色，從 GitLab MR 讀取 review comments（CRITICAL / WARNING），參照 SDD 確保修復符合規格，逐一修正程式碼，完成後執行 /verify 驗證，並透過 GitLab API 回覆已解決且 resolve 每則 discussion。
+  Claude 扮演資深 RD 角色，從 GitLab MR 讀取 review comments（CRITICAL / WARNING），參照 OpenSpec change 規格確保修復符合規格，逐一修正程式碼，完成後執行 /verify 驗證，並透過 GitLab API 回覆已解決且 resolve 每則 discussion。
   只要任務牽涉到修復 code review 問題、處理 MR review comments、解決 review 意見、修正 CRITICAL/WARNING 問題，一律觸發此技能包。
-compatibility: "需要 glab CLI（已認證）、curl、bash、Notion MCP（選用，讀取 SDD）"
+compatibility: "需要 glab CLI（已認證）、curl、bash"
 ---
 
 # Review Fixer — Review 問題修復 Agent
@@ -14,13 +14,13 @@ Claude 扮演資深 RD，讀取 GitLab MR 上的 review comments，逐一修復 
 ## 觸發方式
 
 ```
-/fix <MR_ID> [--sdd <SDD連結>] [--include-suggestions]
+/fix <MR_ID> [--spec <OpenSpec change>] [--include-suggestions]
 ```
 
 ### 範例
 ```
 /fix !123
-/fix 456 --sdd https://www.notion.so/xxx
+/fix 456 --spec etf-curated-themes
 /fix !789 --include-suggestions
 ```
 
@@ -29,7 +29,7 @@ Claude 扮演資深 RD，讀取 GitLab MR 上的 review comments，逐一修復 
 | 參數 | 說明 |
 |---|---|
 | `<MR_ID>` | GitLab MR 編號（支援 `!123`、`123`、完整 URL） |
-| `--sdd <連結>` | SDD Notion 連結或編號，用於確保修復符合規格（選用） |
+| `--spec <OpenSpec change>` | OpenSpec change 名稱或路徑，用於確保修復符合規格（選用；無則從 MR description / branch name 推斷） |
 | `--include-suggestions` | 一併修復 SUGGESTION 等級問題（預設只修 CRITICAL + WARNING） |
 
 ---
@@ -124,18 +124,18 @@ for d in discussions:
 
 ---
 
-### Step 4 — 讀取 SDD（選用但建議）
+### Step 4 — 讀取 OpenSpec change（強烈建議）
 
-若提供了 `--sdd` 參數，使用 Notion MCP 讀取 SDD，重點擷取：
+若提供了 `--spec` 參數，讀取 `openspec/changes/<name>/` 內：
 
-| SDD 章節 | 修復參考用途 |
+| 檔案 | 修復參考用途 |
 |---|---|
-| Chapter 4 錯誤情境 | 確認錯誤處理修復方式正確 |
-| Chapter 5 API 契約 | 確認 API 呼叫修復符合規格 |
-| Chapter 6 UI 行為規格 | 確認 UiState / UiEvent 修復正確 |
-| Chapter 7 Navigation | 確認導航修復正確 |
+| `specs/*.md` | Requirement × Scenario，確認修復後行為與規格一致 |
+| `android.md` | API Contract + Navigation，確認介面修復符合規格 |
+| `design.md` | Domain Model，確認結構修復正確 |
+| `tasks.md` | 確認修復後不破壞既有任務勾選的完成度 |
 
-若未提供 `--sdd`，從 MR description 或 commit message 中嘗試擷取 SDD 連結。找不到時以 CLAUDE.md 專案規範為準。
+若未提供 `--spec`，從 MR description / branch name (`feat/<ticket>-<spec-name>`) 嘗試推斷對應的 OpenSpec change。**找不到對應 OpenSpec change** 時：先要求使用者指明（或先建立 / 遷移成 canonical spec），再開始修復；不另走 fallback。CLAUDE.md 專案規範始終適用。
 
 ---
 
@@ -156,7 +156,7 @@ cat <file_path>
 理解 comment 指出的問題本質：
 - comment 中的「建議修正」程式碼片段是否合理？
 - 修復是否會影響其他地方？
-- 修復是否符合 SDD 定義？
+- 修復是否符合 OpenSpec 規格定義？
 
 #### 5c. 套用修正
 
@@ -165,7 +165,7 @@ cat <file_path>
 | 原則 | 說明 |
 |---|---|
 | 最小變更 | 只修問題本身，不順便重構周圍程式碼 |
-| 符合 SDD | 若有 SDD 參考，修復後的行為必須與 SDD 一致 |
+| 符合規格 | 若有 OpenSpec change 參考，修復後的行為必須與規格一致 |
 | 遵守專案規範 | 依照 CLAUDE.md 的編碼規則（無 `!!`、無 region、無 magic number 等） |
 | 保持一致性 | 修復風格與現有程式碼一致 |
 
@@ -187,7 +187,7 @@ cat <file_path>
 所有問題修完後，執行 code-reviewer 技能包的驗證流程：
 
 1. 取得最新 git diff
-2. 若有 SDD 連結，對照 SDD 進行五維度審查
+2. 若有 OpenSpec change 參考，對照 specs/ 進行規格合規審查
 3. 確認所有 CRITICAL / WARNING 問題已解決
 
 ```
@@ -303,6 +303,6 @@ WARNING：0 個
 | Comment 無法辨識嚴重程度 | 歸類為 UNKNOWN，詢問使用者是否納入修復 |
 | 修復後驗證仍有新問題 | 列出新問題，詢問是否繼續修復 |
 | Resolve API 失敗 | 列出失敗的 discussion_id，提示使用者手動 resolve |
-| SDD 與 comment 建議衝突 | 以 SDD 為準，在回覆中說明依 SDD 修復 |
+| OpenSpec 規格與 comment 建議衝突 | 以 OpenSpec 規格為準，在回覆中說明依規格修復 |
 | 修改檔案不在 MR diff 範圍 | 警告使用者，確認是否仍要修改 |
 | Comment 來自非 Claude 的 reviewer | 同樣處理，但回覆中標明「依 reviewer 意見修復」 |
