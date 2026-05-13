@@ -1,11 +1,15 @@
 # claude-workflow
 
-A portable, spec-driven development pipeline for AI-assisted coding. Designed for [Claude Code](https://claude.com/claude-code) + [Codex CLI](https://github.com/openai/codex), but tool-agnostic where possible.
+A spec-driven development pipeline for AI-assisted coding. Designed for [Claude Code](https://claude.com/claude-code) + [Codex CLI](https://github.com/openai/codex).
+
+**Architecture:** the orchestrator is **stack-agnostic** — it owns the pipeline structure, multi-reviewer dispatch, and verification gates, but delegates *how* to write tests / implement code / review MRs to **project-local skills** under each project's `<repo>/.claude/skills/`. Stack-specific skill bundles (Android first; add your own) live in `templates/skills/<stack>/` and scaffold into a project via `scripts/init-project.sh`.
 
 This repo packages:
 
-- The **workflow-orchestrator skill** — a 12-stage pipeline from ticket to archived spec, with mandatory verification gates and per-comment user checkpoints in PR review fixes.
+- The **workflow-orchestrator skill** — a 12-stage pipeline from ticket to archived spec, with mandatory verification gates and per-comment user checkpoints in PR review fixes. Stack-agnostic; references project-local skills by convention name (see *Project bindings* in `SKILL.md`).
 - **Slash commands** — `/workflow` (full pipeline) plus 7 namespaced sub-commands (`/workflow:spec`, `/workflow:test`, `/workflow:implement`, `/workflow:verify`, `/workflow:fix`, `/workflow:review-mr`, `/workflow:report`) for invoking each stage individually.
+- **Stack-specific skill templates** — `templates/skills/android/` ships a working Android Clean Architecture skill set (test-writer, rd-implementer, code-reviewer, reporter, gitlab-mr-reviewer, review-fixer); other stacks add their own folder.
+- **`init-project.sh`** — scaffolds a stack's skill set into a target repo's `.claude/skills/`, auto-substituting `{PROJECT_ROOT}` and listing remaining placeholders.
 - **AGENTS.md templates** — global Codex preferences + project-level rules that Codex needs (Codex does not load Claude Code skills).
 - A **setup script** to install on a new machine.
 
@@ -38,9 +42,18 @@ claude-workflow/
 │       └── report.md             # /workflow:report
 ├── templates/
 │   ├── codex-AGENTS.md           # global ~/.codex/AGENTS.md
-│   └── project-AGENTS.md.template # per-repo AGENTS.md (customize)
+│   ├── project-AGENTS.md.template # per-repo AGENTS.md (customize)
+│   └── skills/                   # stack-specific skill bundles
+│       └── android/              # Android Clean Architecture defaults
+│           ├── test-writer/SKILL.md
+│           ├── rd-implementer/SKILL.md
+│           ├── code-reviewer/SKILL.md
+│           ├── reporter/SKILL.md
+│           ├── gitlab-mr-reviewer/SKILL.md
+│           └── review-fixer/SKILL.md
 ├── scripts/
-│   └── setup.sh                  # install on new machine
+│   ├── setup.sh                  # install on new machine (per-user)
+│   └── init-project.sh           # scaffold skill bundle into a target repo
 └── README.md
 ```
 
@@ -103,13 +116,28 @@ The `workflow:` namespace prefix avoids collisions with other plugins or skills 
 For each repo you work in:
 
 ```bash
+# 1. AGENTS.md — long-lived project rules read by Codex AND by workflow-orchestrator
 cp ~/code/claude-workflow/templates/project-AGENTS.md.template <repo>/AGENTS.md
 # Edit AGENTS.md: substitute {Project}, {language}, {build_command}, etc.
-git -C <repo> add AGENTS.md
-git -C <repo> commit -m "chore: add Codex AGENTS.md aligned with workflow-orchestrator"
+
+# 2. Scaffold the stack's skill bundle into <repo>/.claude/skills/
+#    (auto-loaded by Claude Code as project-local skills when working in <repo>)
+~/code/claude-workflow/scripts/init-project.sh android <repo>
+# init-project.sh auto-substitutes {PROJECT_ROOT}; it prints remaining
+# placeholders ({PACKAGE_NAME}, {TEST_COMMAND}, etc.) you must edit by hand
+# inside the scaffolded files.
+
+# 3. Commit
+git -C <repo> add AGENTS.md .claude/skills/
+git -C <repo> commit -m "chore: add Codex AGENTS.md and workflow skill bindings"
 ```
 
-Why per-repo: Codex reads `<repo>/AGENTS.md` automatically. This is where long-lived project rules (test commands, architecture, Stage 7.5 / Stage 11 conventions) need to live.
+Why per-repo:
+
+- **AGENTS.md** is read automatically by Codex AND referenced by workflow-orchestrator for project-specific bindings (`{TEST_COMMAND}`, `{BUILD_COMMAND}`, `{LAYERING_CONVENTION}`, etc.).
+- **`.claude/skills/`** holds the concrete `test-writer` / `rd-implementer` / `code-reviewer` / etc. skills that the orchestrator invokes. Tuning these per project is how the pipeline adapts to each codebase's conventions.
+
+Adding a new stack: copy `templates/skills/android/` to `templates/skills/<your-stack>/`, edit the SKILL.md contents to your stack's idioms, then `init-project.sh <your-stack> <repo>`.
 
 ---
 
@@ -182,19 +210,30 @@ See [`PIPELINE.md`](skills/workflow-orchestrator/PIPELINE.md) for the full refer
 
 ## Customization
 
-The pipeline is tool-agnostic. Substitution points:
+workflow-orchestrator is **stack-agnostic**. Two layers of customization:
 
-| Slot                | Default                                          | Examples                                                     |
-| ------------------- | ------------------------------------------------ | ------------------------------------------------------------ |
-| Spec system         | OpenSpec                                         | Custom markdown, RFC, ADR                                    |
-| VCS host            | GitHub (`gh`) / GitLab (`glab`)                  | Bitbucket, Gitea, Forgejo                                    |
-| Integration branch  | `main`                                           | `develop`, `release`                                         |
-| Test command        | project-specific                                 | `npm test`, `pytest`, `./gradlew test`, `cargo test`         |
-| Fix engine          | `codex:codex-rescue` agent                       | Any code-writing agent + fixer skill                         |
-| Reviewer agents     | `code-reviewer`, `reporter`, etc.                | Custom per project                                           |
-| Ticket tracker      | Linear / Jira / GitHub Issues                    | Any                                                          |
+**Layer 1 — `<repo>/AGENTS.md` placeholders** (light, edit anytime):
 
-Edit the template at `templates/project-AGENTS.md.template`, swap commands at Stages 5/7.5/10/11/12.
+| Placeholder | Used in orchestrator at | Examples |
+| --- | --- | --- |
+| `{TEST_COMMAND}` | Stage 7.5 test gate | `./gradlew test`, `npm test`, `pytest`, `cargo test` |
+| `{BUILD_COMMAND}` | (project-skill discretion) | `./gradlew assembleDebug`, `npm run build` |
+| `{LAYERING_CONVENTION}` | Stage 7 implementation | Domain→Data→DI→Presentation→Navigation (Android Clean Arch); MVC; Hexagonal; … |
+| `{INTEGRATION_BRANCH}` | Stage 10 push target | `main`, `develop`, `release` |
+| `{TICKET_PREFIX}` | Stage 1 ticket id | `AIP` (Linear), `JIRA`, `GH` |
+
+**Layer 2 — `<repo>/.claude/skills/<name>/SKILL.md` content** (heavy, scaffold once):
+
+The orchestrator invokes `test-writer`, `rd-implementer`, `code-reviewer`, `reporter`, `gitlab-mr-reviewer`, `review-fixer` by convention name. Project-local versions live at `<repo>/.claude/skills/<name>/` and are auto-loaded by Claude Code. Scaffold via `init-project.sh <stack> <repo>`.
+
+Other configurable slots:
+
+| Slot | Default | Substitution |
+| --- | --- | --- |
+| Spec system | OpenSpec | Custom markdown, RFC, ADR |
+| VCS host | GitHub (`gh`) / GitLab (`glab`) | Bitbucket, Gitea, Forgejo |
+| Fix engine | `codex:codex-rescue` agent | Any code-writing agent + fixer skill |
+| Ticket tracker | Linear / Jira / GitHub Issues | Any |
 
 ---
 
