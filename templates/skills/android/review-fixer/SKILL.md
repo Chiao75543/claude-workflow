@@ -38,7 +38,7 @@ Claude 扮演資深 RD，讀取 GitLab MR 上的 review comments，逐一修復 
 
 ### Step 1 — 解析參數與驗證環境
 
-從 `$ARGUMENTS` 中擷取 MR ID（同 gitlab-mr-reviewer 的解析邏輯）。
+從 `$ARGUMENTS` 中擷取 MR ID（同 mr-reviewer 的解析邏輯）。
 
 ```bash
 glab auth status

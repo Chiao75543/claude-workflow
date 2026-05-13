@@ -10,7 +10,7 @@
 # What it does:
 #   - Copies templates/skills/<stack>/<name>/SKILL.md → <target>/.claude/skills/<name>/SKILL.md
 #     for each skill convention referenced by workflow-orchestrator
-#     (test-writer, rd-implementer, code-reviewer, reporter, gitlab-mr-reviewer,
+#     (test-writer, rd-implementer, code-reviewer, reporter, mr-reviewer,
 #     review-fixer — see workflow-orchestrator's "Project bindings" section).
 #   - Auto-substitutes {PROJECT_ROOT} with the absolute path of <target-repo>.
 #   - Backs up any pre-existing skill file in-place as SKILL.md.bak.<ts>.

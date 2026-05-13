@@ -8,7 +8,7 @@ This repo packages:
 
 - The **workflow-orchestrator skill** — a 12-stage pipeline from ticket to archived spec, with mandatory verification gates and per-comment user checkpoints in PR review fixes. Stack-agnostic; references project-local skills by convention name (see *Project bindings* in `SKILL.md`).
 - **Slash commands** — `/workflow` (full pipeline) plus 7 namespaced sub-commands (`/workflow:spec`, `/workflow:test`, `/workflow:implement`, `/workflow:verify`, `/workflow:fix`, `/workflow:review-mr`, `/workflow:report`) for invoking each stage individually.
-- **Stack-specific skill templates** — `templates/skills/android/` ships a working Android Clean Architecture skill set (test-writer, rd-implementer, code-reviewer, reporter, gitlab-mr-reviewer, review-fixer); other stacks add their own folder.
+- **Stack-specific skill templates** — `templates/skills/android/` ships a working Android Clean Architecture skill set (test-writer, rd-implementer, code-reviewer, reporter, mr-reviewer, review-fixer); other stacks add their own folder.
 - **`init-project.sh`** — scaffolds a stack's skill set into a target repo's `.claude/skills/`, auto-substituting `{PROJECT_ROOT}` and listing remaining placeholders.
 - **AGENTS.md templates** — global Codex preferences + project-level rules that Codex needs (Codex does not load Claude Code skills).
 - A **setup script** to install on a new machine.
@@ -49,7 +49,7 @@ claude-workflow/
 │           ├── rd-implementer/SKILL.md
 │           ├── code-reviewer/SKILL.md
 │           ├── reporter/SKILL.md
-│           ├── gitlab-mr-reviewer/SKILL.md
+│           ├── mr-reviewer/SKILL.md
 │           └── review-fixer/SKILL.md
 ├── scripts/
 │   ├── setup.sh                  # install on new machine (per-user)
@@ -102,7 +102,7 @@ Once installed, the following slash commands are available in Claude Code:
 | `/workflow:implement` | Implement code from approved spec | `rd-implementer` |
 | `/workflow:verify` | Verify implementation against spec | `code-reviewer` |
 | `/workflow:fix` | Fix review / MR comments and reply resolved | `review-fixer` |
-| `/workflow:review-mr <MR>` | Review a GitLab MR with inline DiffNotes | `gitlab-mr-reviewer` |
+| `/workflow:review-mr <MR/PR>` | Review the project's MR/PR with inline comments | `mr-reviewer` (Android default: glab + DiffNote) |
 | `/workflow:report` | Generate spec-vs-impl coverage report (.md/.html) | `reporter` |
 
 Flags: `/workflow --fast` (1 combined reviewer per stage) / `/workflow --full` (2–3 parallel reviewers, default). To archive a completed change, use the existing `/opsx:archive`.
@@ -224,7 +224,7 @@ workflow-orchestrator is **stack-agnostic**. Two layers of customization:
 
 **Layer 2 — `<repo>/.claude/skills/<name>/SKILL.md` content** (heavy, scaffold once):
 
-The orchestrator invokes `test-writer`, `rd-implementer`, `code-reviewer`, `reporter`, `gitlab-mr-reviewer`, `review-fixer` by convention name. Project-local versions live at `<repo>/.claude/skills/<name>/` and are auto-loaded by Claude Code. Scaffold via `init-project.sh <stack> <repo>`.
+The orchestrator invokes `test-writer`, `rd-implementer`, `code-reviewer`, `reporter`, `mr-reviewer`, `review-fixer` by convention name. Project-local versions live at `<repo>/.claude/skills/<name>/` and are auto-loaded by Claude Code. Scaffold via `init-project.sh <stack> <repo>`. The `mr-reviewer` convention is VCS-host-neutral; each stack's template picks its own implementation (Android default uses GitLab/`glab`; a GitHub-based stack could use `gh` + PR review API).
 
 Other configurable slots:
 

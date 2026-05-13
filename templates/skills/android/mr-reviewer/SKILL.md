@@ -1,7 +1,7 @@
 ---
-name: gitlab-mr-reviewer
+name: mr-reviewer
 description: >
-  審查 GitLab Merge Request，發佈 inline comments 並產出評分報告。當使用者輸入 /review-mr 指令，或說「幫我 review MR」「審查 Merge Request」「檢查 GitLab MR」「gitlab-mr-reviewer」時，必須使用此技能包。
+  審查專案的 Merge / Pull Request，發佈 inline comments 並產出評分報告。本實作（Android template）使用 GitLab + `glab` CLI；其他 stack 可改用 `gh` 或對應工具。當使用者輸入 /review-mr 指令，或說「幫我 review MR」「審查 Merge Request」「檢查 MR/PR」「mr-reviewer」時，必須使用此技能包。
   Codex 扮演資深 Code Reviewer，透過 glab CLI 取得 MR diff，依 Clean Architecture / Null Safety / Compose 等維度審查，以 curl 發佈 DiffNote inline comments，並發佈含 0–100 評分的總結報告。
   只要任務牽涉到 GitLab MR 審查、程式碼品質檢查、發佈 MR 評論，一律觸發此技能包。
 compatibility: "需要 glab CLI（已認證）、curl、bash"

@@ -28,7 +28,7 @@ End-to-end pipeline. The user sees two checkpoints: spec approval, and pre-push.
 | `rd-implementer` | Stage 7 | How to implement code layer-by-layer for this stack |
 | `code-reviewer` | Stages 7.5, 11 | What "correct" means here (lint, layering, invariants) |
 | `reporter` | Stages 7.5, 11 | Report format + coverage rules |
-| `gitlab-mr-reviewer` | Stage 10.5 | Stack-specific MR review dimensions |
+| `mr-reviewer` | Stage 10.5 | Stack-specific MR review dimensions |
 | `review-fixer` | Stage 11 | How to resolve review findings per stack conventions |
 
 Project-level config lives in `<repo>/AGENTS.md`. When this document refers to `{TEST_COMMAND}`, `{BUILD_COMMAND}`, or `{LAYERING_CONVENTION}`, substitute from AGENTS.md.
@@ -311,7 +311,7 @@ fi
 ```
 
 - `codex_available=true` → dispatch `Agent(subagent_type="codex:codex-rescue", prompt=…)`
-- `codex_available=false` → fallback `Agent(subagent_type="general-purpose")` + load `gitlab-mr-reviewer` skill content into the prompt
+- `codex_available=false` → fallback `Agent(subagent_type="general-purpose")` + load `mr-reviewer` skill content into the prompt
 - User override: `/workflow --skip-codex-review` or `/workflow --engine=claude`
 
 #### 1. Pre-flight (in main shell, before dispatch)
@@ -370,7 +370,7 @@ Push 完 MR 後 reviewer 通常要數小時/數日。**不自動觸發** — use
 /workflow --mr-loop {MR_URL}
 ```
 
-Or pipeline 外直接調用 `gitlab-mr-reviewer` / `review-fixer` skill。
+Or pipeline 外直接調用 `mr-reviewer` / `review-fixer` skill。
 
 #### 0. Fix engine detection (進 Stage 11 第一步)
 
@@ -395,7 +395,7 @@ fi
 
 #### 1. Fetch + Classify
 
-- Fetch：`gitlab-mr-reviewer` skill 或 `glab api projects/:id/merge_requests/{MR_ID}/discussions`，取所有 unresolved discussions（含 inline + general）。
+- Fetch：`mr-reviewer` skill 或 `glab api projects/:id/merge_requests/{MR_ID}/discussions`，取所有 unresolved discussions（含 inline + general）。
 - Classify by severity（CRITICAL / WARNING / SUGGESTION）。
 - SUGGESTION 列給 user 一次看完，user 決定整批吸收/略過，不進 per-comment loop。
 - CRITICAL / WARNING → 進步驟 2 per-comment checkpoint loop。
@@ -586,7 +586,7 @@ One file, append-only, one section per stage. Token usage tracked for retrospect
 - `superpowers:brainstorming` — principles borrowed inline, NOT invoked
 - `superpowers:grill-me` — principles borrowed inline, NOT invoked
 - `test-writer`, `rd-implementer`, `code-reviewer`, `reporter`, `review-fixer` — **project-local** skills (auto-loaded from `<repo>/.claude/skills/<name>/`), invoked at relevant stages; see **Project bindings** for the contract
-- `gitlab-mr-reviewer` — **project-local** skill invoked at Stage 10.5 (real codex via codex-rescue agent, not Claude self-roleplay)
+- `mr-reviewer` — **project-local** skill invoked at Stage 10.5 (real codex via codex-rescue agent, not Claude self-roleplay)
 - `codex:codex-rescue` — the codex CLI forwarder used by Stages 10.5 + 11
 - `/opsx:propose` — alternative entry without pipeline
 - `/opsx:archive` — runs separately after MR merge

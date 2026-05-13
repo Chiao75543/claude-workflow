@@ -29,7 +29,7 @@ Save: `base_sha`, `head_sha`, `start_sha`, `gitlab_host` (from `web_url`), `proj
 
 ```
 You are running as Codex acting as a senior {PROJECT} code reviewer per the
-`gitlab-mr-reviewer` skill.
+`mr-reviewer` skill.
 
 **Working directory**: {WORKTREE_PATH} (branch {BRANCH})
 

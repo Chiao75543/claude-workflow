@@ -39,7 +39,7 @@ compatibility: "需要 bash / 檔案系統（寫入報告檔案，必要）、No
 ```
 觸發條件（滿足其一）：
 ✅ code-reviewer 明確輸出「✅ 可以 Commit」
-✅ gitlab-mr-reviewer 明確輸出「✅ 可以 Merge」
+✅ mr-reviewer 明確輸出「✅ 可以 Merge」
 ```
 
 若有未解決的 CRITICAL 問題：
