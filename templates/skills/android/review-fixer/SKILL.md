@@ -1,15 +1,26 @@
 ---
 name: review-fixer
 description: >
-  修復 Code Review 或 GitLab MR Review 發現的問題，修完後自動驗證並在 GitLab 回覆已解決。當使用者輸入 /fix 指令，或說「幫我修 review 問題」「修復 MR comments」「fix review issues」「修 code review」「處理 review 意見」時，必須使用此技能包。
-  Claude 扮演資深 RD 角色，從 GitLab MR 讀取 review comments（CRITICAL / WARNING），參照 OpenSpec change 規格確保修復符合規格，逐一修正程式碼，完成後執行 /verify 驗證，並透過 GitLab API 回覆已解決且 resolve 每則 discussion。
+  修復 Code Review 或 GitLab MR Review 發現的問題。當使用者輸入 /fix 指令，或說「幫我修 review 問題」「修復 MR comments」「fix review issues」「修 code review」「處理 review 意見」時，必須使用此技能包。
+  Claude 扮演資深 RD 角色，**嚴格遵守專案 `AGENTS.md` 的 PR Comment Fix Workflow（如 Stage 11）規範**：**一個 comment 一個 commit**、修前**先出 fix PLAN 等人工核可**、commit 帶指定 footer、**不自動 push、不自動 resolve discussion**。修完僅貼修復摘要 reply，是否 resolve 留給人工驗證後由 pipeline 處理。
   只要任務牽涉到修復 code review 問題、處理 MR review comments、解決 review 意見、修正 CRITICAL/WARNING 問題，一律觸發此技能包。
 compatibility: "需要 glab CLI（已認證）、curl、bash"
 ---
 
 # Review Fixer — Review 問題修復 Agent
 
-Claude 扮演資深 RD，讀取 GitLab MR 上的 review comments，逐一修復 CRITICAL / WARNING 問題，修完後驗證並在 GitLab 標記已解決。
+Claude 扮演資深 RD，讀取 GitLab MR 上的 review comments，**逐個**修復 CRITICAL / WARNING 問題。
+
+## 與專案 AGENTS.md 的契約（**最高優先**）
+
+專案 `AGENTS.md` 內的 PR Comment Fix Workflow（典型寫在 Stage 11）是本 skill 的硬性規範，**任何衝突以 AGENTS.md 為準**。預設 contract：
+
+- **一個 comment 一個 commit**，禁止 batch
+- 修前**先產出 fix PLAN**（files / changes / spec mapping / risks / confidence），**等人工核可**才動 Edit
+- commit footer 須含 `Comment:` / `PR:` / `Spec:` / `Scenarios:` / `AI-assisted:`
+- **不自動 push、不自動 mark discussion as resolved** —— Resolve 留給人工驗證 + pipeline 處理
+
+若專案 AGENTS.md 沒寫對應規範，採用以上預設。若 AGENTS.md 明文允許 auto-resolve / push，遵循 AGENTS.md。
 
 ## 觸發方式
 
@@ -139,104 +150,96 @@ for d in discussions:
 
 ---
 
-### Step 5 — 逐一修復
+### Step 5 — 逐一處理每個 comment（**per-comment loop**）
 
-對每個待修復問題，按以下流程處理：
+對清單上每個待修復的 comment 走以下子流程；**完成一個 comment 才能進到下一個**：
 
 #### 5a. 讀取完整檔案上下文
 
-先讀取問題所在檔案的完整內容，理解上下文後再修改。不要只看 diff 片段。
+先讀取問題所在檔案的完整內容，理解上下文後再規劃修改。不要只看 diff 片段。
 
 ```bash
 cat <file_path>
 ```
 
-#### 5b. 分析問題根因
+#### 5b. 產出 fix PLAN（**等人工核可才往下**）
 
-理解 comment 指出的問題本質：
-- comment 中的「建議修正」程式碼片段是否合理？
-- 修復是否會影響其他地方？
-- 修復是否符合 OpenSpec 規格定義？
+依專案 `AGENTS.md` 要求，**先出 plan、不要直接 Edit**。Plan 須含以下 5 欄：
 
-#### 5c. 套用修正
+```
+🛠 Fix PLAN for [C-1] XxxViewModel.kt:42
 
-使用 Edit tool 修改程式碼。修復時遵守以下原則：
+Files       : XxxViewModel.kt （唯一檔案）
+Changes     : - handleE002() 新增 InsufficientBalance branch
+              - 在 errorAction 加 NavigateToTopUp(amount)
+Spec mapping: openspec/changes/<name>/specs/<name>/spec.md
+              Requirement: 「不足餘額處理」/ Scenario: 「E002 出現時導航至儲值」
+Risks       : Navigation 跨 feature；確認 TopUpRoute 已在 NavigationGraph 註冊
+Confidence  : High（spec 明確、單檔修改）
+
+請確認 PLAN，回 "ok" 進入修改，或提出調整。
+```
+
+**等使用者明確回應後**才進 5c。任何非 "ok" 的回應（含「再想想」「等等」）都視為「不要動」。
+
+#### 5c. 套用最小修正
+
+使用 Edit tool 修改。原則：
 
 | 原則 | 說明 |
 |---|---|
-| 最小變更 | 只修問題本身，不順便重構周圍程式碼 |
+| 最小變更 | 只修這一個 comment 指出的問題，不順手重構周圍程式碼 |
 | 符合規格 | 若有 OpenSpec change 參考，修復後的行為必須與規格一致 |
-| 遵守專案規範 | 依照 CLAUDE.md 的編碼規則（無 `!!`、無 region、無 magic number 等） |
-| 保持一致性 | 修復風格與現有程式碼一致 |
+| 遵守專案規範 | 依照 CLAUDE.md 編碼規則（無 `!!`、無 region、無 magic number 等） |
+| 一致性 | 修復風格與現有程式碼一致 |
 
-#### 5d. 記錄修復結果
+#### 5d. 驗證單次修改
 
-每修完一個問題，記錄修復細節供後續回報用：
+只跑針對這次變更的快速驗證：
 
-```
-[C-1] ✅ 已修復
-  檔案：XxxViewModel.kt:42
-  修復內容：新增 E002 InsufficientBalance 錯誤處理，導航至儲值頁
-  discussion_id: abc123
-```
+1. 取最新 `git diff`（只看本次修改的檔案）
+2. 若有 OpenSpec 參考，對該 Scenario 做點對點比對
+3. 確認沒新增 CRITICAL / WARNING
 
----
+通過才進 5e；失敗回 5b 重出 PLAN。
 
-### Step 6 — 執行驗證（/verify）
+#### 5e. Commit（**一個 comment 一個 commit**）
 
-所有問題修完後，執行 code-reviewer 技能包的驗證流程：
-
-1. 取得最新 git diff
-2. 若有 OpenSpec change 參考，對照 specs/ 進行規格合規審查
-3. 確認所有 CRITICAL / WARNING 問題已解決
+使用以下 footer 格式（**必填**，依 `AGENTS.md`）：
 
 ```
-驗證結果：
-  CRITICAL: 0 個 ✅
-  WARNING:  0 個 ✅
-  品質評分: XX / 100
-  結論: ✅ 可以 Commit
+fix(review): {scope} address {file}:{line} - {summary}
+
+Comment: {reviewer_name} on {file}:{line}
+PR: !{MR_IID}
+Spec: openspec/changes/{name}/specs/{name}/spec.md
+Scenarios: {scenario-name}
+AI-assisted: claude
 ```
 
-若驗證仍有新問題：
-```
-⚠️ 驗證發現新問題：
-  [NEW-W-1] XxxRepositoryImpl.kt:35 — 新引入的 magic number
+**禁止 batch 多 comment**。Commit 後**不 push**。
 
-是否繼續修復新問題？(ok / 跳過)
-```
+#### 5f. Reply on the discussion（**informational only — 不 resolve**）
 
----
-
-### Step 7 — 回覆 GitLab Comments 並 Resolve
-
-驗證通過後，對每個已修復的 discussion 執行兩個動作：
-
-#### 7a. 回覆已解決訊息
+在該 discussion 貼修復摘要，明確標示「待人工驗證 + pipeline resolve」：
 
 ```bash
 curl -s --request POST \
   --header "PRIVATE-TOKEN: $TOKEN" \
   --header "Content-Type: application/json" \
-  --data '{"body": "✅ 已修復 — <修復摘要>\n\n---\n*🤖 Fixed by Claude Code*"}' \
+  --data '{"body": "Fix proposed in commit <SHA>. 變更摘要：<one-liner>.\n\n依 AGENTS.md，**未自動 resolve**，等 reviewer 確認 diff 後由 pipeline 處理。\n\n---\n*🤖 Fix proposal by Claude Code*"}' \
   "https://<GITLAB_HOST>/api/v4/projects/$PROJECT_PATH_ENCODED/merge_requests/<MR_IID>/discussions/<DISCUSSION_ID>/notes"
 ```
 
-#### 7b. Resolve Discussion
+**禁止呼叫 `PUT .../discussions/<id>` resolved=true**。Resolve 由人工觸發 / pipeline 完成。
 
-```bash
-curl -s --request PUT \
-  --header "PRIVATE-TOKEN: $TOKEN" \
-  --header "Content-Type: application/json" \
-  --data '{"resolved": true}' \
-  "https://<GITLAB_HOST>/api/v4/projects/$PROJECT_PATH_ENCODED/merge_requests/<MR_IID>/discussions/<DISCUSSION_ID>"
-```
+#### 5g. 進入下一個 comment
 
-驗證回應 HTTP 200 且 `resolved: true`。
+回到 5a 處理下一個。沒有下一個就進 Step 6。
 
 ---
 
-### Step 8 — 產出修復摘要
+### Step 6 — 產出修復摘要（**並提醒人工驗證**）
 
 ```
 ════════════════════════════════════════
@@ -244,42 +247,35 @@ curl -s --request PUT \
 ════════════════════════════════════════
 
 📊 修復摘要
-┌────────────────────────┬────────┐
-│ 待修復問題              │ X 個   │
-│ 已修復                  │ X 個   │
-│ 跳過                    │ X 個   │
-│ GitLab Resolved         │ X 個   │
-└────────────────────────┴────────┘
+┌────────────────────────────┬────────┐
+│ 待修復 comment              │ X 個   │
+│ 已 commit fix proposal      │ X 個   │
+│ 跳過                        │ X 個   │
+│ Auto-resolved (應為 0)      │ 0 個   │
+└────────────────────────────┴────────┘
 
 ════════════════════════════════════════
-✅ 已修復問題
+✅ 已提案修復（每筆對應一個 commit）
 ════════════════════════════════════════
 
 [C-1] XxxViewModel.kt:42 — E002 錯誤處理遺漏
-  修復：新增 InsufficientBalance case，導航至儲值頁
-  GitLab: ✅ 已回覆 & Resolved
+  Commit: <SHA1>
+  GitLab reply: ✅ 已貼修復摘要（未 resolve）
 
 [W-1] XxxViewModel.kt:28 — Magic Number
-  修復：抽出 RETRY_DELAY_MS = 3000L 常數
-  GitLab: ✅ 已回覆 & Resolved
+  Commit: <SHA2>
+  GitLab reply: ✅ 已貼修復摘要（未 resolve）
 
 ════════════════════════════════════════
-📊 驗證結果
+📌 下一步（**人工 / Reviewer 操作**）
 ════════════════════════════════════════
-品質評分：XX / 100
-CRITICAL：0 個
-WARNING：0 個
-結論：✅ 可以 Commit / Merge
-
-════════════════════════════════════════
-📌 下一步
-════════════════════════════════════════
-- [ ] git add & commit 修復的檔案
-- [ ] 推送至遠端分支
-- [ ] 通知 Reviewer 重新檢視 MR
+- [ ] 人工檢視每個 commit 的 diff 是否真的解決 comment
+- [ ] 確認後 `git push` 推上去（本 skill 不自動 push）
+- [ ] Pipeline 重跑通過後，由 pipeline 或 reviewer 手動 resolve discussion
+- [ ] 本 skill **不會** mark resolved（依 AGENTS.md）
 
 ---
-*🤖 由 Claude Code 自動修復*
+*🤖 Fix proposals by Claude Code — pending human verification*
 ```
 
 ---
@@ -289,7 +285,7 @@ WARNING：0 個
 | 觸發來源 | 行為 |
 |---|---|
 | `/review-mr` 完成後有 CRITICAL/WARNING | 提示使用者：「發現 X 個問題，是否執行 /fix !<MR_ID> 修復？」 |
-| `/fix` 獨立執行 | 完整流程：讀取 comments → 修復 → 驗證 → resolve |
+| `/fix` 獨立執行 | per-comment 流程：讀取 → PLAN → 人工核可 → 修 → commit → 貼 reply（**不 resolve**、**不 push**） |
 | `/workflow` Pipeline 中 | Stage 3a verify 有問題時，可呼叫 fix 修復後重新驗證 |
 
 ---
@@ -302,7 +298,7 @@ WARNING：0 個
 | MR 無 review comments | 告知無待修復問題，建議先執行 `/review-mr` |
 | Comment 無法辨識嚴重程度 | 歸類為 UNKNOWN，詢問使用者是否納入修復 |
 | 修復後驗證仍有新問題 | 列出新問題，詢問是否繼續修復 |
-| Resolve API 失敗 | 列出失敗的 discussion_id，提示使用者手動 resolve |
+| 使用者要求自動 resolve | 拒絕並引用專案 `AGENTS.md` PR Comment Fix Workflow：Resolve 由人工驗證後處理；本 skill 不執行 |
 | OpenSpec 規格與 comment 建議衝突 | 以 OpenSpec 規格為準，在回覆中說明依規格修復 |
 | 修改檔案不在 MR diff 範圍 | 警告使用者，確認是否仍要修改 |
 | Comment 來自非 Claude 的 reviewer | 同樣處理，但回覆中標明「依 reviewer 意見修復」 |
