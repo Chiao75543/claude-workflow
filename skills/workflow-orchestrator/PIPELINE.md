@@ -68,7 +68,7 @@ flowchart TD
 
     subgraph P4[Phase 4: Close the loop]
         S10 -. deferred .-> S11[11. PR review loop<br/>engine + per-comment gate]
-        S11 --> S12[12. Archive<br/>post-merge cleanup]
+        S11 --> S12[12. Archive<br/>CI auto on merge]
         S12 --> EndDone([end])
     end
 
@@ -98,7 +98,7 @@ Legend: yellow = user gate, green = stage added in this revision.
 | 9    | Confirm push       | user                 | view diff stats + branch + remote                                 | —           | push / hold                     | yes                 |
 | 10   | Push + PR          | auto                 | `git push` + create pull request                                  | —           | remote branch + PR              | —                   |
 | 11   | PR review loop     | deferred             | fix engine + per-comment gate + auto-resolve                      | —           | resolved discussions, merged    | yes (2 per comment) |
-| 12   | Archive            | user (post-merge)    | archive spec + worktree cleanup + tracker close                   | —           | spec archived, env clean        | yes                 |
+| 12   | Archive            | CI on merge          | CI moves spec to archive + merges into specs/; local cleanup user-side | —      | spec archived, env clean        | —                   |
 
 ---
 
@@ -416,16 +416,27 @@ Exit conditions:
 - All CRITICAL/WARNING resolved (approved or skipped or deferred-then-resolved) + no deferred remaining + reviewer approves + PR merged → Stage 12.
 - User `abort` → Stage 11 exits, PR stays open, already-applied fixes remain pushed.
 
-### Stage 12 — Archive (post-merge, user-triggered)
+### Stage 12 — Archive (post-merge, CI-automated)
 
-User triggers archive after the PR is merged. The pipeline does **not** auto-archive — premature archive moves the spec out of `openspec/changes/` while the PR may still reference it.
+PR merge triggers `.github/workflows/auto-archive.yml`. The workflow runs against the integration branch (post-merge) and produces a single auto-commit:
 
-1. Move spec folder to `openspec/changes/archive/YYYY-MM-DD-{name}/`.
-2. Merge into `openspec/specs/{capability}/spec.md`:
-   - ADDED → new section
+1. Detect change name from PR-changed paths — `openspec/changes/{name}/`, excluding `archive/`.
+2. Move spec folder to `openspec/changes/archive/YYYY-MM-DD-{name}/`.
+3. Merge into `openspec/specs/{capability}/spec.md`:
+   - ADDED → new capability file
    - MODIFIED → integrate diff into existing capability
-3. **Worktree cleanup**: `git worktree remove .worktrees/{name}` + delete local branch (`git branch -d feat/{branch_name}`). Remote branch is auto-deleted if the PR was configured to delete source branch on merge.
-4. Update ticket tracker (close issue) + project memory (remove from active list).
+4. Commit + push with the bot identity.
+
+**Why CI, not a second PR.** The change content is already reviewed; archive is mechanical (folder move + spec merge). A second PR adds latency without adding safety. The auto-commit pushes directly to the integration branch, so branch protection must allow the workflow's identity (a GitHub App token or PAT exposed as `ARCHIVE_BOT_TOKEN`; falls back to `GITHUB_TOKEN`).
+
+**User-side cleanup** (CI can't do this — runs on your machine):
+
+- `git worktree remove .worktrees/{name}` + `git branch -d feat/{branch_name}`.
+- Close ticket / update project memory.
+
+**Failure modes.** If CI cannot resolve a single change name (0 or >1 `openspec/changes/{name}/` paths in the PR), it emits a warning and skips. Run `scripts/archive.sh {name}` manually as a fallback.
+
+**Pre-merge archive is still forbidden.** The workflow only fires on `pull_request: closed && merged == true`, never on PR open. Archiving while the PR is live would move the spec out of `openspec/changes/` while reviewers still reference it.
 
 ---
 
@@ -505,7 +516,7 @@ Trivial UI tweaks (color or spacing only, no behaviour change) MAY bypass the pi
 ```
 /workflow --from {stage} --spec {name}    # stage ∈ tests, implement, commit, push
 /workflow --pr-loop {PR_ID}               # jump to Stage 11
-<archive-command> {name}                  # Stage 12, outside pipeline
+scripts/archive.sh {name}                 # Stage 12 fallback (CI normally runs this on merge)
 ```
 
 Stage 1 also auto-detects existing `openspec/changes/{name}/` and offers resume options.
@@ -561,8 +572,8 @@ To adapt: copy this file, substitute the slot values, and replace the commands i
 | ------------------------------------------------------- | --------------------------------------------------------------------------------------------------------- |
 | Skipping Stage 7.5 in auto mode                         | Pipeline contract — commit blocked until 0 CRITICAL + green tests + report generated.                     |
 | Treating push as pipeline end                           | Pipeline ends at Stage 12 archive. Push only ships a candidate.                                           |
-| Auto-archiving before merge                             | Stage 12 is user-triggered, post-merge.                                                                   |
-| Forgetting worktree cleanup                             | `git worktree remove` is part of Stage 12. Stale worktrees confuse Stage 1 detection.                     |
+| Archiving before PR merge                               | Auto-archive triggers on `closed && merged`, never on PR open. Manual `scripts/archive.sh` must wait for merge too. |
+| Forgetting local worktree cleanup                       | CI archives the spec in the integration branch; `git worktree remove` + local branch delete remain user-side after merge. |
 | Batching PR comment fixes                               | Stage 11 mandates per-comment gate × 2 (plan + verify).                                                   |
 | Mid-loop engine swap                                    | Engine fixed at Step 0. Mid-loop swap breaks fix-quality attribution + risks double-apply / missed commit. |
 | Engine writing code at Step 2b                          | Plan only at 2b. Code only at 2d after user approves plan.                                                |

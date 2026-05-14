@@ -105,7 +105,7 @@ Once installed, the following slash commands are available in Claude Code:
 | `/workflow:review-mr <MR/PR>` | Review the project's MR/PR with inline comments | `mr-reviewer` (Android default: glab + DiffNote) |
 | `/workflow:report` | Generate spec-vs-impl coverage report (.md/.html) | `reporter` |
 
-Flags: `/workflow --fast` (1 combined reviewer per stage) / `/workflow --full` (2–3 parallel reviewers, default). To archive a completed change, use the existing `/opsx:archive`.
+Flags: `/workflow --fast` (1 combined reviewer per stage) / `/workflow --full` (2–3 parallel reviewers, default). Archive is CI-automated on PR merge via `.github/workflows/auto-archive.yml`; `scripts/archive.sh` is the local fallback.
 
 The `workflow:` namespace prefix avoids collisions with other plugins or skills that may register similarly named commands (`/test`, `/implement`, `/verify`, etc.).
 
@@ -182,7 +182,7 @@ When migrating to a new machine, the new path may differ (username changes). The
 ├─ 9. ▮ User confirms push
 ├─ 10. Push + PR ───────── git push + create PR
 ├─ 11. PR review loop ◄── deferred; engine (codex/claude) + 2 user gates/comment
-└─ 12. Archive ────────── post-merge, user-triggered, cleanup
+└─ 12. Archive ────────── post-merge, CI auto on merge
 ```
 
 See [`PIPELINE.md`](skills/workflow-orchestrator/PIPELINE.md) for the full reference, including:

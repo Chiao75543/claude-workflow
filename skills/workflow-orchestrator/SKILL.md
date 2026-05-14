@@ -72,7 +72,7 @@ digraph workflow {
   rev_c -> user2 [label="pass"];
   codex_rev [shape=box, label="Stage 10.5 Codex auto-review\n(advisory, posts inline + summary)"];
   mr_loop [shape=box, label="Stage 11 MR review loop\n(codex/claude engine + ⏸ per-comment)"];
-  archive [shape=box, label="Stage 12 Archive\n(/opsx:archive, post-merge)"];
+  archive [shape=box, label="Stage 12 Archive\n(CI auto on merge)"];
   user2 -> push [label="ok"];
   user2 -> done [label="hold"];
   push -> codex_rev [label="auto"];
@@ -94,7 +94,7 @@ digraph workflow {
    - Without ticket: `<feature-slug>` (e.g. `error-message-cleanup`)
 4. List existing capabilities (**check both already-accumulated and in-progress**):
    - Archived: `ls openspec/specs/`
-   - In-progress (not yet archived): `ls openspec/changes/*/specs/` — these capabilities exist on other branches but will appear in main spec tree after their respective MR merges + `/opsx:archive`
+   - In-progress (not yet archived): `ls openspec/changes/*/specs/` — these capabilities exist on other branches but will appear in main spec tree after their respective MR merges (CI auto-archives)
    - Show union to user. Ask:
      > "Does this attach to an existing capability (MODIFIED) or create a new one (ADDED)?"
    - **MODIFIED**: record target capability name; subsequent spec uses `## MODIFIED Requirements`
@@ -462,14 +462,25 @@ fi
 | 人工介入 | 零（auto pass/fail） | **每條 comment 兩個 ✋**（approve plan + verify diff）|
 | 結束 | 0 CRITICAL → commit | 全部 resolved + merged → archive |
 
-### Stage 12: Archive (post-merge)
+### Stage 12: Archive (post-merge, CI-automated)
 
-MR merged 後 user 手動觸發 `/opsx:archive {name}`（pipeline 不自動跑 archive，避免提早 archive 未 merge 的 change）：
+PR merge 觸發 `.github/workflows/auto-archive.yml`，在整合分支上自動跑：
 
-1. Spec 從 `openspec/changes/{name}/` 搬到 `openspec/changes/archive/YYYY-MM-DD-{name}/`。
-2. 對應 capability 累積到 `openspec/specs/{capability}/spec.md`（ADDED → 新增、MODIFIED → 合併進既有 capability）。
-3. **Worktree cleanup**: 若 `.worktrees/{name}` 仍存在 → `git worktree remove .worktrees/{name}`（同時刪 local branch `feat/{branch_name}`，遠端 branch 會被 GitLab 自動刪除若 MR 開了 "Delete source branch"）。
-4. MEMORY 對應 active ticket entry 標 done 或刪掉（merged 完的 ticket 不該長期占 active memory）。
+1. 從 PR 改動路徑偵測 `{name}`（取 `openspec/changes/{name}/`，排除 `archive/`）。
+2. Spec 從 `openspec/changes/{name}/` 搬到 `openspec/changes/archive/YYYY-MM-DD-{name}/`。
+3. 合進 `openspec/specs/{capability}/spec.md`（ADDED → 新增 / MODIFIED → 合既有）。
+4. Bot 帳號 commit + push（branch protection 需放行該 identity；`ARCHIVE_BOT_TOKEN` 沒設則 fallback 到 `GITHUB_TOKEN`）。
+
+**為什麼用 CI 不開第二個 PR**：內容早已 review 過、archive 是純機械動作，二次 PR 只是延遲、沒額外安全性。
+
+**User-side cleanup**（CI 跑不到，要在本機跑）：
+
+- `git worktree remove .worktrees/{name}` + `git branch -d feat/{branch_name}`
+- 關 ticket + 從 MEMORY active list 移除
+
+**Fallback**：CI 認不出唯一 `{name}` 時會 skip 並印警告 → 本機跑 `scripts/archive.sh {name}` 補。
+
+**仍禁止 pre-merge archive**：workflow 只在 `closed && merged == true` 觸發，PR open 期間不會跑；手動 script 也要等 merge 後。
 
 ## Reviewer dispatch pattern
 
@@ -541,7 +552,7 @@ One file, append-only, one section per stage. Token usage tracked for retrospect
 | 10 Push | push + MR | — |
 | 10.5 Codex review | dispatch codex → relay-post inline + summary | advisory, auto after Stage 10 |
 | 11 MR loop | codex/claude engine + ⏸ per-comment (plan + verify) + auto-resolve | deferred + ✋ × 2 per comment |
-| 12 Archive | `/opsx:archive` + worktree cleanup | post-merge, user-triggered |
+| 12 Archive | CI `auto-archive.yml` + 本機 worktree cleanup | post-merge, CI-auto |
 
 ## Common Mistakes
 
@@ -562,8 +573,8 @@ One file, append-only, one section per stage. Token usage tracked for retrospect
 | Skipping Stage 7.5 in auto mode | Violates `feedback_auto_workflow_discipline`; commit blocked until 0 CRITICAL + green tests + report generated |
 | Running `code-reviewer` / `reporter` inside Stage 7 reviewers | Those agents are spec-vs-implementation gates; keep them in 7.5 so reviewer roles stay distinct (Stage 7 = peer review, Stage 7.5 = compliance gate) |
 | Treating push as the end of pipeline | Pipeline ends at Stage 12 archive. Push only ships a candidate; review loop (Stage 11) closes the contract. |
-| Auto-archiving before MR is merged | Stage 12 is user-triggered after merge. Premature archive moves spec out of `openspec/changes/` while MR still references it. |
-| Forgetting to remove worktree after archive | `git worktree remove .worktrees/{name}` is part of Stage 12 — stale worktrees accumulate and confuse later Stage 1 detection. |
+| 在 MR merge 前 archive | auto-archive workflow 只在 `closed && merged` 觸發；手動 `scripts/archive.sh` 也要等 merge 後。 |
+| Archive 後忘了本機清理 worktree | CI 只 archive 整合分支的 spec；`git worktree remove` + local branch delete 要在本機自己跑。 |
 | Batching MR comments and asking user once | Stage 11 mandates per-comment checkpoint (plan ✋ + verify ✋). Batching defeats the "user catches engine drift early" design. |
 | Skipping Stage 11 Step 0 engine detection | codex CLI absence + still dispatching `codex:codex-rescue` agent → silent failure. Detect once at loop entry; cache `codex_available` flag. |
 | Switching fix engine mid-loop | Stay on the engine chosen at Step 0. Mid-loop swap breaks "fix quality归因 by engine" + may double-apply or miss commits. |
@@ -589,4 +600,5 @@ One file, append-only, one section per stage. Token usage tracked for retrospect
 - `mr-reviewer` — **project-local** skill invoked at Stage 10.5 (real codex via codex-rescue agent, not Claude self-roleplay)
 - `codex:codex-rescue` — the codex CLI forwarder used by Stages 10.5 + 11
 - `/opsx:propose` — alternative entry without pipeline
-- `/opsx:archive` — runs separately after MR merge
+- `.github/workflows/auto-archive.yml` — CI auto-runs Stage 12 on PR merge
+- `scripts/archive.sh` — local fallback for Stage 12 when CI skips (0 or >1 change paths in PR)
