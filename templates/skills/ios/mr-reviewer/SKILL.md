@@ -6,6 +6,7 @@ description: >
   只要任務牽涉到 GitHub PR 審查、程式碼品質檢查、發佈 PR 評論，一律觸發此技能包。
 compatibility: "需要 gh CLI（已認證）、bash"
 ---
+> **套用注意**：本 template 以首個專案（MindEY）的具體規則與範例為示範；套用到新專案時，請將 MindEY 專屬細節（鐵則清單、web 對照路徑、端點與範例）替換為該專案 CLAUDE.md／架構文件的對應內容。
 
 # GitHub PR Reviewer — Pull Request 審查 Agent
 

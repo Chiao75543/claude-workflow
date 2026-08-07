@@ -6,6 +6,7 @@ description: >
   只要任務牽涉到依照規格文件生成 iOS/SwiftUI 程式碼、串接 API、建立 ViewModel、Navigation，一律觸發此技能包。
 compatibility: "需要 bash / 檔案系統（寫入程式碼，必要）"
 ---
+> **套用注意**：本 template 以首個專案（MindEY）的具體規則與範例為示範；套用到新專案時，請將 MindEY 專屬細節（鐵則清單、web 對照路徑、端點與範例）替換為該專案 CLAUDE.md／架構文件的對應內容。
 
 # RD Implementer — iOS 實作 Agent
 
@@ -189,7 +190,7 @@ Phase 5: View / Navigation
 - AppRoute — 依 `ios.md` Navigation section 在集中式 route enum 新增 case（如 `case event(UUID)`）
 - AppRouter / DeepLinkParser — 註冊路由；Universal Links 與通知共用同一個 parser
 - Preview 用 `PreviewSupport/` 的假 Repo 組真 UseCase，不用真網路
-- 完成後：`{TEST_COMMAND}` 全綠，**且必跑煙霧測試**（gate 4：View/Navigation 屬 UI 變更，模擬器截圖自行判讀畫面正確才算完成，回報附截圖路徑；iOS 慣例 `./scripts/smoke.sh`，腳本由目標專案提供；驗證邊界以專案架構文件為準）
+- 完成後：`{TEST_COMMAND}` 全綠，**且必跑煙霧測試**（gate 4：截圖須為**受影響畫面**且自行判讀正確才算完成；導航不到的畫面列入 6c checklist 交 gate 5，**不得以啟動截圖充數**；iOS 慣例 `./scripts/smoke.sh [--url <deeplink>]`，腳本由目標專案提供；驗證邊界以專案架構文件為準）
 
 ---
 
@@ -236,6 +237,7 @@ Phase 5: View / Navigation
 - Phase 5 View / Navigation ✅
 - {TEST_COMMAND} 全綠（test-writer 測試 RED → GREEN）✅
 - {COVERAGE_COMMAND} 通過 ✅
+- UI 變更：煙霧測試已跑，截圖路徑＋判讀結果 ✅（非 UI 變更標 N/A）
 
 📝 建議 commit message：
   feat(module): implement xxx feature [AIP-XXX]

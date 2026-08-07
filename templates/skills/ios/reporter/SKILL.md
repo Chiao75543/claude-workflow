@@ -7,6 +7,7 @@ description: >
   只要任務牽涉到產出 code review 報告、規格對照報告、覆蓋分析，一律觸發此技能包。
 compatibility: "需要 bash / 檔案系統（寫入報告檔案，必要）"
 ---
+> **套用注意**：本 template 以首個專案（MindEY）的具體規則與範例為示範；套用到新專案時，請將 MindEY 專屬細節（鐵則清單、web 對照路徑、端點與範例）替換為該專案 CLAUDE.md／架構文件的對應內容。
 
 # Reporter — 規格與實作對照報告
 

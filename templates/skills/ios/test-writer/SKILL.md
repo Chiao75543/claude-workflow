@@ -6,6 +6,7 @@ description: >
   只要任務牽涉到依照規格文件生成測試、驗證業務邏輯、確認 Scenario 覆蓋，一律觸發此技能包。
 compatibility: "需要 bash / 檔案系統（讀取 production code 與寫入測試，必要）"
 ---
+> **套用注意**：本 template 以首個專案（MindEY）的具體規則與範例為示範；套用到新專案時，請將 MindEY 專屬細節（鐵則清單、web 對照路徑、端點與範例）替換為該專案 CLAUDE.md／架構文件的對應內容。
 
 # Test Writer — iOS 單元測試 Agent
 
