@@ -17,7 +17,7 @@ Claude 扮演資深 RD，讀取 GitHub PR 上的 review comments，**逐個**修
 
 - **一個 comment 一個 commit**，禁止 batch
 - 修前**先產出 fix PLAN**（files / changes / spec mapping / risks / confidence），**等人工核可**才動 Edit
-- commit footer 須含 `Comment:` / `PR:` / `Spec:` / `Scenarios:` / `AI-assisted:`
+- commit footer 須含 `Comment:` / `PR:` / `Spec:` / `Scenarios:` / `AI-assisted:`（`AI-assisted` 填實際執行引擎：claude / codex）
 - **不自動 push、不自動 mark thread as resolved** —— Resolve 留給人工驗證 + pipeline 處理
 
 若專案 AGENTS.md 沒寫對應規範，採用以上預設。若 AGENTS.md 明文允許 auto-resolve / push，遵循 AGENTS.md。
@@ -229,7 +229,7 @@ Comment: {reviewer_name} on {file}:{line}
 PR: #{PR_ID}
 Spec: openspec/changes/{name}/specs/{name}/spec.md
 Scenarios: {scenario-name}
-AI-assisted: claude
+AI-assisted: {engine}
 ```
 
 **禁止 batch 多 comment**。Commit 後**不 push**。
@@ -307,7 +307,7 @@ gh api graphql -f query='mutation { resolveReviewThread(input: {threadId: "<THRE
 |---|---|
 | `/review-mr` 完成後有 CRITICAL/WARNING | 提示使用者：「發現 X 個問題，是否執行 /fix #<PR_ID> 修復？」 |
 | `/fix` 獨立執行 | per-comment 流程：讀取 → PLAN → 人工核可 → 修 → commit → 貼 reply（**不 resolve**、**不 push**） |
-| `/workflow` Pipeline 中 | Stage 3a verify 有問題時，可呼叫 fix 修復後重新驗證 |
+| `/workflow` Pipeline 中 | verify 階段（Stage 7.5）有問題時，可呼叫 fix 修復後重新驗證 |
 
 ---
 
@@ -320,6 +320,6 @@ gh api graphql -f query='mutation { resolveReviewThread(input: {threadId: "<THRE
 | Comment 無法辨識嚴重程度 | 歸類為 UNKNOWN，詢問使用者是否納入修復 |
 | 修復後驗證仍有新問題 | 列出新問題，詢問是否繼續修復 |
 | 使用者要求自動 resolve | 拒絕並引用專案 `AGENTS.md` PR Comment Fix Workflow：Resolve 由人工驗證後處理；本 skill 不執行 |
-| OpenSpec 規格與 comment 建議衝突 | 以 OpenSpec 規格為準，在回覆中說明依規格修復 |
+| OpenSpec 規格與 comment 建議衝突 | 停止該 comment：列出規格與 reviewer 意見的具體差異，回報等待人工裁示（AGENTS.md：不得擅自蓋過 reviewer） |
 | 修改檔案不在 PR diff 範圍 | 警告使用者，確認是否仍要修改 |
 | Comment 來自非 Claude 的 reviewer | 同樣處理，但回覆中標明「依 reviewer 意見修復」 |

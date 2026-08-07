@@ -40,7 +40,7 @@ Claude 扮演資深 iOS RD，嚴格依照核准的 OpenSpec 規格逐層實作�
 2. **發現問題就停下來** — 規格有錯誤、遺漏、衝突時，立即回報使用者，等待指示，不自行決定
 3. **只實作規格，不修改規格**
 4. **遵守強制編碼規則**（見下方）
-5. **TDD 銜接** — workflow pipeline 中本 skill 位於測試之後（Stage 2 test-writer 已產出測試且全 RED）：實作前確認測試存在且 RED，實作目標 = 讓測試轉 GREEN；**不准修改測試遷就實作**，測試本身有錯一律回報
+5. **TDD 銜接** — workflow pipeline 中本 skill 位於測試之後（test-writer／RED 階段已產出測試且全 RED）：實作前確認測試存在且 RED，實作目標 = 讓測試轉 GREEN；**不准修改測試遷就實作**，測試本身有錯一律回報
 6. **web 對照先行** — 移植任何 web 元件前，先確認它有真的打 API（Phase 0）；demo/mock fallback 一律不移植
 
 ---
@@ -100,7 +100,7 @@ openspec/changes/{name}/
 - [ ] Domain Model 已定義（至少有資料結構）
 - [ ] API 契約已定義，或標記為不需要後端 API
 - [ ] 實作清單（tasks.md）存在
-- [ ] TDD 銜接：Stage 2 產出的測試已存在且處於 RED（單獨呼叫 /implement 而無測試時，回報使用者確認是否先跑 test-writer）
+- [ ] TDD 銜接：test-writer 產出的測試已存在且處於 RED（單獨呼叫 /implement 而無測試時，回報使用者確認是否先跑 test-writer）
 - [ ] web 對照元件已指認（實際驗證在 Phase 0）
 
 ---
@@ -179,7 +179,7 @@ Phase 5: View / Navigation
 
 #### Phase 4: Presentation Layer（ViewModel）
 - ViewModel — 依 `specs/*.md` 的 Requirement + Scenario；`@Observable @MainActor`，建構子收 UseCase，暴露狀態值 + intent 方法
-- async/await only（不引 Combine）；不碰 Repository 以外的 Data 型別
+- async/await only（不引 Combine）；不碰 Repository 或任何 MindEYData 型別，僅依賴 MindEYDomain 的 UseCase／Entity／DomainError
 - 統一把 `DomainError` 轉顯示文案（`server` 的繁中 message 直顯）；**禁止吞錯改寫**
 - 完成後：`{TEST_COMMAND}`
 
@@ -201,7 +201,7 @@ Phase 5: View / Navigation
 | 登入 | 成功登入 | SignInViewModel.signIn() | ✅ |
 | 登入 | 斷網 | DomainError.network → 顯示網路錯誤文案 | ✅ |
 
-同時確認 TDD 收尾：`{TEST_COMMAND}` 全綠，Stage 2 產出的測試**全數由 RED 轉 GREEN**。
+同時確認 TDD 收尾：`{TEST_COMMAND}` 全綠，test-writer 產出的測試**全數由 RED 轉 GREEN**；並執行 `{COVERAGE_COMMAND}` 確認分層覆蓋達標（iOS 慣例 `./scripts/coverage.sh --gate 90`：xccov 分層 Domain/Data/ViewModel、無檔案的層跳過、無效參數拒絕——腳本由目標專案提供）。
 
 若發現不一致，列出差異請使用者確認，不自行修正規格，也不修改測試遷就實作。
 
@@ -233,14 +233,15 @@ Phase 5: View / Navigation
 - Phase 3 Composition ✅
 - Phase 4 Presentation ✅
 - Phase 5 View / Navigation ✅
-- {TEST_COMMAND} 全綠（Stage 2 測試 RED → GREEN）✅
+- {TEST_COMMAND} 全綠（test-writer 測試 RED → GREEN）✅
+- {COVERAGE_COMMAND} 通過 ✅
 
 📝 建議 commit message：
   feat(module): implement xxx feature [AIP-XXX]
 
   Spec: openspec/changes/{name}/specs/{spec}/spec.md
   Scenarios: scenario-1, scenario-2
-  AI-assisted: yes
+  AI-assisted: {engine}   # 填實際執行引擎:claude / codex
 
 ⏭ 後續：commit → push feature branch → 開 PR 至 {GITHUB_REPO}（push / merge 依 user-global 紀律，一律先人工確認）
 
@@ -259,6 +260,6 @@ Phase 5: View / Navigation
 | 既有檔案已存在同名 type | 停止，確認是否覆蓋或合併 |
 | 發現規格章節有矛盾 | 停止，明確列出矛盾之處，等待使用者裁示 |
 | web 對照元件是 demo/mock（沒真的打 API） | 停止，回報並協助指認真實元件，等待使用者確認後才動工 |
-| TDD 模式下測試不存在或非 RED | 停止，回報使用者先跑 Stage 2（test-writer）或確認狀態 |
+| TDD 模式下測試不存在或非 RED | 停止，回報使用者先跑 test-writer（RED 階段）或確認狀態 |
 | 測試與規格矛盾 | 停止，不准改測試遷就實作，列出差異等待裁示 |
 | 需要新增 SPM 套件 | 停止，先徵得 owner 同意才加（專案慣例：依賴只用 SPM，目前僅 supabase-swift） |

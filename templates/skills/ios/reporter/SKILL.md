@@ -64,7 +64,9 @@ OpenSpec change 內：
 - `tasks.md` — 實作清單（驗證完成度）
 - `design.md` — Domain Model（驗證結構一致）
 
-**找不到 OpenSpec change**：先要求使用者建立或將舊規格遷移成 canonical OpenSpec spec，不另走 fallback。
+**模式判定（雙模式）**：
+- **Pipeline 模式**（Stage 7.5 / verify 之後，有具名 change）：報告除本地檔名外，**同步寫入 canonical `openspec/changes/{name}/report.md`**。找不到 change → 停止並要求建立，不走 fallback。
+- **獨立 PR review 模式**（`/review-mr` 後、無對應 change）：接受 `--spec <name>` 指定；未指定且找不到 spec 時，產出 PR-only 報告 `report_pr{PR_ID}_{YYYYMMDD}.md`——僅含 findings 摘要與品質評分、開頭標明「無規格對照」，不做 Requirement × Scenario 覆蓋表。
 
 **來源 B：實作現況（從 git diff 或檔案系統）**
 
@@ -88,10 +90,12 @@ OpenSpec change 內：
 
 ### Step 3 — 產出報告
 
-**檔案命名規則**：
+**檔案命名規則（依模式）**：
 ```
-report_{change-name}_{YYYYMMDD}.md
-report_{change-name}_{YYYYMMDD}.html
+Pipeline 模式:report_{change-name}_{YYYYMMDD}.md / .html
+             （並同步寫入 canonical openspec/changes/{name}/report.md）
+PR-only 模式:report_pr{PR_ID}_{YYYYMMDD}.md
+             （僅 findings 摘要+品質評分,開頭標明「無規格對照」,不做 Scenario 覆蓋表）
 ```
 
 ---
@@ -233,7 +237,7 @@ report_{change-name}_{YYYYMMDD}.html
 
 | 狀況 | 處理方式 |
 |---|---|
-| 找不到 OpenSpec change | 停止，請使用者先建立或將舊規格遷移成 canonical OpenSpec spec |
+| 找不到 OpenSpec change | Pipeline 模式：停止並要求建立；PR-only 模式（/review-mr 後、無具名 change）：改產 `report_pr{PR_ID}_{YYYYMMDD}.md` |
 | 無 git diff（獨立執行） | 改用 find 掃描對應目錄，標注「靜態分析」 |
 | Scenario 描述模糊難以判定狀態 | 標記為 🔍 無法驗證，列入人工確認清單 |
 | 輸出目錄無寫入權限 | 改輸出至當前目錄 `./` |

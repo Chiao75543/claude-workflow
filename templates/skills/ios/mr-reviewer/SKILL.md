@@ -233,7 +233,7 @@ gh api repos/{GITHUB_REPO}/pulls/{PR_ID}/comments \
 | SUGGESTION / SIMPLIFY | -1 分 |
 | 最低分 | 0 分 |
 
-**五維度加權評分**：
+**五維度加權評分**（分析輔助；**Overview 分數與評級一律以扣分制為準**，五維表用於定位弱項，不重算總分）：
 
 | 維度 | 權重 |
 |---|---|

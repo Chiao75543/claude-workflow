@@ -128,7 +128,7 @@ cat App/Features/SignIn/SignInViewModel.swift
 - ViewModel（`@Observable @MainActor`）暴露的狀態值與 intent 方法
 - 所有可能的狀態轉換路徑
 
-**TDD 模式（workflow Stage 2 / RED phase）**：production code 可能尚未存在。Swift 與 Kotlin 現實不同：protocol conformance 不完整時**整個 target 編不過**，測試連跑都跑不起來，所以「stub-first 讓測試可編譯」不是選項而是必要步驟：
+**TDD 模式（workflow 的 test-writer／RED 階段）**：production code 可能尚未存在。Swift 與 Kotlin 現實不同：protocol conformance 不完整時**整個 target 編不過**，測試連跑都跑不起來，所以「stub-first 讓測試可編譯」不是選項而是必要步驟：
 
 1. 依 spec 的 Domain Model 先在 `MindEYDomain` 定好 Entity 與 Repository protocol
 2. 建最小空殼實作，讓 RED 測試可編譯：
@@ -401,7 +401,7 @@ xcrun xccov view --report build/tests.xcresult
 3. 從報告中擷取本次功能相關檔案（Domain／Data／ViewModel）的 line coverage %
 4. 若覆蓋率 < 90%，列出未覆蓋的分支／行，建議補寫測試
 
-**TDD 模式例外**：若在 workflow Stage 2（RED phase），測試預期全部 FAIL，跳過覆蓋率檢查。6c Scenario 亦無覆蓋率可計。
+**TDD 模式例外**：RED 階段測試預期全部 FAIL，**跳過覆蓋率**（coverage 腳本需測試全綠才能產出報告）；GREEN 後由 rd-implementer 執行 `{COVERAGE_COMMAND}` 把關。6c Scenario 亦無覆蓋率可計。
 
 ---
 
