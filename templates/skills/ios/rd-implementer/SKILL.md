@@ -18,6 +18,7 @@ Claude 扮演資深 iOS RD，嚴格依照核准的 OpenSpec 規格逐層實作�
 |---|---|---|
 | `{PROJECT_ROOT}` | repo 根目錄 | `mindey-mobile/` |
 | `{TEST_COMMAND}` | 一鍵驗證指令（xcodegen → build → 全部測試） | `scripts/verify.sh` |
+| `{COVERAGE_COMMAND}` | 覆蓋率門檻指令（xccov 分層 Domain/Data/VM，GREEN 後執行，腳本由目標專案提供） | `./scripts/coverage.sh --gate 90` |
 | `{GITHUB_REPO}` | GitHub repo（PR 目的地） | fork 時填入 |
 
 ## 觸發方式
