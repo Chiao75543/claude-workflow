@@ -189,7 +189,7 @@ Phase 5: View / Navigation
 - AppRoute — 依 `ios.md` Navigation section 在集中式 route enum 新增 case（如 `case event(UUID)`）
 - AppRouter / DeepLinkParser — 註冊路由；Universal Links 與通知共用同一個 parser
 - Preview 用 `PreviewSupport/` 的假 Repo 組真 UseCase，不用真網路
-- 完成後：`{TEST_COMMAND}`
+- 完成後：`{TEST_COMMAND}` 全綠，**且必跑煙霧測試**（gate 4：View/Navigation 屬 UI 變更，模擬器截圖自行判讀畫面正確才算完成，回報附截圖路徑；iOS 慣例 `./scripts/smoke.sh`，腳本由目標專案提供；驗證邊界以專案架構文件為準）
 
 ---
 

@@ -195,6 +195,13 @@ PR-only 模式:report_pr{PR_ID}_{YYYYMMDD}.md
 
 ---
 
+## 📱 owner 驗收清單（gate 5，Claude 驗不了的部分）
+
+自動彙整以下來源，逐條列給 owner 人工驗收：
+- `smoke-checklist.md`（6c manual-smoke Scenario）尚未勾選的項目
+- 本 change 涉及的真機專屬項：推播、相機/相簿、麥克風、鍵盤行為、深連結實跳、背景/前景切換
+- （無適用項時本段標「無」，不留空）
+
 ## 📌 結論與下一步
 
 **整體評估**：<綜合評估一段話>

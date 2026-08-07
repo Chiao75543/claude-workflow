@@ -161,6 +161,7 @@ Requirement: 活動 6 碼簽到
 | 活動時區 Asia/Taipei | 活動「今天」用 Asia/Taipei 判斷，不可只信 status 欄位；簽到是 6 碼輸碼制不是 QR |
 | `{error}` 直顯 | 錯誤格式統一 `{error}`，繁中文案直接顯示，禁改寫 |
 | demo/mock 判別 | 對照 `pc/mindey-share` 元件時，**必先確認該元件有真的打 API**；web 的 demo/mock fallback 一律不移植 |
+| 測試資料衛生 | 測試碼/fixture 的 API 呼叫遵守專案 CLAUDE.md 衛生規則（測試帳號範圍/禁用端點/資料前綴）；fixture 含真實使用者個資 = CRITICAL |
 | 其餘鐵則 | CLAUDE.md 鐵則段逐條比照（profiles 走 RLS 直寫、附件簽名 URL 24h 重簽等）+ architecture.md §8 禁止事項全表 |
 
 ---

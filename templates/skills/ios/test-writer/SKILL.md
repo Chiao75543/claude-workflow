@@ -237,6 +237,12 @@ struct SignInUseCaseTests {
 
 網路層用 URLProtocol stub（APIClient 需可注入 `URLSession`）；API 回應形狀用 `Fixtures/*.json` decode 測試鎖契約。`Fixtures.load` 從 `Bundle.module` 讀 `Tests/MindEYDataTests/Fixtures/*.json`；`URLProtocolStub` 為測試 target 內手刻的 `URLProtocol` 子類。
 
+**Fixture 抓取的衛生硬約束**（若專案直打 production，違反任一條立即停止；權威出處 = 專案 CLAUDE.md 的測試資料衛生規則）：
+- 只用專案指定的測試帳號範圍；互動只准發生在測試帳號之間
+- 絕不呼叫專案標記為禁用的端點（無驗證 stub、排程專用等）
+- 抓取過程建立的資料依專案慣例加測試前綴並於抓完清理
+- fixture 存檔前檢查：樣本內不得含真實使用者的個資——有就換測試帳號資料重抓
+
 ```swift
 // Packages/MindEYData/Tests/MindEYDataTests/ProfileRepositoryImplTests.swift
 import Testing
