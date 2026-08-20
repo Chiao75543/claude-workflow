@@ -14,6 +14,7 @@ Designed for AI-assisted, spec-first workflows. Tool-agnostic where possible —
 - [Stage Details](#stage-details)
 - [Stage 7.5 vs Stage 11](#stage-75-vs-stage-11)
 - [Reviewer Dispatch Pattern](#reviewer-dispatch-pattern)
+- [Convergence Boundary](#convergence-boundary)
 - [Fast Mode](#fast-mode)
 - [Skip Rule](#skip-rule)
 - [Resume Entries](#resume-entries)
@@ -32,6 +33,7 @@ Designed for AI-assisted, spec-first workflows. Tool-agnostic where possible —
 5. **Per-comment user gate in review fixes.** The fix engine never batches multiple PR comments without human approval per item.
 6. **Reviewer agents in parallel, never serial.** Multiple reviewer personas at each stage are dispatched in a single message.
 7. **CRITICAL blocks; WARNING/SUGGESTION surfaces.**
+8. **Convergence boundary.** Cleanliness and correctness are enforced in layers — deterministic tooling first, spec-derived tests second, AI review last; what a tool can verify, a reviewer must not raise. CRITICAL is reserved for code/test/behavior correctness and security-baseline violations, every finding carries a fix-cost estimate, and review-fix loops are capped. See [Convergence Boundary](#convergence-boundary).
 
 ---
 
@@ -193,13 +195,14 @@ CRITICAL → fix → re-dispatch same reviewers.
 
 Mandatory gate before any commit.
 
-1. **Test gate**: run full test suite (scoped to changed modules if monorepo). RED → loop back to Stage 7.
-2. **Verify**: invoke `code-reviewer` agent — compares spec line-by-line against implementation. Must return **0 CRITICAL**. Any CRITICAL → loop back to Stage 7.
-3. **Report**: invoke `reporter` agent → write `openspec/changes/{name}/report.md` containing:
+1. **Lint gate**: run `{LINT_COMMAND}` (lint / format / static analysis — deterministic, converges by definition). RED → mechanical fix and re-run; no reviewer agent is dispatched until it's green, so reviewer tokens are never spent on tool-detectable issues. Once green, style-level findings are **off-limits** for every reviewer in this stage. Projects without a linter bind a no-op and the rule degrades gracefully.
+2. **Test gate**: run full test suite (scoped to changed modules if monorepo). RED → loop back to Stage 7.
+3. **Verify**: invoke `code-reviewer` agent — compares spec line-by-line against implementation. Must return **0 CRITICAL**. Any CRITICAL → loop back to Stage 7 (counts toward the [Convergence Boundary](#convergence-boundary) round cap).
+4. **Report**: invoke `reporter` agent → write `openspec/changes/{name}/report.md` containing:
    - Requirement × Scenario coverage matrix
    - Spec vs implementation diff
    - Outstanding issue list
-4. Surface report summary inline so user sees coverage before commit.
+5. Surface report summary inline so user sees coverage before commit.
 
 For Mode 6c (manual-smoke) specs: skip the test gate (no automated tests); still run verify + report against the smoke checklist; user must complete the smoke matrix manually before Stage 9.
 
@@ -483,7 +486,7 @@ When a stage says "dispatch N parallel reviewer agents":
 3. In **fast mode**, N drops to 1 (combined persona prompt).
 4. Aggregate findings by severity: CRITICAL (block) > WARNING (surface) > SUGGESTION (note).
 5. **De-duplicate**: when two reviewers raise the same item, merge into one entry; tag which reviewers flagged it. Sort SUGGESTIONs by ROI (impact / effort).
-6. CRITICAL → fix → re-dispatch the same reviewers with the post-fix artifact.
+6. CRITICAL → fix → re-dispatch the same reviewers with the post-fix artifact — subject to the [Convergence Boundary](#convergence-boundary): at most 2 re-dispatch rounds per stage, and re-dispatch rounds verify only prior CRITICALs + the fix diff.
 7. After pass, append aggregated summary to `openspec/changes/{name}/review.md`. Do **not** store individual agent raw reports.
 8. **Disposition write-back.** Every finding line — CRITICAL, WARNING, and SUGGESTION alike — ends with `— disposition: fixed | rejected | deferred | pending` (em-dash `—` separator, tag always last on the line; `deferred`'s ticket follows the tag: `— disposition: deferred (AIP-XXXX)` — a deferral without a ticket historically never gets closed). New WARNING/SUGGESTION entries start `pending`; CRITICALs are logged `fixed` once the fix → re-dispatch loop clears them. Whichever later stage (or the user) acts on or dismisses a finding updates the tag **in place** — the only in-place edit allowed in this otherwise append-only log, and the rule extends past archive: updating a disposition tag inside an archived change's `review.md` is the only permitted post-archive edit (tag only, never content; the archived spec itself stays untouchable). This makes reviewer yield measurable (flagged vs. adopted), so low-yield personas can be pruned with data instead of faith.
 
@@ -500,15 +503,15 @@ When a stage says "dispatch N parallel reviewer agents":
 - Token usage: ~X k total
 
 ### CRITICAL
-1. {short} — flagged by: {reviewer names} — disposition: fixed
+1. {short} — flagged by: {reviewer names} — cost: low — disposition: fixed
 _(none if empty)_
 
 ### WARNING
-1. {short} — flagged by: {reviewer names} — disposition: pending
+1. {short} — flagged by: {reviewer names} — cost: med — disposition: pending
 _(none if empty)_
 
 ### SUGGESTION
-1. {short} — flagged by: {reviewer names} — disposition: pending
+1. {short} — flagged by: {reviewer names} — cost: low — disposition: pending
 2. ...
 
 ### Verdict
@@ -516,6 +519,41 @@ PASS / BLOCK
 ```
 
 Yield stats: `grep -oE 'disposition: [a-z]+' review.md | sort | uniq -c`.
+
+---
+
+## Convergence Boundary
+
+Review loops must terminate. The boundary has two halves: **severity discipline** (what may enter a loop) and a **loop fuse** (how long it may run). The goal alignment: code correct, tests correct, behavior correct, security baseline respected — and nothing else gets to block.
+
+### Severity discipline — what earns CRITICAL
+
+CRITICAL is reserved for exactly four categories:
+
+1. **Code correctness** — a bug that produces wrong results or crashes, with a statable trigger.
+2. **Test correctness** — a test that doesn't test its spec Scenario, or is itself wrong (false green / false red).
+3. **Behavior correctness** — direct conflict with a spec Scenario.
+4. **Security baseline** — violation of a rule in the project's Security Baseline (AGENTS.md section).
+
+Every reviewer answers three questions per finding:
+
+1. **Is it one of the four categories?** No → WARNING at most. Naming, style, taste, architecture preferences, performance micro-tuning, hypothetical edge cases without a concrete trigger — none of these block, ever.
+2. **Can you state the concrete failure?** Correctness CRITICALs must name inputs/state → wrong result; behavior must cite the Scenario; security must cite the baseline rule. Can't state it → not a CRITICAL.
+3. **What does the fix cost?** Every finding line carries `— cost: low | med | high`. High cost + low benefit → the reviewer downgrades or drops it before reporting.
+
+**Mechanical demotion.** During aggregation, a CRITICAL missing its failure trigger / citation is demoted to WARNING by the orchestrator — no debate, no reviewer appeal. And once the Stage 7.5 lint gate is green, tool-verifiable issues are off-limits entirely: what a tool can check, a reviewer must not raise.
+
+### Loop fuse — how long a loop may run
+
+Applies per stage to every CRITICAL → fix → re-dispatch loop (Stages 6, 7, 8) and the Stage 7.5 → Stage 7 loop:
+
+- **Round cap**: initial review + at most **2 re-dispatch rounds** (3 reviews total per stage).
+- **Re-review scope**: a re-dispatch round verifies only (a) that previously flagged CRITICALs are resolved and (b) that the fix diff introduced nothing new. Net-new findings on code the fixes didn't touch are logged in `review.md` as `pending` — they never block and never trigger another round. This kills the "every round mines new findings" divergence at the source.
+- **Flip-flop stop**: a finding fixed once that reappears (same file, same intent) stops the loop immediately — that's a fix-A-breaks-B signal; don't wait for the cap.
+- **Cap-hit gate**: rounds exhausted with CRITICALs remaining → stop, present the leftovers at a user gate. The user decides per finding: fix manually / accept and proceed (disposition `rejected` or `deferred (ticket)`) / abort. Never silent-pass.
+- **Minimal fix**: fixing a CRITICAL means fixing that CRITICAL — no drive-by refactoring (the Stage 11 rule, extended to every stage). The fix must not become the next round's fuel.
+
+**Exempt by design** — don't add ceremony where none is needed: Stage 10.5 is advisory and never blocks (no loop to bound); Stage 11 has two human gates per comment (intrinsically bounded).
 
 ---
 
@@ -562,6 +600,7 @@ This pipeline is tool-agnostic. Substitution points:
 | VCS host            | GitHub (`gh`) / GitLab (`glab`)                  | Bitbucket, Gitea, Forgejo                                    |
 | Integration branch  | `main`                                           | `develop`, `release`, `integration`                          |
 | Test command        | project-specific                                 | `npm test`, `pytest`, `./gradlew test`, `cargo test`         |
+| Lint command        | project-specific `{LINT_COMMAND}` (no-op if none) | `./gradlew lint`, `npm run lint`, `ruff check`, SwiftLint    |
 | Fix engine          | `codex:codex-rescue` agent                       | Any code-writing agent + fixer skill                         |
 | Reviewer agents     | `code-reviewer`, `reporter`, etc.                | Custom agents per project                                    |
 | Ticket tracker      | Linear / Jira / GitHub Issues                    | Any                                                          |
@@ -611,6 +650,10 @@ To adapt: copy this file, substitute the slot values, and replace the commands i
 | Engine writing code at Step 2b                          | Plan only at 2b. Code only at 2d after user approves plan.                                                |
 | Editing the 5 derived files by hand                     | Edit `spec.md` and re-split. Derived files are projections.                                               |
 | Dispatching reviewers sequentially                      | One message, N tool calls = parallel.                                                                     |
+| Severity inflation (style / taste flagged CRITICAL)     | CRITICAL is four categories only, each with a statable failure or citation; aggregation demotes the rest mechanically. |
+| Re-review rounds mining new findings on untouched code  | Re-dispatch verifies prior CRITICALs + fix diff only; net-new findings log as `pending`, never loop.      |
+| Looping past the round cap                              | Initial + 2 re-dispatch rounds per stage; cap hit → user gate; flip-flop (fixed finding reappears) → immediate stop. |
+| Reviewer raising lint-detectable issues                 | Stage 7.5 lint gate runs first; once green, tool-verifiable findings are off-limits.                      |
 | Storing N individual reviewer reports as separate files | Append aggregated summary to `review.md` only.                                                            |
 | Findings logged, disposition never updated              | Yield stats lie if WARNING/SUGGESTION stay `pending` forever. Update `disposition:` in place the moment a finding is fixed or rejected.  |
 | Forcing unit tests on a build-config-only spec          | Use Mode 6b (static-validation) or 6c (manual-smoke).                                                     |

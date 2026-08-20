@@ -11,7 +11,7 @@ End-to-end pipeline. The user sees three checkpoints: spec approval, pre-push, a
 
 **Lifecycle rule:** Pipeline ends at **archive (Stage 12)**, not at push. Stage 10.5 (codex auto-review) runs immediately after push as an advisory layer; Stage 11 (MR review loop) re-enters after **human** MR comments arrive; Stage 12 runs **after reviewers approve and before final merge** — the archive commit is added to the same feature branch so feature + archive ship together in one MR. Don't treat push as "done".
 
-**Reviewer rule:** Each automated review stage dispatches **2–3 parallel agents** with distinct personas (Agent tool, single message with multiple tool_use blocks per `superpowers:dispatching-parallel-agents`). Aggregate findings. Block on CRITICAL issues; surface WARNING/SUGGESTION to user but proceed.
+**Reviewer rule:** Each automated review stage dispatches **2–3 parallel agents** with distinct personas (Agent tool, single message with multiple tool_use blocks per `superpowers:dispatching-parallel-agents`). Aggregate findings. Block on CRITICAL issues; surface WARNING/SUGGESTION to user but proceed. Review 迴圈受**收斂邊界**約束（見下方章節）：CRITICAL 只有四類、必附失敗情境、每 stage 最多初審 + 2 輪重派。
 
 **Skip rule:** Trivial UI tweaks (color/spacing only, no behaviour change) MAY skip this pipeline and go straight to a `style:` / `chore:` commit. If unsure, run the pipeline.
 
@@ -31,7 +31,7 @@ End-to-end pipeline. The user sees three checkpoints: spec approval, pre-push, a
 | `mr-reviewer` | Stage 10.5 | Stack-specific MR review dimensions |
 | `review-fixer` | Stage 11 | How to resolve review findings per stack conventions |
 
-Project-level config lives in `<repo>/AGENTS.md`. When this document refers to `{TEST_COMMAND}`, `{BUILD_COMMAND}`, or `{LAYERING_CONVENTION}`, substitute from AGENTS.md.
+Project-level config lives in `<repo>/AGENTS.md`. When this document refers to `{TEST_COMMAND}`, `{BUILD_COMMAND}`, `{LINT_COMMAND}`, or `{LAYERING_CONVENTION}`, substitute from AGENTS.md (`{LINT_COMMAND}` 沒有就綁 no-op).
 
 To bootstrap a project: run `scripts/init-project.sh <stack> <target-repo>` to scaffold the skill set from `templates/skills/<stack>/` (e.g. `android`). Hand-author new stacks by following any existing template.
 
@@ -258,10 +258,11 @@ Aggregate. CRITICAL → fix → re-dispatch.
 
 After Stage 7 reviewers PASS, before any commit. Mandated by MEMORY `feedback_auto_workflow_discipline` — auto/autonomous mode must NOT skip.
 
-1. **Test gate**: run the project's `{TEST_COMMAND}` (from `<repo>/AGENTS.md`; scoped to changed modules if large repo). Must be green. RED → loop back to Stage 7.
-2. **Verify**: invoke `code-reviewer` skill — spec ↔ code line-by-line. Must return **0 CRITICAL**. CRITICAL → loop back to Stage 7.
-3. **Report**: invoke `reporter` skill — write `openspec/changes/{name}/report.md` (Requirement × Scenario 覆蓋率 + 實作對照 + 問題清單).
-4. Surface report summary inline; user sees coverage before commit.
+1. **Lint gate**: run `{LINT_COMMAND}`（沒 linter 的專案為 no-op）。紅 → 機械修正重跑，**綠燈前不派任何 reviewer**（不浪費 token 在工具驗得了的事）。綠燈後，本 stage 所有 reviewer 的風格類 issue 一律**禁提**。
+2. **Test gate**: run the project's `{TEST_COMMAND}` (from `<repo>/AGENTS.md`; scoped to changed modules if large repo). Must be green. RED → loop back to Stage 7.
+3. **Verify**: invoke `code-reviewer` skill — spec ↔ code line-by-line. Must return **0 CRITICAL**. CRITICAL → loop back to Stage 7（計入收斂邊界輪數）.
+4. **Report**: invoke `reporter` skill — write `openspec/changes/{name}/report.md` (Requirement × Scenario 覆蓋率 + 實作對照 + 問題清單).
+5. Surface report summary inline; user sees coverage before commit.
 
 For **mode 6c (manual-smoke)** specs: skip the test gate (no automated tests); still run verify + report against the smoke checklist; user must complete smoke matrix before push (Stage 9).
 
@@ -516,7 +517,7 @@ When a stage says "dispatch N parallel reviewer agents":
 4. Wait for all N to complete; capture per-agent token usage from Agent tool result
 5. Aggregate by severity: CRITICAL (block) > WARNING (surface) > SUGGESTION (note)
 6. **De-duplicate**: when two reviewers raise effectively the same item (same file:line, same intent), merge into one entry and tag which reviewers flagged it. Sort SUGGESTIONs by ROI (impact / effort), highest first.
-7. If CRITICAL → fix → re-dispatch the same reviewers (same prompts, post-fix artifact)
+7. If CRITICAL → fix → re-dispatch the same reviewers (same prompts, post-fix artifact) — 受收斂邊界約束：每 stage 初審 + 最多 2 輪重派，重派只驗「舊 CRITICAL 解了沒 + fix diff」（見下方「收斂邊界」）
 8. **After PASS**, append the aggregated summary to `openspec/changes/{name}/review.md` under a stage heading. Do NOT store individual agent raw reports.
 9. **Disposition write-back**: every finding line — CRITICAL, WARNING, and SUGGESTION alike — ends with `— disposition: fixed | rejected | deferred | pending`（em-dash `—` 分隔，tag 一律排在行尾；`deferred` 的 ticket 括號跟在 tag 後：`— disposition: deferred (AIP-XXXX)`，缺 ticket 的 deferral 歷史上永遠不會被關）。New WARNING/SUGGESTION entries start `pending`; CRITICALs are logged `fixed` once the fix → re-dispatch loop clears them. Whichever later stage (or the user) acts on or dismisses a finding updates the tag **in place** — the only in-place edit allowed in the append-only log，**且此規則延伸到 archive 之後**：更新 archived change 裡 `review.md` 的 disposition tag 是唯一允許的 post-archive 編輯（只改 tag，不改內容；spec 本體仍然 NEVER 動）。Purpose: reviewer yield becomes greppable (flagged vs. adopted), so low-yield personas get pruned with data instead of faith.
 
@@ -532,16 +533,16 @@ When a stage says "dispatch N parallel reviewer agents":
 - **Token usage**: ~{total} k total ({split per reviewer}); parallel wall time ~{seconds} s
 
 ### CRITICAL
-1. {short} — flagged by: {reviewer names} — disposition: fixed
+1. {short} — flagged by: {reviewer names} — cost: low — disposition: fixed
 _(none if empty)_
 
 ### WARNING
-1. {short} — flagged by: {reviewer names} — disposition: pending
+1. {short} — flagged by: {reviewer names} — cost: med — disposition: pending
 _(none if empty)_
 
 ### SUGGESTION
 (de-duplicated, sorted by ROI)
-1. {short} — flagged by: {reviewer names} — disposition: pending
+1. {short} — flagged by: {reviewer names} — cost: low — disposition: pending
 2. ...
 
 ### Pass
@@ -552,6 +553,41 @@ _(none if empty)_
 ```
 
 One file, append-only, one section per stage — the sole exception is the `disposition:` tag, which is updated in place when a finding is later acted on or dismissed (including inside an already-archived change, see dispatch rule 9). Token usage + disposition tracked for retrospect: `grep -oE 'disposition: [a-z]+' review.md | sort | uniq -c` gives per-change reviewer yield.
+
+## 收斂邊界（convergence boundary）
+
+Review 迴圈必須收斂。目標對齊四件事：**程式碼正確、測試正確、行為正確、資安合規** — 除此之外的東西不配 block。邊界分兩半：嚴重度紀律（什麼能進迴圈）+ 迴圈保險絲（迴圈能跑多久）。
+
+### 分層原則
+
+整潔與無錯誤依三層擠出，**工具驗得了的，AI reviewer 不准提**：
+
+1. **確定性工具**（`{LINT_COMMAND}`、formatter、靜態分析、編譯期約束）— 永不 loop，Stage 7.5 入口先跑。
+2. **Spec 衍生測試** — 「無錯誤」的操作型定義 = 每條 Scenario 有測試、全綠、覆蓋達標。bug 沒被測試抓到 → finding 是測試缺口（補測試），不只是修 code。
+3. **AI review** — 只剩工具驗不了的：spec 一致性、邏輯錯誤、測試假綠。只有這層需要以下邊界。
+
+### 嚴重度紀律 — CRITICAL 只有四類
+
+1. **程式碼正確性** — 實際產生錯誤結果或 crash 的 bug，且說得出觸發情境
+2. **測試正確性** — 測試沒測到 Scenario、或測試本身錯（假綠/假紅）
+3. **行為正確性** — 與 spec Scenario 明文衝突
+4. **資安基準** — 違反專案 AGENTS.md「Security Baseline」段落的條文
+
+每條 finding 過三問：**(1)** 是四類之一嗎？不是 → 最高 WARNING（命名、風格、品味、無具體觸發情境的假設性邊界、效能微調一律不 block）。**(2)** 說得出具體失敗情境嗎？正確性必填「什麼輸入/狀態 → 什麼錯誤結果」、行為必引 Scenario、資安必引條文 — 說不出就不是 CRITICAL。**(3)** 修正代價？每條附 `— cost: low | med | high`，高代價低效益 → reviewer 自行降級或不提。
+
+**機械降級**：聚合時 CRITICAL 缺失敗情境/引用條文 → orchestrator 直接降 WARNING，不辯論。Lint 綠燈後工具驗得了的 issue 一律禁提。
+
+### 迴圈保險絲
+
+適用每個 stage 的 CRITICAL → fix → 重派迴圈（Stage 6/7/8）及 Stage 7.5 → 7 迴圈：
+
+- **輪數上限**：初審 + 最多 **2 輪重派**（每 stage 共 3 次 review）。
+- **重派範圍**：重派輪只驗 (a) 舊 CRITICAL 解了沒、(b) fix diff 有沒有引入新問題。fix 沒碰到的 code 挖出的淨新 finding → 記進 review.md 標 `pending`，不 block、不觸發下輪。
+- **翻烙餅立停**：同一條 finding（同檔案、同 intent）修過又出現 → 不等觸頂，立即停 — 這是 fix A 壞 B 的訊號。
+- **觸頂 gate**：輪數用完還有 CRITICAL → 停止自動迴圈，殘留 findings 開 user gate 逐條裁決：人工修 / 接受續行（disposition 記 `rejected` 或 `deferred (ticket)`）/ abort。絕不 silent-pass。
+- **Fix 最小範圍**：修 CRITICAL 只修那條，禁 drive-by refactor（Stage 11 規則延伸到全 stage）— fix 不准變成下一輪的火源。
+
+**天然豁免，不加儀式**：Stage 10.5 純 advisory 不 block（無 loop 可圍）；Stage 11 每條 comment 有兩個人工 ✋（天然有界）。
 
 ## Resuming mid-pipeline
 
@@ -575,7 +611,7 @@ One file, append-only, one section per stage — the sole exception is the `disp
 | 5 Split | 5 files + validate | — |
 | 6 Tests | RED | 3 agents |
 | 7 Implement | GREEN | 3 agents |
-| 7.5 Verify+Report | tests + code-reviewer + reporter | — |
+| 7.5 Verify+Report | `{LINT_COMMAND}` → tests + code-reviewer + reporter | — |
 | 8 Commit | conventional + footer | 2 agents |
 | 9 ⏸ | user confirms push | — |
 | 10 Push | push + MR | — |
@@ -594,6 +630,10 @@ One file, append-only, one section per stage — the sole exception is the `disp
 | Forcing unit tests on a build-config-only spec | Use 6b (static-validation) or 6c (manual-smoke), not 6a |
 | Skipping reviewer agents for "fast" stages | NEVER skip — multi-reviewer is the contract (modes 6a/6b only) |
 | Dispatching reviewers sequentially | Single message, N Agent tool calls = parallel |
+| 風格/品味類 issue 標成 CRITICAL | CRITICAL 只有四類（程式碼/測試/行為正確性、資安基準），必附失敗情境或引用條文；缺欄位聚合時機械降級 |
+| 重派輪在 fix 沒碰的 code 挖新 finding | 重派只驗「舊 CRITICAL + fix diff」；淨新 finding 記 `pending`，不 block 不觸發下輪 |
+| 迴圈跑超過上限 | 每 stage 初審 + 最多 2 輪重派；觸頂 → user gate 裁決；翻烙餅（修過又現）→ 立即停 |
+| Lint 綠了 reviewer 還嫌風格 | 工具驗得了的 AI 不准提 — Stage 7.5 lint gate 綠燈後風格類一律禁提 |
 | Treating WARNING/SUGGESTION as blocker | Only CRITICAL blocks |
 | Heavy spec for trivial colour change | Acceptable to bypass with `style:` commit |
 | Editing archived spec | NEVER — propose a new MODIFIED change |

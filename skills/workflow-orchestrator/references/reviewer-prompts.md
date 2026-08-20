@@ -2,6 +2,29 @@
 
 Each prompt is dispatched via the Agent tool with `subagent_type: "general-purpose"` (or `Plan` for design-heavy review). All prompts share the same output format so the orchestrator can aggregate.
 
+## Severity rubric (every reviewer — prepend to every persona prompt below)
+
+```
+Severity rubric (hard rules):
+- CRITICAL is reserved for exactly four categories:
+  (1) code correctness — a bug with a concrete trigger (inputs/state → wrong
+      result or crash);
+  (2) test correctness — a test that doesn't test its spec Scenario, or is
+      itself wrong (false green / false red);
+  (3) behavior correctness — direct conflict with a spec Scenario (cite it);
+  (4) security — violation of a rule in the project's Security Baseline
+      (AGENTS.md section; cite the rule number).
+- A CRITICAL must carry its trigger / citation in the `failure:` field —
+  a CRITICAL without one is mechanically demoted during aggregation.
+- Everything else — naming, style, taste, architecture preference,
+  performance micro-tuning, hypothetical edge cases without a concrete
+  trigger — is WARNING at most and never blocks.
+- Lint is already green when you run: anything a tool can verify is
+  off-limits. Do not raise it.
+- Every finding ends with `— cost: low | med | high` (fix-cost estimate).
+  High cost + low benefit → downgrade or drop it before reporting.
+```
+
 ## Output format (every reviewer)
 
 Each reviewer MUST end its report with this block — orchestrator parses it:
@@ -10,14 +33,14 @@ Each reviewer MUST end its report with this block — orchestrator parses it:
 ## Findings
 
 ### CRITICAL
-- {file:line} {one-line issue}
+- {file:line} {one-line issue} — failure: {inputs/state → wrong result, or Scenario / security-rule citation} — cost: {low|med|high}
 - ...
 
 ### WARNING
-- {file:line} {one-line issue}
+- {file:line} {one-line issue} — cost: {low|med|high}
 
 ### SUGGESTION
-- {file:line} {one-line idea}
+- {file:line} {one-line idea} — cost: {low|med|high}
 
 ### Pass
 - {what was verified and is fine}
@@ -180,9 +203,12 @@ Checklist:
 8. Race conditions: state machines that have "early emit before subscriber" pattern
    (Reference feedback_security_check_dispatcher_replay.md — replay=1 lesson)
 
-CRITICAL: definite NPE, crash, data loss, or race.
+CRITICAL: definite NPE, crash, data loss, or race — with a statable trigger.
 WARNING: handled but with poor UX (e.g., silent failure).
 SUGGESTION: defensive checks worth adding.
+
+Hypothetical scenarios you cannot trigger with a concrete input/state are
+SUGGESTION at most — never CRITICAL.
 
 End with the standardized Findings block.
 ```
@@ -268,6 +294,14 @@ After all N reviewers return, orchestrator builds a combined report:
 - ...
 ```
 
-If `BLOCK`: orchestrator fixes the CRITICAL items, then re-dispatches the same N reviewers (NOT a different set — to avoid moving goalposts).
+**Mechanical demotion (before computing the verdict)**: any CRITICAL whose `failure:` field is missing or doesn't state a concrete trigger / Scenario / security-rule citation is demoted to WARNING. No debate.
+
+If `BLOCK`: orchestrator fixes the CRITICAL items, then re-dispatches the same N reviewers (NOT a different set — to avoid moving goalposts), subject to the **convergence boundary**:
+
+- Initial review + at most **2 re-dispatch rounds** per stage.
+- Re-dispatch rounds verify only (a) prior CRITICALs resolved and (b) the fix diff itself. Net-new findings on code the fixes didn't touch → log as `pending` in review.md; they don't block and don't trigger another round.
+- A finding fixed once that reappears (same file, same intent) stops the loop immediately (flip-flop signal).
+- Rounds exhausted with CRITICALs remaining → user gate: fix manually / accept and proceed (disposition `rejected` / `deferred (ticket)`) / abort.
+- Fixes are minimal-scope: that CRITICAL only, no drive-by refactoring.
 
 If `PROCEED`: surface WARNING/SUGGESTION inline to the user, move to next stage.

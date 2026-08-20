@@ -26,6 +26,32 @@ into the dispatch-time prompt.
 - Performance hot paths
 - Cross-feature side-effects
 
+## Security Baseline
+
+Reviewers may raise a security CRITICAL **only by citing a rule below** (rule
+number). Speculative concerns without a citation are WARNING at most, and must
+carry a fix-cost estimate. Extend this list per project — keep every entry
+concrete and mechanically checkable.
+
+1. No secrets in git — keystores, service accounts, API keys, tokens,
+   `google-services.json`, `.env`. CI injects them (e.g. File variables).
+2. No credentials, tokens, or personal data in logs.
+3. Validate all external input at trust boundaries — API responses, user
+   input, deep links, file imports.
+4. Authorization for protected actions is enforced at the protected flow
+   (server-side where applicable) — never client-side-only checks.
+5. No injection vectors: parameterized queries only; never build SQL or
+   shell commands by string concatenation with external input.
+6. TLS everywhere; never disable certificate validation in code that can
+   ship (including debug flags that leak into release builds).
+7. Sensitive data at rest goes through the platform keystore / encrypted
+   storage — not plaintext SharedPreferences / UserDefaults / files.
+8. No knowingly vulnerable dependency versions; pin versions.
+9. Error surfaces shown to end users don't leak internals — stack traces,
+   file paths, keys, internal hostnames.
+10. Test code and fixtures use fake data only — no real accounts, no
+    production endpoints, no personal data.
+
 ## Common Commands
 
 ```bash
@@ -50,10 +76,12 @@ Spec → TDD Test (RED) → Implement (GREEN) → Verify → Report → Commit
 
 Before any commit, you MUST:
 
-1. Run the relevant test suite — must be green.
-2. Cross-check implementation against `openspec/changes/{name}/specs/{name}/spec.md`
+1. Run `{lint_command}` — must be clean (skip if the project has none).
+   Once lint is green, style-level review comments are off-limits.
+2. Run the relevant test suite — must be green.
+3. Cross-check implementation against `openspec/changes/{name}/specs/{name}/spec.md`
    line-by-line — 0 CRITICAL findings required.
-3. Generate / update `openspec/changes/{name}/report.md` summarizing coverage.
+4. Generate / update `openspec/changes/{name}/report.md` summarizing coverage.
 
 If any of the above fails, fix before committing. Do NOT bypass this gate.
 
