@@ -5,11 +5,11 @@ description: End-to-end pipeline from a feature description to a pushed branch �
 
 # workflow
 
-End-to-end pipeline. The user sees two checkpoints: spec approval, and pre-push. Everything else runs automatically with multi-reviewer agents validating each stage.
+End-to-end pipeline. The user sees three checkpoints: spec approval, pre-push, and OK-to-merge (Stage 11 → 12 handoff). Everything else runs automatically with multi-reviewer agents validating each stage.
 
 **Core rule:** Every change is traceable to a spec. Prefer attaching to an **existing** capability (`## MODIFIED Requirements`) over creating a new one. Single `openspec/changes/{name}/spec.md` is the source; 5 derived files live in the same folder.
 
-**Lifecycle rule:** Pipeline ends at **archive (Stage 12)**, not at push. Stage 10.5 (codex auto-review) runs immediately after push as an advisory layer; Stage 11 (MR review loop) re-enters after **human** MR comments arrive; Stage 12 runs after the MR is merged. Don't treat push as "done".
+**Lifecycle rule:** Pipeline ends at **archive (Stage 12)**, not at push. Stage 10.5 (codex auto-review) runs immediately after push as an advisory layer; Stage 11 (MR review loop) re-enters after **human** MR comments arrive; Stage 12 runs **after reviewers approve and before final merge** — the archive commit is added to the same feature branch so feature + archive ship together in one MR. Don't treat push as "done".
 
 **Reviewer rule:** Each automated review stage dispatches **2–3 parallel agents** with distinct personas (Agent tool, single message with multiple tool_use blocks per `superpowers:dispatching-parallel-agents`). Aggregate findings. Block on CRITICAL issues; surface WARNING/SUGGESTION to user but proceed.
 
@@ -44,16 +44,16 @@ digraph workflow {
   wt [shape=box, label="Stage 2 Worktree"];
   spec [shape=box, label="Stage 3 Spec author\n(brainstorm + grill + draft)"];
   user1 [shape=diamond, label="⏸ user approves spec?"];
-  split [shape=box, label="Stage 4 Split + validate"];
-  tests [shape=box, label="Stage 5 Tests (RED)"];
+  split [shape=box, label="Stage 5 Split + validate"];
+  tests [shape=box, label="Stage 6 Tests (RED)"];
   rev_t [shape=box, label="Review × 3 agents"];
-  impl [shape=box, label="Stage 6 Implement (GREEN)"];
+  impl [shape=box, label="Stage 7 Implement (GREEN)"];
   rev_i [shape=box, label="Review × 3 agents"];
-  verify_report [shape=box, label="Stage 6.5 Verify + Report\n(tests + code-reviewer + reporter)"];
-  commit [shape=box, label="Stage 7 Commit"];
+  verify_report [shape=box, label="Stage 7.5 Verify + Report\n(tests + code-reviewer + reporter)"];
+  commit [shape=box, label="Stage 8 Commit"];
   rev_c [shape=box, label="Review × 2 agents"];
-  user2 [shape=diamond, label="⏸ user confirms push?"];
-  push [shape=box, label="Stage 8 Push + MR"];
+  user2 [shape=diamond, label="⏸ Stage 9 user confirms push?"];
+  push [shape=box, label="Stage 10 Push + MR"];
   done [shape=doublecircle, label="end"];
 
   start -> ident -> wt -> spec -> user1;
@@ -72,14 +72,16 @@ digraph workflow {
   rev_c -> user2 [label="pass"];
   codex_rev [shape=box, label="Stage 10.5 Codex auto-review\n(advisory, posts inline + summary)"];
   mr_loop [shape=box, label="Stage 11 MR review loop\n(codex/claude engine + ⏸ per-comment)"];
-  archive [shape=box, label="Stage 12 Archive\n(CI auto on merge)"];
+  archive [shape=box, label="Stage 12 Archive\n(pre-merge commit on feature branch)"];
+  merge_mr [shape=diamond, label="⏸ Merge MR\n(user merges; feature + archive together)"];
   user2 -> push [label="ok"];
   user2 -> done [label="hold"];
   push -> codex_rev [label="auto"];
   codex_rev -> mr_loop [label="findings posted (deferred for humans)"];
   mr_loop -> mr_loop [label="CRITICAL/WARNING"];
-  mr_loop -> archive [label="merged"];
-  archive -> done;
+  mr_loop -> archive [label="reviewer ✅ + user OK to merge"];
+  archive -> merge_mr [label="push → final CI green"];
+  merge_mr -> done;
 }
 ```
 
@@ -94,7 +96,7 @@ digraph workflow {
    - Without ticket: `<feature-slug>` (e.g. `error-message-cleanup`)
 4. List existing capabilities (**check both already-accumulated and in-progress**):
    - Archived: `ls openspec/specs/`
-   - In-progress (not yet archived): `ls openspec/changes/*/specs/` — these capabilities exist on other branches but will appear in main spec tree after their respective MR merges (CI auto-archives)
+   - In-progress (not yet archived): `ls openspec/changes/*/specs/` — these capabilities exist on other branches but will appear in main spec tree after their respective MR merges (each MR bundles its own archive commit before merge, see Stage 12)
    - Show union to user. Ask:
      > "Does this attach to an existing capability (MODIFIED) or create a new one (ADDED)?"
    - **MODIFIED**: record target capability name; subsequent spec uses `## MODIFIED Requirements`
@@ -154,7 +156,10 @@ Inline (DO NOT invoke `superpowers:brainstorming` / `grill-me` as separate Skill
 2. **Ask: grill?** "Want to grill this design for holes before writing the spec?"
    - yes → 2–4 stress rounds inline; capture risks into Impact section
 3. **Create the change folder first**: `mkdir -p openspec/changes/{name}/specs/{name}/`
-4. **Draft `openspec/changes/{name}/spec.md`** using `references/single-spec-template.md`. Sections:
+4. **Scope audit** (mandatory before the spec claims any file / entry-point / call-site count):
+   - Any "N files / N entry points / N call sites" claim must come from a **full-codebase grep**, never from an Explore subagent's sampled search (prior incident: sampling missed 6 entry points — feedback: spec-audit-full-callsites).
+   - Grep **call sites, not imports**: match the call token itself, e.g. `grep -rnE '\bFoo\(' --include='*.kt'` (import matching misses wildcard imports and fully-qualified calls — feedback: grep-call-sites-not-imports).
+5. **Draft `openspec/changes/{name}/spec.md`** using `references/single-spec-template.md`. Sections:
    - `# {Feature Name}`
    - `## Why`, `## What`, `## Impact`
    - `## Design` (optional)
@@ -162,7 +167,7 @@ Inline (DO NOT invoke `superpowers:brainstorming` / `grill-me` as separate Skill
    - `## Tasks`
 
    This file is the **single source of truth** — the 5 OpenSpec files are derived from it (Stage 5). The user reads and edits **only** this file; downstream tools (validate / archive / reporter) read the derived 5.
-5. Display draft.
+6. Display draft.
 
 ### Stage 4: ⏸ User approves spec
 
@@ -443,13 +448,15 @@ fi
 
 `git push`。預設**一條 comment 一個 commit**（per-comment commit），方便 reviewer 對照 + 必要時 revert 單條。User 可指定 `--squash` 合併。
 
-#### 5. Detect merged
+#### 5. Detect ready-to-merge
 
-`glab mr view {MR_ID} --output json | jq .state` 等於 `"merged"`，或 user 手動確認 → 跳 Stage 12。
+全部 CRITICAL/WARNING resolved（approve / skip / defer 後收斂）+ 無 deferred 殘留 + reviewer ✅ + **user 明確說 OK merge** → 交棒 Stage 12。**此時不 merge** — merge 發生在 Stage 12 的 archive commit push、最後一輪 CI 綠之後。
+
+交棒前**必跑** sanity poll：`gh pr view --json state` / `glab mr view --output json | jq .state` 確認 MR 仍是 open（沒被提早 merge 或 close）。若發現已被提早 merge（spec 未 archive 就進了整合分支）→ 走 Stage 12 的「提早 merge 補救」。
 
 #### Loop 結束條件
 
-- 全部 CRITICAL/WARNING 已 approve/skip/defer + 無 deferred 殘留 + reviewer approve + merged → Stage 12
+- Ready-to-merge（如上）→ Stage 12
 - User `abort` → 退出，MR 保持 open，已 apply 的 fix 已 push
 
 #### 與 Stage 7.5 的差別
@@ -460,27 +467,45 @@ fi
 | 來源 | spec | reviewer comments |
 | 動作 | code-reviewer + reporter + tests | codex/claude engine + auto-resolve |
 | 人工介入 | 零（auto pass/fail） | **每條 comment 兩個 ✋**（approve plan + verify diff）|
-| 結束 | 0 CRITICAL → commit | 全部 resolved + merged → archive |
+| 結束 | 0 CRITICAL → commit | 全部 resolved + reviewer ✅ + user OK merge → archive（再 merge）|
 
-### Stage 12: Archive (post-merge, CI-automated)
+### Stage 12: Archive (pre-merge, on feature branch)
 
-PR merge 觸發 `.github/workflows/auto-archive.yml`，在整合分支上自動跑：
+進入條件：Stage 11 loop 全收斂（0 CRITICAL、所有 comment resolved、reviewer ✅）+ user 明確同意要 merge。**不要按 merge**，先在 feature branch 加 archive commit，讓 feature + archive 一起 merge。
 
-1. 從 PR 改動路徑偵測 `{name}`（取 `openspec/changes/{name}/`，排除 `archive/`）。
-2. Spec 從 `openspec/changes/{name}/` 搬到 `openspec/changes/archive/YYYY-MM-DD-{name}/`。
-3. 合進 `openspec/specs/{capability}/spec.md`（ADDED → 新增 / MODIFIED → 合既有）。
-4. Bot 帳號 commit + push（branch protection 需放行該 identity；`ARCHIVE_BOT_TOKEN` 沒設則 fallback 到 `GITHUB_TOKEN`）。
+1. 在 feature worktree / branch 跑 `openspec archive {name} --yes`（或 `scripts/archive.sh {name}`）。CLI 會：
+   - 把 `openspec/changes/{name}/` 搬到 `openspec/changes/archive/YYYY-MM-DD-{name}/`
+   - Promote delta spec 進 `openspec/specs/{capability}/spec.md`（ADDED → 新檔 / MODIFIED → 合 delta）
+   - 跑 `openspec validate`
+2. **手動補 CLI 不做的事**：
+   - canonical spec 的 `## Purpose`（CLI promote 出 `TBD - created by archiving ...`，必填，不然下次 reviewer 看會以為沒寫完）
+   - `openspec/specs/MISSING.md` count + capability 分組
+3. Commit 在 feature branch 上：
+   ```
+   chore(openspec): archive {name}
+   ```
+   Footer 帶 spec / scenarios / AI-assisted 標記（照各 project commit convention）；Spec 路徑指 archive **後**的位置（`openspec/changes/archive/YYYY-MM-DD-{name}/...` — 這個 commit 自己就把舊路徑刪了）。
+4. Push 到原 feature MR。CI 最後再跑一輪。
+5. 綠燈後回報 user，**由 user 親手 merge MR**（orchestrator 一律不代按 merge）。feature + archive 一次進整合分支。
 
-**為什麼用 CI 不開第二個 PR**：內容早已 review 過、archive 是純機械動作，二次 PR 只是延遲、沒額外安全性。
+**為什麼 pre-merge bundle 而不是另開 MR / CI auto-archive**：archive 是純機械動作（folder move + spec merge），另開一個 doc-only MR 等於再跑一整輪 lint + test + deploy preview，純粹浪費 CI 額度與 reviewer 注意力。Bundle 進 feature MR 的最後一個 commit，整個生命週期只多一輪 CI，省一輪完整 MR pipeline。
 
-**User-side cleanup**（CI 跑不到，要在本機跑）：
+**Safety**：仍然不可在 review 進行中就 archive — 視窗是「所有 reviewer ✅ → user 確認 OK merge → archive commit → 最後一輪 CI → merge」。archive commit 之前 spec 都在 `openspec/changes/` 裡讓 reviewer 引用。
 
-- `git worktree remove .worktrees/{name}` + `git branch -d feat/{branch_name}`
+**Archive 之後、merge 之前的窗口**：archive push 是一個新 commit，多數 GitLab/GitHub 設定會因此 **reset 已給的 approval**；reviewer 也可能在這段窗口留新 comment。處理規則：
+- 有新 comment → 重進 Stage 11 per-comment loop；prompt 裡的 spec 路徑改用 archive 後位置 `openspec/changes/archive/YYYY-MM-DD-{name}/specs/{name}/spec.md`。
+- Approval 被 reset → 修完（或無需修）後提醒 reviewer 重新 approve，再回到「user OK merge」。
+- 不要為了躲 approval reset 而把 archive 移回 merge 後 — 那就退化回舊制了；多一次 approve 點擊是這個設計的已知成本。
+
+**User-side cleanup after merge**：
+
+- `git worktree remove .worktrees/{name}` + `git branch -D feat/{branch_name}`（squash-merge 後 commit hash 對不上，要 `-D` 強刪）
 - 關 ticket + 從 MEMORY active list 移除
 
-**Fallback**：CI 認不出唯一 `{name}` 時會 skip 並印警告 → 本機跑 `scripts/archive.sh {name}` 補。
-
-**仍禁止 pre-merge archive**：workflow 只在 `closed && merged == true` 觸發，PR open 期間不會跑；手動 script 也要等 merge 後。
+**Fallback / 變體**：
+- 若 archive commit push 後 CI 紅（如 `openspec validate` fail），在 feature branch 上 fix，再 push 一次。MR 最後一輪 CI 必須綠。
+- **提早 merge 補救**：若 user 在 archive 之前就按了 merge（spec 未 archive 進了整合分支），在整合分支上開一個 `chore(openspec): archive {name}` 的小 MR 補跑 `openspec archive` — 這是唯一允許為 archive 另開 MR 的情況。
+- 若 project 仍有舊的 GitHub `.github/workflows/auto-archive.yml`，**一律建議刪除**：它是用 PR 的路徑 diff 偵測 change，不是看 tree 現況 — 一般情況下確實 no-op，但遷移期（base 上殘留舊制未 archive 的 folder 被本 MR 順手 bundle 掉）會誤觸發而紅燈，極端情況（stale base.sha 夾帶到別人 merge 進 base 的 change 路徑）甚至會 archive 掉別人 in-flight 的 change 並 bot-push 整合分支。
 
 ## Reviewer dispatch pattern
 
@@ -493,6 +518,7 @@ When a stage says "dispatch N parallel reviewer agents":
 6. **De-duplicate**: when two reviewers raise effectively the same item (same file:line, same intent), merge into one entry and tag which reviewers flagged it. Sort SUGGESTIONs by ROI (impact / effort), highest first.
 7. If CRITICAL → fix → re-dispatch the same reviewers (same prompts, post-fix artifact)
 8. **After PASS**, append the aggregated summary to `openspec/changes/{name}/review.md` under a stage heading. Do NOT store individual agent raw reports.
+9. **Disposition write-back**: every finding line — CRITICAL, WARNING, and SUGGESTION alike — ends with `— disposition: fixed | rejected | deferred | pending`（em-dash `—` 分隔，tag 一律排在行尾；`deferred` 的 ticket 括號跟在 tag 後：`— disposition: deferred (AIP-XXXX)`，缺 ticket 的 deferral 歷史上永遠不會被關）。New WARNING/SUGGESTION entries start `pending`; CRITICALs are logged `fixed` once the fix → re-dispatch loop clears them. Whichever later stage (or the user) acts on or dismisses a finding updates the tag **in place** — the only in-place edit allowed in the append-only log，**且此規則延伸到 archive 之後**：更新 archived change 裡 `review.md` 的 disposition tag 是唯一允許的 post-archive 編輯（只改 tag，不改內容；spec 本體仍然 NEVER 動）。Purpose: reviewer yield becomes greppable (flagged vs. adopted), so low-yield personas get pruned with data instead of faith.
 
 ### review.md format
 
@@ -506,14 +532,16 @@ When a stage says "dispatch N parallel reviewer agents":
 - **Token usage**: ~{total} k total ({split per reviewer}); parallel wall time ~{seconds} s
 
 ### CRITICAL
-_(none)_
+1. {short} — flagged by: {reviewer names} — disposition: fixed
+_(none if empty)_
 
 ### WARNING
-_(none)_
+1. {short} — flagged by: {reviewer names} — disposition: pending
+_(none if empty)_
 
 ### SUGGESTION
 (de-duplicated, sorted by ROI)
-1. {short} — flagged by: {reviewer names}
+1. {short} — flagged by: {reviewer names} — disposition: pending
 2. ...
 
 ### Pass
@@ -523,7 +551,7 @@ _(none)_
 **PASS** / **BLOCK**
 ```
 
-One file, append-only, one section per stage. Token usage tracked for retrospect. Easy to grep when reviewing the change later.
+One file, append-only, one section per stage — the sole exception is the `disposition:` tag, which is updated in place when a finding is later acted on or dismissed (including inside an already-archived change, see dispatch rule 9). Token usage + disposition tracked for retrospect: `grep -oE 'disposition: [a-z]+' review.md | sort | uniq -c` gives per-change reviewer yield.
 
 ## Resuming mid-pipeline
 
@@ -531,9 +559,10 @@ One file, append-only, one section per stage. Token usage tracked for retrospect
 /workflow --from {stage} --spec {name}
 ```
 
-`{stage}` ∈ `tests`, `implement`, `commit`, `push`, `review`. Skip Stages 1–4, jump to specified stage. Reuses existing `openspec/changes/{name}/`.
+`{stage}` ∈ `tests`, `implement`, `commit`, `push`, `review`, `archive`. Skip Stages 1–4, jump to specified stage. Reuses existing `openspec/changes/{name}/`.
 
 - `review` resumes at Stage 10.5 against an already-pushed MR. Equivalent to `/workflow --re-review {MR_ID}` if the MR ID is known.
+- `archive` resumes at Stage 12（session 在「OK-to-merge 之後、merge 之前」斷掉時用）。注意 archive commit 已存在時 `openspec/changes/{name}/` 已消失 — 以 `openspec/changes/archive/*-{name}/` 是否存在判斷是要補跑 archive、還是只剩「等 CI 綠 → user merge」。
 
 ## Quick Reference
 
@@ -552,7 +581,7 @@ One file, append-only, one section per stage. Token usage tracked for retrospect
 | 10 Push | push + MR | — |
 | 10.5 Codex review | dispatch codex → relay-post inline + summary | advisory, auto after Stage 10 |
 | 11 MR loop | codex/claude engine + ⏸ per-comment (plan + verify) + auto-resolve | deferred + ✋ × 2 per comment |
-| 12 Archive | CI `auto-archive.yml` + 本機 worktree cleanup | post-merge, CI-auto |
+| 12 Archive | `openspec archive {name}` commit 在 feature branch + 本機 worktree cleanup | pre-merge, same MR |
 
 ## Common Mistakes
 
@@ -570,14 +599,18 @@ One file, append-only, one section per stage. Token usage tracked for retrospect
 | Editing archived spec | NEVER — propose a new MODIFIED change |
 | Editing the 5 derived files by hand | NEVER — edit `spec.md` then re-split. Derived files are projections, not sources. |
 | Storing 8 individual reviewer reports as files | NEVER — only append aggregated summary to `review.md` |
+| Findings logged, disposition never updated | WARNING/SUGGESTION left `pending` forever make yield stats useless. Update `disposition:` in place the moment a finding is fixed or rejected. |
 | Skipping Stage 7.5 in auto mode | Violates `feedback_auto_workflow_discipline`; commit blocked until 0 CRITICAL + green tests + report generated |
 | Running `code-reviewer` / `reporter` inside Stage 7 reviewers | Those agents are spec-vs-implementation gates; keep them in 7.5 so reviewer roles stay distinct (Stage 7 = peer review, Stage 7.5 = compliance gate) |
 | Treating push as the end of pipeline | Pipeline ends at Stage 12 archive. Push only ships a candidate; review loop (Stage 11) closes the contract. |
-| 在 MR merge 前 archive | auto-archive workflow 只在 `closed && merged` 觸發；手動 `scripts/archive.sh` 也要等 merge 後。 |
-| Archive 後忘了本機清理 worktree | CI 只 archive 整合分支的 spec；`git worktree remove` + local branch delete 要在本機自己跑。 |
+| 為 archive 另開一個 MR | 不必。bundle 進原 feature MR 的最後一個 commit（reviewer ✅ + user OK merge 之後再加），省一整輪 MR + CI。 |
+| Reviewer 還在 review 就 archive | 視窗是「reviewer ✅ + user OK merge」之後才動；提早 archive 會讓 spec 從 `openspec/changes/` 搬走、reviewer 找不到引用點。 |
+| Archive 前就按了 merge | Stage 11 Step 5 的 sanity poll 必跑（確認 MR 仍 open）；真發生了 → 整合分支開 `chore(openspec): archive {name}` 小 MR 補跑（Stage 12 提早 merge 補救）。 |
+| Agent 代按 merge | NEVER — CI 綠後回報，merge 一律 user 親手執行。 |
+| Archive 後忘了本機清理 worktree | merge 後 `git worktree remove .worktrees/{name}` + `git branch -D feat/{name}` 要在本機自己跑（squash-merge branch 用 `-D` 強刪）。 |
 | Batching MR comments and asking user once | Stage 11 mandates per-comment checkpoint (plan ✋ + verify ✋). Batching defeats the "user catches engine drift early" design. |
 | Skipping Stage 11 Step 0 engine detection | codex CLI absence + still dispatching `codex:codex-rescue` agent → silent failure. Detect once at loop entry; cache `codex_available` flag. |
-| Switching fix engine mid-loop | Stay on the engine chosen at Step 0. Mid-loop swap breaks "fix quality归因 by engine" + may double-apply or miss commits. |
+| Switching fix engine mid-loop | Stay on the engine chosen at Step 0. Mid-loop swap breaks "fix quality歸因 by engine" + may double-apply or miss commits. |
 | Using engine to write code at Step 2b | Step 2b is **plan only**, no code. User approves the plan before any file changes. Engine writing code at 2b violates checkpoint contract. |
 | Skipping Stage 10.5 codex review after push | Pipeline contract: every push triggers codex advisory pass. Skipping leaves the MR un-reviewed until humans look at it (could be hours). User override is `--skip-codex-review`. |
 | Acting as Codex yourself (Claude doing the review) | The skill name is "Codex 扮演..."; dispatch via `Agent(subagent_type="codex:codex-rescue")` to use the real codex CLI. Claude self-roleplay defeats the multi-engine quality goal. |
@@ -600,5 +633,6 @@ One file, append-only, one section per stage. Token usage tracked for retrospect
 - `mr-reviewer` — **project-local** skill invoked at Stage 10.5 (real codex via codex-rescue agent, not Claude self-roleplay)
 - `codex:codex-rescue` — the codex CLI forwarder used by Stages 10.5 + 11
 - `/opsx:propose` — alternative entry without pipeline
-- `.github/workflows/auto-archive.yml` — CI auto-runs Stage 12 on PR merge
-- `scripts/archive.sh` — local fallback for Stage 12 when CI skips (0 or >1 change paths in PR)
+- `openspec archive {name} --yes` — CLI that does the folder move + spec promote + validate; run on feature branch before final merge. **Preferred.**
+- `scripts/archive.sh` — standalone fallback for projects without the openspec CLI. NOT equivalent: it does not run `openspec validate`, and its MODIFIED path only appends a marked block instead of a real delta merge — prefer the CLI whenever available.
+- `.github/workflows/auto-archive.yml` — legacy post-merge CI auto-archive; superseded by pre-merge bundle. **Delete it** — its path-diff detection can misfire during migration (see Stage 12 Fallback / 變體).

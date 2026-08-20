@@ -2,9 +2,14 @@
 # Stage 12 archive — moves a change spec into archive/ and merges its
 # Requirements into openspec/specs/{capability}/spec.md.
 #
-# Normally invoked by .github/workflows/auto-archive.yml on PR merge.
-# Run locally as a fallback when CI skips (0 or >1 change paths in PR)
-# or to archive after a direct push.
+# Stage 12 pre-merge archive: run on the feature branch after reviewer
+# approval + user OK-to-merge, BEFORE the final merge, so feature + archive
+# ship together in one MR.
+#
+# Standalone fallback for projects without the openspec CLI. Prefer
+# `openspec archive <name> --yes` when available — the CLI also runs
+# `openspec validate` and does a real MODIFIED delta merge, which this
+# script does not (see NOTE below).
 #
 # Usage: scripts/archive.sh <change-name>
 #
@@ -19,6 +24,11 @@
 # OpenSpec merger once available.
 
 set -euo pipefail
+
+# All paths below are repo-relative; don't depend on the caller's CWD.
+if TOPLEVEL="$(git rev-parse --show-toplevel 2>/dev/null)"; then
+  cd "${TOPLEVEL}"
+fi
 
 NAME="${1:?usage: scripts/archive.sh <change-name>}"
 CHANGE_DIR="openspec/changes/${NAME}"
@@ -82,6 +92,7 @@ esac
 mkdir -p "$(dirname "${ARCHIVE_DIR}")"
 if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
   git mv "${CHANGE_DIR}" "${ARCHIVE_DIR}"
+  git add "${DST_SPEC}"
 else
   mv "${CHANGE_DIR}" "${ARCHIVE_DIR}"
 fi
