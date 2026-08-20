@@ -7,22 +7,33 @@ Each prompt is dispatched via the Agent tool with `subagent_type: "general-purpo
 ```
 Severity rubric (hard rules):
 - CRITICAL is reserved for exactly four categories:
-  (1) code correctness — a bug with a concrete trigger (inputs/state → wrong
-      result or crash);
+  (1) code correctness — a bug with a concrete trigger (a specific
+      input/state → a specific wrong result or crash);
   (2) test correctness — a test that doesn't test its spec Scenario, or is
       itself wrong (false green / false red);
   (3) behavior correctness — direct conflict with a spec Scenario (cite it);
   (4) security — violation of a rule in the project's Security Baseline
-      (AGENTS.md section; cite the rule number).
-- A CRITICAL must carry its trigger / citation in the `failure:` field —
-  a CRITICAL without one is mechanically demoted during aggregation.
-- Everything else — naming, style, taste, architecture preference,
-  performance micro-tuning, hypothetical edge cases without a concrete
-  trigger — is WARNING at most and never blocks.
-- Lint is already green when you run: anything a tool can verify is
-  off-limits. Do not raise it.
-- Every finding ends with `— cost: low | med | high` (fix-cost estimate).
-  High cost + low benefit → downgrade or drop it before reporting.
+      (AGENTS.md section; cite the rule number. If the project's AGENTS.md
+      has no such section, cite the default rules in
+      templates/project-AGENTS.md.template and flag the missing section
+      as a WARNING).
+- Also valid as CRITICAL anchors: a quotable project hard rule (CLAUDE.md
+  鐵則 / architecture doc clause — cite it), and, for the commit-stage
+  personas only, the commit contract (footer/scope requirements).
+- A CRITICAL must carry its trigger / citation in the `failure:` field.
+  Vague fills ("bad input → wrong result") and citations that don't
+  resolve (Scenario name not in the spec, rule number not in AGENTS.md)
+  are mechanically demoted during aggregation.
+- Everything else — naming, style, taste, architecture preference without
+  a citable hard rule, performance micro-tuning, hypothetical edge cases
+  without a concrete trigger — is WARNING at most and never blocks.
+- Anything this project's bound `{LINT_COMMAND}` toolchain actually checks
+  is off-limits once the Stage 7.5 lint gate has run green. For reviewers
+  dispatched before that gate (Stages 6 and 7), and for projects with no
+  linter bound: style findings are allowed but capped at SUGGESTION.
+- Every finding in your reviewer report ends with `— cost: low | med | high` (low = localized,
+  minutes; med = single module, hours; high = cross-module or design
+  change). High cost + low benefit → downgrade or drop it before reporting.
 ```
 
 ## Output format (every reviewer)
@@ -173,9 +184,11 @@ Checklist:
 8. Logging: Timber, not android.util.Log (per feedback_use_timber_not_log)
 9. Error handling: Result<T> + custom exceptions, not generic try/catch
 10. No commented-out code, no // TODO without date, no // region blocks
+    (only where the project's linter doesn't already cover these)
 
-CRITICAL: architectural violations, security issues, definite bugs.
-WARNING: convention violations, smell.
+CRITICAL: definite bugs (with a statable trigger), or violations of a
+citable project hard rule / Security Baseline rule (cite it).
+WARNING: convention violations, architecture preferences, smell.
 SUGGESTION: refactoring opportunities.
 
 End with the standardized Findings block.
@@ -240,7 +253,9 @@ Checklist:
    - `AI-assisted: yes`
 7. No "and" in subject (sign of multiple concerns — should be split)
 
-CRITICAL: missing type, missing spec footer, scope mismatch with diff.
+CRITICAL: missing type, missing spec footer, scope mismatch with diff —
+these cite the commit contract (checklist item number) in the `failure:`
+field; commit-stage personas are exempt from the four-category test.
 WARNING: vague description, missing scope.
 SUGGESTION: clearer wording.
 
@@ -266,7 +281,10 @@ Checklist:
 5. Spec files (proposal/design/spec/tasks.md) are included in this commit
 6. Test files exist for new behaviour
 
-CRITICAL: secrets, .env, google-services.json, *.keystore, JWT/glpat- strings in diff.
+CRITICAL: secrets, .env, google-services.json, *.keystore, JWT/glpat- strings
+in diff — cite Security Baseline rule 1 in the `failure:` field.
+Other changeset CRITICALs cite the commit contract (commit-stage personas
+are exempt from the four-category test).
 WARNING: unrelated files, large formatting churn.
 SUGGESTION: split into separate commits.
 
@@ -294,14 +312,16 @@ After all N reviewers return, orchestrator builds a combined report:
 - ...
 ```
 
-**Mechanical demotion (before computing the verdict)**: any CRITICAL whose `failure:` field is missing or doesn't state a concrete trigger / Scenario / security-rule citation is demoted to WARNING. No debate.
+**Mechanical demotion (before computing the verdict)**: a CRITICAL is demoted to WARNING when its `failure:` field is missing, is vacuous (doesn't name a specific input/state and a specific wrong result), or its citation doesn't resolve — the named Scenario isn't in the spec, or the cited rule number isn't in AGENTS.md / the project's hard-rule doc. Verify the citation actually exists; do not take it on faith. No debate. This demotion runs in fast mode too — a single combined reviewer does not skip aggregation.
+
+De-dup note: when merged findings disagree on `cost:`, keep the highest; carry a one-line `failure:` summary into the review.md CRITICAL entry so demotion decisions stay auditable.
 
 If `BLOCK`: orchestrator fixes the CRITICAL items, then re-dispatches the same N reviewers (NOT a different set — to avoid moving goalposts), subject to the **convergence boundary**:
 
 - Initial review + at most **2 re-dispatch rounds** per stage.
-- Re-dispatch rounds verify only (a) prior CRITICALs resolved and (b) the fix diff itself. Net-new findings on code the fixes didn't touch → log as `pending` in review.md; they don't block and don't trigger another round.
-- A finding fixed once that reappears (same file, same intent) stops the loop immediately (flip-flop signal).
-- Rounds exhausted with CRITICALs remaining → user gate: fix manually / accept and proceed (disposition `rejected` / `deferred (ticket)`) / abort.
+- Re-dispatch rounds verify only (a) prior CRITICALs resolved and (b) the fix diff itself — a CRITICAL in the fix diff blocks and consumes the next round. Net-new findings on code the fixes didn't touch → log as `pending` in review.md; they don't block and don't trigger another round (CRITICAL-class pending items are listed at the Stage 9 gate).
+- A finding fixed once that reappears (same file, same intent) stops the loop immediately (flip-flop signal) → same user gate as cap-hit.
+- Rounds exhausted with CRITICALs remaining → user gate, leftovers sorted by cost ascending: fix manually / accept and proceed (disposition `rejected` / `deferred (ticket)`, no longer counted by any 0-CRITICAL gate) / abort.
 - Fixes are minimal-scope: that CRITICAL only, no drive-by refactoring.
 
 If `PROCEED`: surface WARNING/SUGGESTION inline to the user, move to next stage.

@@ -30,8 +30,11 @@ into the dispatch-time prompt.
 
 Reviewers may raise a security CRITICAL **only by citing a rule below** (rule
 number). Speculative concerns without a citation are WARNING at most, and must
-carry a fix-cost estimate. Extend this list per project — keep every entry
-concrete and mechanically checkable.
+carry a fix-cost estimate. Projects may **extend** (append new numbered rules)
+and **amend** (reword a rule to fit the project — the project's version then
+takes precedence over this template's default). Numbering is append-only:
+never renumber or insert mid-list — archived review.md entries cite rule
+numbers permanently. Keep every entry concrete and checkable.
 
 1. No secrets in git — keystores, service accounts, API keys, tokens,
    `google-services.json`, `.env`. CI injects them (e.g. File variables).
@@ -49,8 +52,10 @@ concrete and mechanically checkable.
 8. No knowingly vulnerable dependency versions; pin versions.
 9. Error surfaces shown to end users don't leak internals — stack traces,
    file paths, keys, internal hostnames.
-10. Test code and fixtures use fake data only — no real accounts, no
-    production endpoints, no personal data.
+10. Test code and fixtures touch only project-designated test accounts /
+    endpoints per the project's test-data hygiene rules (e.g. an iOS
+    驗證邊界表), and never contain personal data. Projects with no such
+    designation: fake data only.
 
 ## Common Commands
 
