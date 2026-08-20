@@ -26,7 +26,7 @@ Claude 扮演資深 RD，讀取 GitHub PR 上的 review comments，**逐個**修
 ## 觸發方式
 
 ```
-/fix <PR_ID> [--spec <OpenSpec change>] [--include-suggestions]
+/fix {PR_ID} [--spec <OpenSpec change>] [--include-suggestions]
 ```
 
 ### 範例
@@ -40,7 +40,7 @@ Claude 扮演資深 RD，讀取 GitHub PR 上的 review comments，**逐個**修
 
 | 參數 | 說明 |
 |---|---|
-| `<PR_ID>` | GitHub PR 編號（支援 `#123`、`123`、完整 URL） |
+| `{PR_ID}` | GitHub PR 編號（支援 `#123`、`123`、完整 URL） |
 | `--spec <OpenSpec change>` | OpenSpec change 名稱或路徑，用於確保修復符合規格（選用；無則從 PR description / branch name 推斷） |
 | `--include-suggestions` | 一併修復 SUGGESTION 等級問題（預設只修 CRITICAL + WARNING） |
 
@@ -64,7 +64,7 @@ gh auth status
 
 ```bash
 # 取得 PR 基本資訊
-gh pr view <PR_ID>
+gh pr view {PR_ID}
 
 # 取得 repo full name（owner/repo）
 GITHUB_REPO=$(gh repo view --json nameWithOwner -q .nameWithOwner)
@@ -87,7 +87,7 @@ gh api graphql -f query='
         }
       }
     }
-  }' -f owner="$OWNER" -f repo="$REPO" -F pr=<PR_ID> \
+  }' -f owner="$OWNER" -f repo="$REPO" -F pr={PR_ID} \
   | python3 -c "
 import sys, json
 data = json.load(sys.stdin)
@@ -306,7 +306,7 @@ gh api graphql -f query='mutation { resolveReviewThread(input: {threadId: "<THRE
 
 | 觸發來源 | 行為 |
 |---|---|
-| `/review-mr` 完成後有 CRITICAL/WARNING | 提示使用者：「發現 X 個問題，是否執行 /fix #<PR_ID> 修復？」 |
+| `/review-mr` 完成後有 CRITICAL/WARNING | 提示使用者：「發現 X 個問題，是否執行 /fix #{PR_ID} 修復？」 |
 | `/fix` 獨立執行 | per-comment 流程：讀取 → PLAN → 人工核可 → 修 → commit → 貼 reply（**不 resolve**、**不 push**） |
 | `/workflow` Pipeline 中 | verify 階段（Stage 7.5）有問題時，可呼叫 fix 修復後重新驗證 |
 

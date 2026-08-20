@@ -23,8 +23,8 @@ compatibility: "需要 bash / 檔案系統（寫入報告檔案，必要）"
 
 ### 範例
 ```
-/report etf-curated-themes
-/report openspec/changes/etf-curated-themes/ --format html
+/report auth-sign-in
+/report openspec/changes/auth-sign-in/ --format html
 ```
 
 預設輸出格式：`.md`
@@ -132,22 +132,22 @@ PR-only 模式:report_pr{PR_ID}_{YYYYMMDD}.md
 
 ## ✅ Requirement × Scenario 對照表
 
-### Requirement: ETF精選主題頁面載入主題分類
-> 來源：`specs/etf-theme-screen/spec.md`
+### Requirement: Email 登入
+> 來源：`specs/auth-sign-in/spec.md`
 
 | Scenario | 狀態 | 對應實作 | 備註 |
 |---|---|---|---|
-| 成功載入主題分類 | ✅ 已實作 | `EtfThemeViewModel.swift:42` | |
-| Remote Config 為空 | ✅ 已實作 | `EtfThemeViewModel.swift:58` | |
-| 網路異常 | ⚠️ 部分實作 | `EtfThemeViewModel.swift:65` | 缺少離線提示 |
+| 成功登入導向首頁 | ✅ 已實作 | `SignInViewModel.swift:42` | |
+| 密碼錯誤顯示錯誤訊息 | ✅ 已實作 | `SignInViewModel.swift:58` | |
+| 網路異常 | ⚠️ 部分實作 | `SignInViewModel.swift:65` | 缺少離線提示 |
 
-### Requirement: ETF 按鈕點擊帶入商品代碼
-> 來源：`specs/etf-theme-to-pockettw/spec.md`
+### Requirement: 未登入導向登入頁
+> 來源：`specs/auth-session-gate/spec.md`
 
 | Scenario | 狀態 | 對應實作 | 備註 |
 |---|---|---|---|
-| 已登入，點擊 ETF | ✅ 已實作 | `EtfThemeView.swift:120` | |
-| 未登入，點擊 ETF | ❌ 未實作 | — | AuthRequiredWrapper 未包裹 |
+| 已登入，開啟 App 進首頁 | ✅ 已實作 | `RootView.swift:120` | |
+| Session 過期，導回登入頁 | ❌ 未實作 | — | session gate 未包裹 RootView |
 
 **Scenario 覆蓋率：3 / 5（60%）**
 
@@ -157,10 +157,10 @@ PR-only 模式:report_pr{PR_ID}_{YYYYMMDD}.md
 
 | Task | Layer | 狀態 |
 |---|---|---|
-| 1.1 建立 EtfTheme domain model | Domain | ✅ 存在 |
-| 1.2 建立 EtfThemeRepository protocol | Domain | ✅ 存在 |
-| 2.1 建立 EtfThemeDTO | Data | ✅ 存在 |
-| 3.1 註冊 DI | DI | ⚠️ 存在但 UseCase 未註冊 |
+| 1.1 建立 SignInUseCase | Domain | ✅ 存在 |
+| 1.2 建立 AuthRepository protocol | Domain | ✅ 存在 |
+| 2.1 建立 AuthDTO | Data | ✅ 存在 |
+| 3.1 AppContainer 註冊 | Composition | ⚠️ 存在但 UseCase 未註冊 |
 
 ---
 
@@ -196,7 +196,7 @@ PR-only 模式:report_pr{PR_ID}_{YYYYMMDD}.md
 
 ---
 
-## 📱 owner 驗收清單（gate 5，Claude 驗不了的部分）
+## 📱 owner 驗收清單（owner 人工驗收 gate，Claude 驗不了的部分）
 
 自動彙整以下來源，逐條列給 owner 人工驗收：
 - `smoke-checklist.md`（6c manual-smoke Scenario）尚未勾選的項目

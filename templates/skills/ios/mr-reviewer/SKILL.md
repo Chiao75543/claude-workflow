@@ -60,7 +60,7 @@ Codex 沙箱通常**無法**連到 GitHub API host（`api.github.com`，會回 `
 
 派遣 codex 時 prompt 要明確：「DO NOT call gh or GitHub API — return findings; dispatcher will relay via gh」。
 
-完整 prompt template 範本見 workflow-orchestrator skill 的 `references/codex-mr-review-prompt-template.md`。
+完整 prompt template 範本見 workflow-orchestrator skill 的 `references/codex-mr-review-prompt-template.md` — **僅參考其結構**：該範本是 GitLab 版（glab + DiffNote、base/head/start SHA 收集），指令一律改用本 skill Step 5–6 的 gh / GitHub API 版，不可照抄。
 
 ### Step 1 — 解析 PR ID
 
@@ -285,7 +285,7 @@ WARNING：X 個（建議修正但不阻擋）
 - [C-1] ChatViewModel.swift:42 — 吞錯改寫錯誤文案
 - [C-2] MessageDTO.swift:18 — created_at 用 Date 直接承載
 
-修正完成後執行：/review-mr <PR_ID>
+修正完成後執行：/review-mr {PR_ID}
 ```
 
 Reporter **不觸發**，不產出報告。
