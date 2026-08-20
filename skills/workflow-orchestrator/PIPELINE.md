@@ -28,7 +28,7 @@ Designed for AI-assisted, spec-first workflows. Tool-agnostic where possible —
 1. **Every change traces to a spec.** No code without a `spec.md`.
 2. **Single source of truth.** Authors edit one file; derived artifacts are projections.
 3. **Verification before commit.** No commit until tests are green and there are zero CRITICAL spec violations.
-4. **Lifecycle ends at archive, not at push.** PR review and post-merge archive are part of the pipeline.
+4. **Lifecycle ends at archive, not at push.** PR review and pre-merge archive (commit added on the feature branch after reviewer ✅, before final merge) are part of the pipeline.
 5. **Per-comment user gate in review fixes.** The fix engine never batches multiple PR comments without human approval per item.
 6. **Reviewer agents in parallel, never serial.** Multiple reviewer personas at each stage are dispatched in a single message.
 7. **CRITICAL blocks; WARNING/SUGGESTION surfaces.**
@@ -68,8 +68,9 @@ flowchart TD
 
     subgraph P4[Phase 4: Close the loop]
         S10 -. deferred .-> S11[11. PR review loop<br/>engine + per-comment gate]
-        S11 --> S12[12. Archive<br/>CI auto on merge]
-        S12 --> EndDone([end])
+        S11 --> S12[12. Archive<br/>pre-merge commit on feature branch]
+        S12 --> SMerge[Merge MR<br/>feature + archive together]
+        SMerge --> EndDone([end])
     end
 
     classDef gate fill:#fff4cc,stroke:#d4a017,stroke-width:2px
@@ -98,7 +99,7 @@ Legend: yellow = user gate, green = stage added in this revision.
 | 9    | Confirm push       | user                 | view diff stats + branch + remote                                 | —           | push / hold                     | yes                 |
 | 10   | Push + PR          | auto                 | `git push` + create pull request                                  | —           | remote branch + PR              | —                   |
 | 11   | PR review loop     | deferred             | fix engine + per-comment gate + auto-resolve                      | —           | resolved discussions, merged    | yes (2 per comment) |
-| 12   | Archive            | CI on merge          | CI moves spec to archive + merges into specs/; local cleanup user-side | —      | spec archived, env clean        | —                   |
+| 12   | Archive            | reviewer ✅ + user OK | `openspec archive` commit on feature branch → push → CI green → merge MR; local cleanup user-side | —      | spec archived, env clean        | —                   |
 
 ---
 
@@ -407,36 +408,46 @@ Re-run **Stage 7.5** (test + verify + report) once to catch regression. Loop bac
 
 Default: **one commit per comment** (per-comment commit), making diff review and selective revert easy. Override with `--squash`.
 
-#### Step 5: Detect merged
+#### Step 5: Detect ready-to-merge
 
-Poll PR state (`gh pr view --json state` / `glab mr view --output json | jq .state`). `merged` → jump to Stage 12.
+Loop ends when all CRITICAL/WARNING resolved (approved or skipped or deferred-then-resolved) + no deferred remaining + reviewer approves + user confirms OK-to-merge. **Do not merge yet** — hand off to Stage 12 (archive commit on the same feature branch). The merge happens after Stage 12's final CI run goes green.
+
+Optional poll: `gh pr view --json state` / `glab mr view --output json | jq .state` only as a sanity check that the MR is still open (not closed without merge); the entry signal for Stage 12 is the human OK, not a `merged` state.
 
 Exit conditions:
 
-- All CRITICAL/WARNING resolved (approved or skipped or deferred-then-resolved) + no deferred remaining + reviewer approves + PR merged → Stage 12.
+- Ready-to-merge as above → Stage 12.
 - User `abort` → Stage 11 exits, PR stays open, already-applied fixes remain pushed.
 
-### Stage 12 — Archive (post-merge, CI-automated)
+### Stage 12 — Archive (pre-merge, on feature branch)
 
-PR merge triggers `.github/workflows/auto-archive.yml`. The workflow runs against the integration branch (post-merge) and produces a single auto-commit:
+Entry condition: Stage 11 closed (0 CRITICAL + all comments resolved + reviewer approval) **and** user has said OK to merge. **Don't hit merge yet** — add the archive commit to the same feature branch first so feature + archive ship together in the same MR.
 
-1. Detect change name from PR-changed paths — `openspec/changes/{name}/`, excluding `archive/`.
-2. Move spec folder to `openspec/changes/archive/YYYY-MM-DD-{name}/`.
-3. Merge into `openspec/specs/{capability}/spec.md`:
-   - ADDED → new capability file
-   - MODIFIED → integrate diff into existing capability
-4. Commit + push with the bot identity.
+1. On the feature worktree/branch, run `openspec archive {name} --yes` (or `scripts/archive.sh {name}` if the project wraps it). The CLI:
+   - Moves `openspec/changes/{name}/` → `openspec/changes/archive/YYYY-MM-DD-{name}/`
+   - Promotes the delta spec into `openspec/specs/{capability}/spec.md`:
+     - ADDED → new capability file
+     - MODIFIED → integrate delta into existing capability
+   - Runs `openspec validate`
+2. **Manual fill (CLI doesn't do these):**
+   - Replace `## Purpose: TBD - created by archiving ...` in the promoted canonical spec with the real purpose
+   - Bump `openspec/specs/MISSING.md` count + add new capability to its group
+3. Commit on the feature branch with `chore(openspec): archive {name}` + project commit footer (Spec / Scenarios / AI-assisted).
+4. Push to the same MR. CI runs one final time.
+5. Once green, merge the MR. Feature + archive land on the integration branch in one shot.
 
-**Why CI, not a second PR.** The change content is already reviewed; archive is mechanical (folder move + spec merge). A second PR adds latency without adding safety. The auto-commit pushes directly to the integration branch, so branch protection must allow the workflow's identity (a GitHub App token or PAT exposed as `ARCHIVE_BOT_TOKEN`; falls back to `GITHUB_TOKEN`).
+**Why pre-merge bundle, not a second PR or post-merge CI.** Archive is purely mechanical (folder move + spec merge). A second PR re-runs the entire pipeline (lint + test + deploy preview) for a doc-only change — wasted CI budget and reviewer attention. Bundling archive into the feature MR's last commit costs one extra CI run instead of an entire MR's worth.
 
-**User-side cleanup** (CI can't do this — runs on your machine):
+**Safety: still no archive while review is live.** The window is `reviewer ✅ + user says merge` → archive commit → final CI → merge. The spec remains in `openspec/changes/` throughout the entire review period so reviewers can reference it.
 
-- `git worktree remove .worktrees/{name}` + `git branch -d feat/{branch_name}`.
+**User-side cleanup after merge** (runs locally):
+
+- `git worktree remove .worktrees/{name}` + `git branch -D feat/{branch_name}` (squash-merged branches need `-D` because the local commit hash doesn't match the integration-branch one).
 - Close ticket / update project memory.
 
-**Failure modes.** If CI cannot resolve a single change name (0 or >1 `openspec/changes/{name}/` paths in the PR), it emits a warning and skips. Run `scripts/archive.sh {name}` manually as a fallback.
+**Failure modes.** If the archive commit's CI run fails (e.g. `openspec validate` errors, or lint catches something in the promoted spec), fix on the feature branch and push again. The MR's final CI must be green before merge.
 
-**Pre-merge archive is still forbidden.** The workflow only fires on `pull_request: closed && merged == true`, never on PR open. Archiving while the PR is live would move the spec out of `openspec/changes/` while reviewers still reference it.
+**Legacy CI.** Projects that historically ran `.github/workflows/auto-archive.yml` on PR merge will find it no-ops after the pre-merge bundle (no `openspec/changes/{name}/` left to archive). Safe to leave or delete.
 
 ---
 
@@ -448,7 +459,7 @@ PR merge triggers `.github/workflows/auto-archive.yml`. The workflow runs agains
 | Source           | spec                                       | reviewer comments                                              |
 | Action           | reviewer + reporter + tests                | fix engine (codex/claude) + auto-resolve                       |
 | Human gates      | none (auto pass/fail)                      | **2 per comment** (approve plan + verify diff)                 |
-| Exit             | 0 CRITICAL → commit                        | all resolved + merged → archive                                |
+| Exit             | 0 CRITICAL → commit                        | all resolved + reviewer ✅ + user OK to merge → archive (then merge)|
 
 ---
 
@@ -463,6 +474,7 @@ When a stage says "dispatch N parallel reviewer agents":
 5. **De-duplicate**: when two reviewers raise the same item, merge into one entry; tag which reviewers flagged it. Sort SUGGESTIONs by ROI (impact / effort).
 6. CRITICAL → fix → re-dispatch the same reviewers with the post-fix artifact.
 7. After pass, append aggregated summary to `openspec/changes/{name}/review.md`. Do **not** store individual agent raw reports.
+8. **Disposition write-back.** Every finding line ends with `— disposition: fixed | rejected | deferred | pending`. New WARNING/SUGGESTION entries start `pending`; CRITICALs are logged `fixed` once the fix → re-dispatch loop clears them. Whichever later stage (or the user) acts on or dismisses a finding updates the tag **in place** — the only in-place edit allowed in this otherwise append-only log. `deferred` must carry a tracker reference (e.g. `deferred (AIP-XXXX)`); a deferral without a ticket historically never gets closed. This makes reviewer yield measurable (flagged vs. adopted), so low-yield personas can be pruned with data instead of faith.
 
 ### `review.md` format (append-only, one section per stage)
 
@@ -483,7 +495,7 @@ _(none)_
 _(none)_
 
 ### SUGGESTION
-1. {short} — flagged by: {reviewer names}
+1. {short} — flagged by: {reviewer names} — disposition: pending
 2. ...
 
 ### Verdict
@@ -516,7 +528,7 @@ Trivial UI tweaks (color or spacing only, no behaviour change) MAY bypass the pi
 ```
 /workflow --from {stage} --spec {name}    # stage ∈ tests, implement, commit, push
 /workflow --pr-loop {PR_ID}               # jump to Stage 11
-scripts/archive.sh {name}                 # Stage 12 fallback (CI normally runs this on merge)
+openspec archive {name} --yes             # Stage 12 — run on feature branch before final merge
 ```
 
 Stage 1 also auto-detects existing `openspec/changes/{name}/` and offers resume options.
@@ -572,14 +584,16 @@ To adapt: copy this file, substitute the slot values, and replace the commands i
 | ------------------------------------------------------- | --------------------------------------------------------------------------------------------------------- |
 | Skipping Stage 7.5 in auto mode                         | Pipeline contract — commit blocked until 0 CRITICAL + green tests + report generated.                     |
 | Treating push as pipeline end                           | Pipeline ends at Stage 12 archive. Push only ships a candidate.                                           |
-| Archiving before PR merge                               | Auto-archive triggers on `closed && merged`, never on PR open. Manual `scripts/archive.sh` must wait for merge too. |
-| Forgetting local worktree cleanup                       | CI archives the spec in the integration branch; `git worktree remove` + local branch delete remain user-side after merge. |
+| Opening a second PR for archive                         | Bundle archive into the feature MR's last commit (after reviewer ✅ + user OK merge). Saves one full MR + CI run. |
+| Archiving while review is still in flight              | Window is "reviewer ✅ + user OK to merge" → archive commit → final CI → merge. Earlier moves the spec out from under reviewers. |
+| Forgetting local worktree cleanup after merge          | `git worktree remove .worktrees/{name}` + `git branch -D feat/{name}` remain user-side after merge (squash-merge needs `-D`). |
 | Batching PR comment fixes                               | Stage 11 mandates per-comment gate × 2 (plan + verify).                                                   |
 | Mid-loop engine swap                                    | Engine fixed at Step 0. Mid-loop swap breaks fix-quality attribution + risks double-apply / missed commit. |
 | Engine writing code at Step 2b                          | Plan only at 2b. Code only at 2d after user approves plan.                                                |
 | Editing the 5 derived files by hand                     | Edit `spec.md` and re-split. Derived files are projections.                                               |
 | Dispatching reviewers sequentially                      | One message, N tool calls = parallel.                                                                     |
 | Storing N individual reviewer reports as separate files | Append aggregated summary to `review.md` only.                                                            |
+| Findings logged, disposition never updated              | Yield stats lie if WARNING/SUGGESTION stay `pending` forever. Update `disposition:` in place the moment a finding is fixed or rejected.  |
 | Forcing unit tests on a build-config-only spec          | Use Mode 6b (static-validation) or 6c (manual-smoke).                                                     |
 | Running `code-reviewer` / `reporter` inside Stage 7     | Keep them in Stage 7.5 — peer review vs compliance gate are distinct roles.                               |
 
