@@ -33,7 +33,7 @@ Designed for AI-assisted, spec-first workflows. Tool-agnostic where possible —
 5. **Per-comment user gate in review fixes.** The fix engine never batches multiple PR comments without human approval per item.
 6. **Reviewer agents in parallel, never serial.** Multiple reviewer personas at each stage are dispatched in a single message.
 7. **CRITICAL blocks; WARNING/SUGGESTION surfaces.** Two carve-outs from the convergence boundary: user-adjudicated findings (`rejected`/`deferred`) stop blocking, and net-new CRITICAL-class findings logged `pending` during a re-dispatch round don't block the loop — but MUST be listed at the Stage 9 gate (they never ship silently).
-8. **Convergence boundary.** Cleanliness and correctness are enforced in layers — deterministic tooling first, spec-derived tests second, AI review last; what a tool can verify, a reviewer must not raise. CRITICAL is reserved for code/test/behavior correctness and security-baseline violations, every finding carries a fix-cost estimate, and review-fix loops are capped. See [Convergence Boundary](#convergence-boundary).
+8. **Convergence boundary.** Cleanliness and correctness are enforced in layers — deterministic tooling first, spec-derived tests second, AI review last; what the project's bound toolchain has verified, a reviewer must not re-raise. CRITICAL is reserved for code/test/behavior correctness and security-baseline violations, every finding carries a fix-cost estimate, and review-fix loops are capped. See [Convergence Boundary](#convergence-boundary).
 
 ---
 
@@ -186,7 +186,7 @@ Implement production code until tests are GREEN.
 Dispatch **3 parallel reviewer agents** (single message, 3 tool calls):
 
 - `review-spec-compliance` — every `SHALL` / Scenario satisfied
-- `review-code-quality` — project conventions, layering rules, error-handling and safety invariants (specifics defined by the project's `code-reviewer` skill; lint-detectable items belong to the Stage 7.5 lint gate, not this reviewer)
+- `review-code-quality` — project conventions, layering rules, error-handling and safety invariants (specifics defined by the project's `code-reviewer` skill; items the project's lint toolchain checks belong to the Stage 7.5 lint gate — pre-gate style observations are SUGGESTION at most)
 - `review-edge-cases` — error paths, boundaries, concurrent access, off-by-one
 
 CRITICAL → fix → re-dispatch same reviewers.
@@ -664,7 +664,7 @@ To adapt: copy this file, substitute the slot values, and replace the commands i
 | Severity inflation (style / taste flagged CRITICAL)     | CRITICAL is four categories only, each with a statable failure or citation; aggregation demotes the rest mechanically. |
 | Re-review rounds mining new findings on untouched code  | Re-dispatch verifies prior CRITICALs + fix diff only; net-new findings log as `pending`, never loop.      |
 | Looping past the round cap                              | Initial + 2 re-dispatch rounds per stage; cap hit → user gate; flip-flop (fixed finding reappears) → immediate stop. |
-| Reviewer raising lint-detectable issues                 | Stage 7.5 lint gate runs first; once green, tool-verifiable findings are off-limits.                      |
+| Reviewer raising lint-detectable issues                 | Once the Stage 7.5 lint gate is green, findings the bound `{LINT_COMMAND}` toolchain checks are off-limits (no linter bound → style allowed, capped at SUGGESTION). |
 | Storing N individual reviewer reports as separate files | Append aggregated summary to `review.md` only.                                                            |
 | Findings logged, disposition never updated              | Yield stats lie if WARNING/SUGGESTION stay `pending` forever. Update `disposition:` in place the moment a finding is fixed or rejected.  |
 | Forcing unit tests on a build-config-only spec          | Use Mode 6b (static-validation) or 6c (manual-smoke).                                                     |

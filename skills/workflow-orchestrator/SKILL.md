@@ -249,7 +249,7 @@ Invoke `rd-implementer` OR implement directly. Run tests until GREEN.
 
 Dispatch **3 parallel reviewer agents** (Implement personas):
 - `review-spec-compliance` — every SHALL / Scenario satisfied
-- `review-code-quality` — project conventions, layering rules, error-handling and safety invariants (specifics defined by the project's `code-reviewer` skill; lint 驗得了的項目歸 Stage 7.5 lint gate，不歸這個 reviewer)
+- `review-code-quality` — project conventions, layering rules, error-handling and safety invariants (specifics defined by the project's `code-reviewer` skill; 專案 lint 工具鏈檢查的項目歸 Stage 7.5 lint gate — gate 前的風格觀察最高 SUGGESTION)
 - `review-edge-cases` — error paths, boundaries, concurrent access, off-by-one
 
 Aggregate. CRITICAL → fix → re-dispatch.
@@ -562,7 +562,7 @@ Review 迴圈必須收斂。目標對齊四件事：**程式碼正確、測試�
 
 ### 分層原則
 
-整潔與無錯誤依三層擠出，**工具驗得了的，AI reviewer 不准提**：
+整潔與無錯誤依三層擠出，**綁定工具鏈實際驗過的，AI reviewer 不准再提**：
 
 1. **確定性工具**（`{LINT_COMMAND}`、formatter、靜態分析、編譯期約束）— 永不 loop，Stage 7.5 入口先跑。
 2. **Spec 衍生測試** — 「無錯誤」的操作型定義 = 每條 Scenario 有測試、全綠、覆蓋達標。bug 沒被測試抓到 → finding 是測試缺口（補測試），不只是修 code。
@@ -645,7 +645,7 @@ Review 迴圈必須收斂。目標對齊四件事：**程式碼正確、測試�
 | 風格/品味類 issue 標成 CRITICAL | CRITICAL 只有四類（程式碼/測試/行為正確性、資安基準），必附失敗情境或引用條文；缺欄位聚合時機械降級 |
 | 重派輪在 fix 沒碰的 code 挖新 finding | 重派只驗「舊 CRITICAL + fix diff」；淨新 finding 記 `pending`，不 block 不觸發下輪 |
 | 迴圈跑超過上限 | 每 stage 初審 + 最多 2 輪重派；觸頂 → user gate 裁決；修過又出現（flip-flop）→ 立即停、進同一個 gate |
-| Lint 綠了 reviewer 還嫌風格 | 工具驗得了的 AI 不准提 — Stage 7.5 lint gate 綠燈後風格類一律禁提 |
+| Lint 綠了 reviewer 還嫌風格 | Stage 7.5 lint gate 綠燈後，**綁定 `{LINT_COMMAND}` 工具鏈實際檢查的項目**禁提（沒綁 linter → 風格類可提，最高 SUGGESTION） |
 | Treating WARNING/SUGGESTION as blocker | Only CRITICAL blocks |
 | Heavy spec for trivial colour change | Acceptable to bypass with `style:` commit |
 | Editing archived spec | NEVER — propose a new MODIFIED change |

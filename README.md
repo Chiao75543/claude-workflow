@@ -200,7 +200,7 @@ See [`PIPELINE.md`](skills/workflow-orchestrator/PIPELINE.md) for the full refer
 
 1. Every change traces to a spec.
 2. Single source of truth — authors edit one file, the rest are projections.
-3. Verification before commit — no commit until tests green + 0 CRITICAL.
+3. Verification before commit — no commit until tests green + 0 CRITICAL (user-adjudicated `rejected`/`deferred` findings excepted).
 4. Lifecycle ends at archive, not at push.
 5. Per-comment user gate in PR review fixes — no batching.
 6. Reviewer agents in parallel, never serial.
