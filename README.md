@@ -177,7 +177,7 @@ When migrating to a new machine, the new path may differ (username changes). The
 ├─ 5. Split + validate ──── spec.md → 5 derived files
 ├─ 6. Tests (RED) ◄──────── CRITICAL fix loop (3/2/0 agents)
 ├─ 7. Implement (GREEN) ◄── CRITICAL fix loop (3 agents)
-├─ 7.5 Verify + Report ◄── tests + spec review + report (0 CRITICAL gate)
+├─ 7.5 Verify + Report ◄── lint gate + tests + spec review + report (0 CRITICAL gate)
 ├─ 8. Commit ◄──────────── CRITICAL fix loop (2 agents)
 ├─ 9. ▮ User confirms push
 ├─ 10. Push + PR ───────── git push + create PR
@@ -200,11 +200,12 @@ See [`PIPELINE.md`](skills/workflow-orchestrator/PIPELINE.md) for the full refer
 
 1. Every change traces to a spec.
 2. Single source of truth — authors edit one file, the rest are projections.
-3. Verification before commit — no commit until tests green + 0 CRITICAL.
+3. Verification before commit — no commit until tests green + 0 CRITICAL (user-adjudicated `rejected`/`deferred` findings excepted).
 4. Lifecycle ends at archive, not at push.
 5. Per-comment user gate in PR review fixes — no batching.
 6. Reviewer agents in parallel, never serial.
 7. CRITICAL blocks; WARNING / SUGGESTION surfaces.
+8. Convergence boundary — tools before tests before AI review; CRITICAL reserved for code/test/behavior correctness + security baseline; review loops capped (initial + 2 re-dispatch rounds).
 
 ---
 
@@ -217,6 +218,7 @@ workflow-orchestrator is **stack-agnostic**. Two layers of customization:
 | Placeholder | Used in orchestrator at | Examples |
 | --- | --- | --- |
 | `{TEST_COMMAND}` | Stage 7.5 test gate | `./gradlew test`, `npm test`, `pytest`, `cargo test` |
+| `{LINT_COMMAND}` | Stage 7.5 lint gate (no-op if none; AGENTS.md template spells it `{lint_command}` — same binding) | `./gradlew lint`, `npm run lint`, `ruff check`, SwiftLint |
 | `{BUILD_COMMAND}` | (project-skill discretion) | `./gradlew assembleDebug`, `npm run build` |
 | `{LAYERING_CONVENTION}` | Stage 7 implementation | Domain→Data→DI→Presentation→Navigation (Android Clean Arch); MVC; Hexagonal; … |
 | `{INTEGRATION_BRANCH}` | Stage 10 push target | `main`, `develop`, `release` |
