@@ -197,7 +197,7 @@ Phase 5: Navigation
 - Phase 5 Navigation ✅
 
 📝 建議 commit message：
-  feat(module): implement xxx feature [AIP-XXX]
+  feat(module): implement xxx feature [{TICKET_PREFIX}-XXX if ticket]
 
   Spec: openspec/changes/{name}/specs/{spec}/spec.md
   Scenarios: scenario-1, scenario-2
