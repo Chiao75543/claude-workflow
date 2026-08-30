@@ -17,7 +17,7 @@ DO NOT commit, DO NOT run tests yet.
 
 - Repository: {repo_root}
 - PR / MR: #{PR_ID}, branch: {branch_name}
-- Base branch: {integration_branch}
+- Base branch: {INTEGRATION_BRANCH}
 - Related spec: openspec/changes/{name}/specs/{name}/spec.md
 - Spec section relevant to this fix:
 
