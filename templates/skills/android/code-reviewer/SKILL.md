@@ -112,6 +112,7 @@ Requirement: ETF 按鈕點擊帶入商品代碼
 
 #### 3f. DI 註冊完整性
 - Koin module 中是否包含所有新增的 Repository / UseCase / ViewModel
+- Scope 慣例正確：`single` = app-wide singleton、`factory` = Repository / UseCase、`viewModel` = ViewModel
 
 ---
 
@@ -123,8 +124,10 @@ Requirement: ETF 按鈕點擊帶入商品代碼
 - `!!` 使用在 `ApiResponse.data` 或任何可能為 null 的值
 - Cross-feature import（直接 import 其他 feature 的 internal class）
 - ViewModel 直接持有 View 參考
-- Coroutine 在非 viewModelScope 啟動（記憶體洩漏風險）
+- Coroutine 在非 viewModelScope 啟動（記憶體洩漏風險；`GlobalScope` 一律禁止）
 - 未捕獲的 Exception 可能導致 Crash
+- SharedFlow 事件在 collector 註冊前 emit 導致事件遺失（early-emit race；檢查 `replay` 設定或改設計）
+- SharedPreferences / DataStore schema 或 key 變更未附遷移路徑（升級後舊資料遺失）
 
 #### WARNING（應修正）
 - Magic numbers（未抽成具名常數的數字或字串）
@@ -132,6 +135,7 @@ Requirement: ETF 按鈕點擊帶入商品代碼
 - StateFlow 應用 SharedFlow 替代（或反之）
 - 函式超過 40 行（單一職責原則）
 - 缺少對應規格 Scenario 的測試
+- 直接使用 `android.util.Log`（專案慣例為 Timber）
 
 #### SUGGESTION（建議改進）
 - 可提取的共用 Composable
