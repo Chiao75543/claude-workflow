@@ -373,7 +373,7 @@ Do NOT let codex try `curl http://<gitlab_host>/...` — it will silently fail. 
 
 - 0 CRITICAL → log score in chat + proceed to Stage 11 deferred state. **No user checkpoint needed** (advisory mode).
 - ≥1 CRITICAL → surface findings in chat with `⏸` prompt:
-  - `fix` → user fixes locally; re-dispatch Stage 6.5/7.5 if needed; force-push (with explicit user consent per `no-force-push` memory) or new commit + push; re-run Stage 10.5 once
+  - `fix` → user fixes locally; re-run Stage 7.5 (tests + verify) if needed; force-push (with explicit user consent per `no-force-push` memory) or new commit + push; re-run Stage 10.5 once
   - `accept` → leave MR open with codex CRITICAL visible; proceed to Stage 11 deferred (human reviewers will see codex findings too)
   - `close` → `glab mr close {MR_ID}`; pipeline ends at Stage 10.5
 
@@ -690,6 +690,7 @@ Review 迴圈必須收斂。目標對齊四件事：**程式碼正確、測試�
 
 ## Related
 
+- `PIPELINE.md` — human-readable published mirror of this document. **SKILL.md is canonical**: when they disagree SKILL.md wins, and any change here lands with the matching PIPELINE.md update in the same commit.
 - `superpowers:dispatching-parallel-agents` — technique used for multi-reviewer
 - `superpowers:brainstorming` — principles borrowed inline, NOT invoked
 - `superpowers:grill-me` — principles borrowed inline, NOT invoked
