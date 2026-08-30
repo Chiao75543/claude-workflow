@@ -2,7 +2,7 @@
 
 Each prompt is dispatched via the Agent tool with `subagent_type: "general-purpose"` (or `Plan` for design-heavy review). All prompts share the same output format so the orchestrator can aggregate.
 
-**Stack specifics.** These prompts are stack-neutral skeletons. When composing a dispatch prompt, the orchestrator substitutes the AGENTS.md bindings it references (`{INTEGRATION_BRANCH}`, `{LAYERING_CONVENTION}`, `{LINT_COMMAND}`) and folds in the project-local skills — `test-writer` for test idioms, `code-reviewer` / `rd-implementer` for review dimensions, DI and error-handling conventions, and citable hard rules. Stack-specific checklists live in those skills (scaffolded from `templates/skills/<stack>/`), never here.
+**Stack specifics.** These prompts are stack-neutral skeletons. When composing a dispatch prompt, the orchestrator substitutes the AGENTS.md bindings it references (`{INTEGRATION_BRANCH}`, `{LAYERING_CONVENTION}`, `{LINT_COMMAND}`, `{TICKET_PREFIX}`) and folds in the project-local skills — `test-writer` for test idioms, `code-reviewer` / `rd-implementer` for review dimensions, DI and error-handling conventions, and citable hard rules. Stack-specific checklists live in those skills (scaffolded from `templates/skills/<stack>/`), never here.
 
 ## Severity rubric (every reviewer — prepend to every persona prompt below)
 
@@ -120,9 +120,13 @@ and adherence to project conventions.
 Inputs:
 - Tests: {list of test files}
 - CLAUDE.md sections on Coding Style and Testing
+- The project's test-writer skill (<repo>/.claude/skills/test-writer/SKILL.md)
+  — naming-language and style grants live there
 
 Checklist:
-1. Test method names are descriptive (naming language / style per project CLAUDE.md)
+1. Test method names are descriptive (naming language / style per the
+   project's test-writer skill and CLAUDE.md — e.g. a skill-granted
+   non-English naming convention is compliant, not vague)
 2. Each test has clear Arrange / Act / Assert structure
 3. Assertions are specific (not just `assertNotNull`)
 4. No multi-assert methods that hide which assertion failed
@@ -191,7 +195,10 @@ Checklist:
    exceptions — not blanket catch-and-swallow)
 7. Logging via the project's sanctioned logger only
 8. No commented-out code, no TODO without date/ticket
-   (items 3–8 only where the project's linter doesn't already cover them)
+   (item 8 only where the project's linter doesn't already cover it —
+   correctness-adjacent items 3–7 are never waived by a bound linter at
+   this stage; the lint-toolchain carve-out in the severity rubric applies
+   only after the Stage 7.5 lint gate has run green)
 
 CRITICAL: definite bugs (with a statable trigger), or violations of a
 citable project hard rule / Security Baseline rule (cite it).

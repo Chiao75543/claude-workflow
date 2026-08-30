@@ -112,7 +112,7 @@ Requirement: ETF 按鈕點擊帶入商品代碼
 
 #### 3f. DI 註冊完整性
 - Koin module 中是否包含所有新增的 Repository / UseCase / ViewModel
-- Scope 慣例正確：`single` = app-wide singleton、`factory` = Repository / UseCase、`viewModel` = ViewModel
+- Scope 慣例正確（與 rd-implementer 的 DI 慣例一致）：`single` = app-wide singleton 及**有狀態**的 Repository（曝露事件流 / 持有快取者必須 `single`，否則各注入點拿到不同實例、事件互不相通）、`factory` = 無狀態 Repository / UseCase（每次注入新實例）、`viewModel` = ViewModel
 
 ---
 

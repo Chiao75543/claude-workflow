@@ -133,6 +133,8 @@ Requirement: 活動 6 碼簽到
 - 吞錯誤改寫文案（例：把斷網顯示成「帳密錯誤」）
 - 照 web demo/mock 元件移植（動工前未確認該元件有真的打 API）
 - ViewModel 持有 View 參考或 import SwiftUI
+- 一次性事件（navigation / alert）在 observer 建立前發出即遺失（early-emit race — AsyncStream / Combine 需 buffer 或改設計）
+- UserDefaults / Keychain / 本地儲存的 key 或 schema 變更未附遷移路徑（升級後舊資料遺失或讀取失敗）
 - 違反下方「MindEY 鐵則檢查清單」任一條
 
 #### WARNING（應修正）
@@ -143,6 +145,7 @@ Requirement: 活動 6 碼簽到
 - `@State` 應用 `@Binding` 替代（或反之）、view identity 誤用
 - 函式超過 40 行（單一職責原則）
 - 缺少對應規格 Scenario 的測試（Domain/Data/VM 覆蓋門檻 90% line）
+- 直接使用 `print` / `NSLog` 記錄（統一走專案指定 logger，如 `os.Logger`）
 
 #### SUGGESTION（建議改進）
 - 可提取的共用 View / MindEYDesignSystem 元件

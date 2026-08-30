@@ -89,11 +89,11 @@ digraph workflow {
 
 ### Stage 1: Identify
 
-1. Ask for **ticket ID** (Linear, Jira, GitHub Issues, etc.; or skip — personal/optimization work)
+1. Ask for **ticket ID** (Linear, Jira, GitHub Issues, etc.; or skip — personal/optimization work). **Normalize** to the full id `{TICKET_PREFIX}-<number>` using the AGENTS.md binding (a bare `3756` becomes e.g. `AIP-3756`) and record it as `{TICKET}` — downstream stages interpolate it verbatim
 2. Ask for a one-line feature description (if not in trigger args)
-3. Derive `{name}` (kebab-case):
-   - With ticket: `<ticket-id-lowercase>-<feature-slug>` (e.g. `aip-3756-fix-data-pinning`)
-   - Without ticket: `<feature-slug>` (e.g. `error-message-cleanup`)
+3. Derive and record **both** (Stage 2 consumes them separately — never re-derive one from the other by string surgery):
+   - `{feature-slug}` (kebab-case, no ticket parts; e.g. `fix-data-pinning`)
+   - `{name}`: with ticket `<ticket-id-lowercase>-{feature-slug}` (e.g. `aip-3756-fix-data-pinning`); without ticket just `{feature-slug}`
 4. List existing capabilities (**check both already-accumulated and in-progress**):
    - Archived: `ls openspec/specs/`
    - In-progress (not yet archived): `ls openspec/changes/*/specs/` — these capabilities exist on other branches but will appear in main spec tree after their respective MR merges (each MR bundles its own archive commit before merge, see Stage 12)
@@ -117,9 +117,9 @@ digraph workflow {
 Branch behaviour depends on whether Stage 1 found an **existing** change or a **new** one. Per `worktree-before-new-spec` feedback, **new specs MUST get a fresh worktree**.
 
 ```bash
-# {TICKET} = full ticket id incl. {TICKET_PREFIX} from AGENTS.md (e.g. AIP-3756, JIRA-42);
-# {feature-slug} = {name} without the lowercased ticket prefix (Stage 1)
-branch_name="${TICKET:+${TICKET}-}{feature-slug}"   # feat/AIP-3756-foo OR feat/foo
+# {TICKET} = normalized full ticket id recorded at Stage 1 (e.g. AIP-3756, JIRA-42);
+# {feature-slug} = recorded at Stage 1 (never re-derive it by stripping {name})
+branch_name="${TICKET:+${TICKET}-}{feature-slug}"   # feat/AIP-3756-fix-data-pinning OR feat/fix-data-pinning
 current_branch=$(git branch --show-current)
 ```
 
@@ -127,8 +127,14 @@ current_branch=$(git branch --show-current)
 MUST create a fresh linked worktree, **unless user explicitly says "skip worktree"**.
 
 ```bash
-base="{INTEGRATION_BRANCH}"   # from AGENTS.md
-git show-ref --verify --quiet "refs/heads/${base}" || base=main   # fall back to the repo default branch
+base="{INTEGRATION_BRANCH}"   # from AGENTS.md — if the binding is missing/unsubstituted, STOP and ask; never guess
+if git show-ref --verify --quiet "refs/heads/${base}"; then
+    :   # local branch exists
+elif git show-ref --verify --quiet "refs/remotes/origin/${base}"; then
+    base="origin/${base}"   # fresh clone: base off the remote-tracking ref
+else
+    echo "integration branch '${base}' not found locally or on origin" >&2   # STOP — ask the user, do NOT fall back to another branch
+fi
 git worktree add .worktrees/{name} -b "feat/${branch_name}" "$base"
 cd .worktrees/{name}
 ```
@@ -623,7 +629,7 @@ Review 迴圈必須收斂。目標對齊四件事：**程式碼正確、測試�
 | Stage | Action | Reviewers |
 |---|---|---|
 | 1 Identify | ticket + capability + name | — |
-| 2 Worktree | branch `feat/[{TICKET-ID}-]{feature-slug}` | — |
+| 2 Worktree | branch `feat/[{TICKET}-]{feature-slug}` | — |
 | 3 Spec | brainstorm + grill + draft | — |
 | 4 ⏸ | user approves spec | — |
 | 5 Split | 5 files + validate | — |
