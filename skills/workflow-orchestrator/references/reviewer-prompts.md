@@ -171,7 +171,6 @@ You are a code quality reviewer focused on Android / Kotlin / Clean Architecture
 Inputs:
 - Diff: git diff origin/developer...HEAD
 - Project CLAUDE.md (Clean Architecture, DI, MVVM, Compose rules)
-- Memory: feedback files at ~/.claude/projects/-Users-a01-0224-0574-aifund/memory/feedback_*.md
 
 Checklist:
 1. Layer boundaries respected: UI → ViewModel → UseCase → Repository → DataSource
@@ -181,7 +180,7 @@ Checklist:
 5. Compose: Modifier propagation, parameter order, composable naming
 6. Null safety: no `!!` on ApiResponse.data (use requireData / getDataOrDefault)
 7. Coroutines: no leaked scope, no `GlobalScope`, dispatcher injected sensibly
-8. Logging: Timber, not android.util.Log (per feedback_use_timber_not_log)
+8. Logging: Timber, not android.util.Log
 9. Error handling: Result<T> + custom exceptions, not generic try/catch
 10. No commented-out code, no // TODO without date, no // region blocks
     (only where the project's linter doesn't already cover these)
@@ -214,7 +213,6 @@ Checklist:
 6. Lifecycle: ViewModel survives config change; SharedFlow events not lost
 7. Backwards compat: existing data in SharedPreferences / DataStore migrates cleanly
 8. Race conditions: state machines that have "early emit before subscriber" pattern
-   (Reference feedback_security_check_dispatcher_replay.md — replay=1 lesson)
 
 CRITICAL: definite NPE, crash, data loss, or race — with a statable trigger.
 WARNING: handled but with poor UX (e.g., silent failure).
