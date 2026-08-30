@@ -2,18 +2,18 @@
 
 A spec-driven development pipeline for AI-assisted coding. Designed for [Claude Code](https://claude.com/claude-code) + [Codex CLI](https://github.com/openai/codex).
 
-**Architecture:** the orchestrator is **stack-agnostic** — it owns the pipeline structure, multi-reviewer dispatch, and verification gates, but delegates *how* to write tests / implement code / review MRs to **project-local skills** under each project's `<repo>/.claude/skills/`. Stack-specific skill bundles (Android first; add your own) live in `templates/skills/<stack>/` and scaffold into a project via `scripts/init-project.sh`.
+**Architecture:** the orchestrator is **stack-agnostic** — it owns the pipeline structure, multi-reviewer dispatch, and verification gates, but delegates *how* to write tests / implement code / review MRs to **project-local skills** under each project's `<repo>/.claude/skills/`. Stack-specific skill bundles (Android and iOS shipped; add your own) live in `templates/skills/<stack>/` and scaffold into a project via `scripts/init-project.sh`.
 
 This repo packages:
 
 - The **workflow-orchestrator skill** — a 12-stage pipeline from ticket to archived spec, with mandatory verification gates and per-comment user checkpoints in PR review fixes. Stack-agnostic; references project-local skills by convention name (see *Project bindings* in `SKILL.md`).
 - **Slash commands** — `/workflow` (full pipeline) plus 7 namespaced sub-commands (`/workflow:spec`, `/workflow:test`, `/workflow:implement`, `/workflow:verify`, `/workflow:fix`, `/workflow:review-mr`, `/workflow:report`) for invoking each stage individually.
-- **Stack-specific skill templates** — `templates/skills/android/` ships a working Android Clean Architecture skill set (test-writer, rd-implementer, code-reviewer, reporter, mr-reviewer, review-fixer); other stacks add their own folder.
+- **Stack-specific skill templates** — `templates/skills/android/` ships a working Android Clean Architecture skill set and `templates/skills/ios/` its iOS (SwiftUI + SPM) counterpart, each with the same 6 pipeline skills (test-writer, rd-implementer, code-reviewer, reporter, mr-reviewer, review-fixer); other stacks add their own folder.
 - **`init-project.sh`** — scaffolds a stack's skill set into a target repo's `.claude/skills/`, auto-substituting `{PROJECT_ROOT}` and listing remaining placeholders.
 - **AGENTS.md templates** — global Codex preferences + project-level rules that Codex needs (Codex does not load Claude Code skills).
 - A **setup script** to install on a new machine.
 
-For the full pipeline reference, read [`skills/workflow-orchestrator/PIPELINE.md`](skills/workflow-orchestrator/PIPELINE.md).
+For the full pipeline reference, read [`skills/workflow-orchestrator/PIPELINE.md`](skills/workflow-orchestrator/PIPELINE.md) — the published mirror of `SKILL.md`, which is canonical.
 
 ---
 
@@ -44,13 +44,14 @@ claude-workflow/
 │   ├── codex-AGENTS.md           # global ~/.codex/AGENTS.md
 │   ├── project-AGENTS.md.template # per-repo AGENTS.md (customize)
 │   └── skills/                   # stack-specific skill bundles
-│       └── android/              # Android Clean Architecture defaults
-│           ├── test-writer/SKILL.md
-│           ├── rd-implementer/SKILL.md
-│           ├── code-reviewer/SKILL.md
-│           ├── reporter/SKILL.md
-│           ├── mr-reviewer/SKILL.md
-│           └── review-fixer/SKILL.md
+│       ├── android/              # Android Clean Architecture defaults
+│       │   ├── test-writer/SKILL.md
+│       │   ├── rd-implementer/SKILL.md
+│       │   ├── code-reviewer/SKILL.md
+│       │   ├── reporter/SKILL.md
+│       │   ├── mr-reviewer/SKILL.md
+│       │   └── review-fixer/SKILL.md
+│       └── ios/                  # iOS SwiftUI + SPM defaults (same 6 skills)
 ├── scripts/
 │   ├── setup.sh                  # install on new machine (per-user)
 │   └── init-project.sh           # scaffold skill bundle into a target repo
@@ -137,7 +138,7 @@ Why per-repo:
 - **AGENTS.md** is read automatically by Codex AND referenced by workflow-orchestrator for project-specific bindings (`{TEST_COMMAND}`, `{BUILD_COMMAND}`, `{LAYERING_CONVENTION}`, etc.).
 - **`.claude/skills/`** holds the concrete `test-writer` / `rd-implementer` / `code-reviewer` / etc. skills that the orchestrator invokes. Tuning these per project is how the pipeline adapts to each codebase's conventions.
 
-Adding a new stack: copy `templates/skills/android/` to `templates/skills/<your-stack>/`, edit the SKILL.md contents to your stack's idioms, then `init-project.sh <your-stack> <repo>`.
+Adding a new stack: copy an existing stack folder (`templates/skills/android/` or `templates/skills/ios/`) to `templates/skills/<your-stack>/`, edit the SKILL.md contents to your stack's idioms, then `init-project.sh <your-stack> <repo>`.
 
 ---
 
@@ -181,6 +182,7 @@ When migrating to a new machine, the new path may differ (username changes). The
 ├─ 8. Commit ◄──────────── CRITICAL fix loop (2 agents)
 ├─ 9. ▮ User confirms push
 ├─ 10. Push + PR ───────── git push + create PR
+├─ 10.5 Codex review ───── advisory pass on the MR (dispatcher relay-posts findings)
 ├─ 11. PR review loop ◄── deferred; engine (codex/claude) + 2 user gates/comment
 └─ 12. Archive ────────── pre-merge commit on feature branch → final CI → user merges
 ```
@@ -221,7 +223,7 @@ workflow-orchestrator is **stack-agnostic**. Two layers of customization:
 | `{LINT_COMMAND}` | Stage 7.5 lint gate (no-op if none; AGENTS.md template spells it `{lint_command}` — same binding) | `./gradlew lint`, `npm run lint`, `ruff check`, SwiftLint |
 | `{BUILD_COMMAND}` | (project-skill discretion) | `./gradlew assembleDebug`, `npm run build` |
 | `{LAYERING_CONVENTION}` | Stage 7 implementation | Domain→Data→DI→Presentation→Navigation (Android Clean Arch); MVC; Hexagonal; … |
-| `{INTEGRATION_BRANCH}` | Stage 10 push target | `main`, `develop`, `release` |
+| `{INTEGRATION_BRANCH}` | Stage 2 worktree base + Stage 10 push target | `main`, `develop`, `release` |
 | `{TICKET_PREFIX}` | Stage 1 ticket id | `AIP` (Linear), `JIRA`, `GH` |
 
 **Layer 2 — `<repo>/.claude/skills/<name>/SKILL.md` content** (heavy, scaffold once):

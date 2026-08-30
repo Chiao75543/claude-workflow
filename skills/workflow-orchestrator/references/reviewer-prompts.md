@@ -2,6 +2,8 @@
 
 Each prompt is dispatched via the Agent tool with `subagent_type: "general-purpose"` (or `Plan` for design-heavy review). All prompts share the same output format so the orchestrator can aggregate.
 
+**Stack specifics.** These prompts are stack-neutral skeletons. When composing a dispatch prompt, the orchestrator substitutes the AGENTS.md bindings it references (`{INTEGRATION_BRANCH}`, `{LAYERING_CONVENTION}`, `{LINT_COMMAND}`, `{TICKET_PREFIX}`) and folds in the project-local skills — `test-writer` for test idioms, `code-reviewer` / `rd-implementer` for review dimensions, DI and error-handling conventions, and citable hard rules. Stack-specific checklists live in those skills (scaffolded from `templates/skills/<stack>/`), never here.
+
 ## Severity rubric (every reviewer — prepend to every persona prompt below)
 
 ```
@@ -71,7 +73,7 @@ in the spec has at least one corresponding test.
 
 Inputs:
 - Spec: openspec/changes/{name}/specs/{name}/spec.md
-- Tests: {list of test files in worktree, e.g. app/src/test/.../FooViewModelTest.kt}
+- Tests: {list of test files in worktree}
 
 Checklist:
 1. Read every "### Requirement:" + "#### Scenario:" in spec.md
@@ -93,14 +95,14 @@ isolated — no shared mutable state, mocks set up correctly, no leakage.
 
 Inputs:
 - Tests: {list of test files}
-- Project conventions: read CLAUDE.md and any existing tests in the same module
+- Project conventions: read CLAUDE.md, the project's test-writer skill, and any existing tests in the same module
 
 Checklist:
-1. Each test method sets up its own mocks (no static / object-singleton state)
-2. `@Before` / `setUp` does not depend on previous test's residue
-3. Coroutine tests use `TestDispatcher` / `runTest` (not `runBlocking` on production scope)
-4. Mocks return realistic data (not just `mockk(relaxed = true)` when behaviour matters)
-5. No `Thread.sleep`, no real network, no real DB, no real file IO
+1. Each test method sets up its own mocks/fixtures (no static / singleton state shared across tests)
+2. Setup/teardown hooks do not depend on a previous test's residue
+3. Async tests use the stack's test-scheduler idiom (per the project's test-writer skill) — never real clocks or sleeps
+4. Mocks return realistic data (no blanket relaxed/lenient mocks where behaviour matters)
+5. No real network, no real DB, no real file IO
 
 CRITICAL: shared state or real external resources.
 WARNING: overly relaxed mocks where strict mocks would catch regressions.
@@ -118,9 +120,13 @@ and adherence to project conventions.
 Inputs:
 - Tests: {list of test files}
 - CLAUDE.md sections on Coding Style and Testing
+- The project's test-writer skill (<repo>/.claude/skills/test-writer/SKILL.md)
+  — naming-language and style grants live there
 
 Checklist:
-1. Test method names are descriptive (允許 Chinese per CLAUDE.md exception for tests)
+1. Test method names are descriptive (naming language / style per the
+   project's test-writer skill and CLAUDE.md — e.g. a skill-granted
+   non-English naming convention is compliant, not vague)
 2. Each test has clear Arrange / Act / Assert structure
 3. Assertions are specific (not just `assertNotNull`)
 4. No multi-assert methods that hide which assertion failed
@@ -145,7 +151,7 @@ satisfies every SHALL clause and every Scenario in the spec.
 
 Inputs:
 - Spec: openspec/changes/{name}/specs/{name}/spec.md
-- Diff: git diff origin/developer...HEAD  (or staged diff)
+- Diff: git diff origin/{INTEGRATION_BRANCH}...HEAD  (or staged diff)
 - Implementation files referenced in tasks.md
 
 Checklist:
@@ -166,25 +172,33 @@ End with the standardized Findings block.
 ### Prompt 2: `review-code-quality`
 
 ```
-You are a code quality reviewer focused on Android / Kotlin / Clean Architecture.
+You are a code quality reviewer.
 
 Inputs:
-- Diff: git diff origin/developer...HEAD
-- Project CLAUDE.md (Clean Architecture, DI, MVVM, Compose rules)
-- Memory: feedback files at ~/.claude/projects/-Users-a01-0224-0574-aifund/memory/feedback_*.md
+- Diff: git diff origin/{INTEGRATION_BRANCH}...HEAD
+- Project CLAUDE.md / AGENTS.md (layering, DI, error-handling conventions)
+- The project-local code-reviewer skill (<repo>/.claude/skills/code-reviewer/SKILL.md)
+  — its review dimensions and hard-rule checklist define what "correct"
+  means for this stack; fold them into the checklist below
 
 Checklist:
-1. Layer boundaries respected: UI → ViewModel → UseCase → Repository → DataSource
-2. Koin DI conventions: `single` for app singletons, `factory` for repos/UCs, `viewModel` for VMs
-3. No `domain → ui` imports (architectural violation)
-4. Cross-feature imports: feature/X should not import from feature/Y (use ui/common)
-5. Compose: Modifier propagation, parameter order, composable naming
-6. Null safety: no `!!` on ApiResponse.data (use requireData / getDataOrDefault)
-7. Coroutines: no leaked scope, no `GlobalScope`, dispatcher injected sensibly
-8. Logging: Timber, not android.util.Log (per feedback_use_timber_not_log)
-9. Error handling: Result<T> + custom exceptions, not generic try/catch
-10. No commented-out code, no // TODO without date, no // region blocks
-    (only where the project's linter doesn't already cover these)
+1. Layer boundaries respected per {LAYERING_CONVENTION}: dependency
+   direction correct, no cross-feature/module imports outside sanctioned paths
+2. DI registrations follow the project's scope/lifetime conventions
+   (per the project's rd-implementer / code-reviewer skills)
+3. UI-framework idioms follow the project's conventions
+4. Null/optional safety at external boundaries: no unchecked force-unwrap
+   on data that can be absent (API responses, user input)
+5. Concurrency: no unscoped/global task launching; scopes owned and
+   cancelled; dispatchers/schedulers injected sensibly
+6. Error handling per project conventions (typed results / domain
+   exceptions — not blanket catch-and-swallow)
+7. Logging via the project's sanctioned logger only
+8. No commented-out code, no TODO without date/ticket
+   (item 8 only where the project's linter doesn't already cover it —
+   correctness-adjacent items 3–7 are never waived by a bound linter at
+   this stage; the lint-toolchain carve-out in the severity rubric applies
+   only after the Stage 7.5 lint gate has run green)
 
 CRITICAL: definite bugs (with a statable trigger), or violations of a
 citable project hard rule / Security Baseline rule (cite it).
@@ -201,22 +215,22 @@ You are an edge-case / robustness reviewer. Your only job is to find scenarios
 the implementation does NOT handle.
 
 Inputs:
-- Diff: git diff origin/developer...HEAD
+- Diff: git diff origin/{INTEGRATION_BRANCH}...HEAD
 - Spec: openspec/changes/{name}/specs/{name}/spec.md
 - Implementation files
 
 Checklist:
 1. Null inputs: every external boundary (API response, user input) handled when null/empty
 2. Error paths: every network call / file IO has explicit error branch (not just try/catch swallow)
-3. Concurrency: shared state accessed from multiple coroutines protected
+3. Concurrency: shared state accessed from multiple tasks/threads protected
 4. Boundary: zero-element list, single-element list, max-int, negative numbers
-5. Cancellation: long-running coroutines respect cancellation
-6. Lifecycle: ViewModel survives config change; SharedFlow events not lost
-7. Backwards compat: existing data in SharedPreferences / DataStore migrates cleanly
+5. Cancellation: long-running async work respects cancellation
+6. Lifecycle: state survives the platform's lifecycle transitions (config
+   change, backgrounding, process restart); one-shot events not lost across them
+7. Backwards compat: existing persisted data (local stores / preferences) migrates cleanly
 8. Race conditions: state machines that have "early emit before subscriber" pattern
-   (Reference feedback_security_check_dispatcher_replay.md — replay=1 lesson)
 
-CRITICAL: definite NPE, crash, data loss, or race — with a statable trigger.
+CRITICAL: definite crash, data loss, or race — with a statable trigger.
 WARNING: handled but with poor UX (e.g., silent failure).
 SUGGESTION: defensive checks worth adding.
 
@@ -246,7 +260,7 @@ Checklist:
 2. Format: `{type}({scope}): {description}` where type ∈ feat/fix/chore/docs/style/refactor/test/build/ci/perf
 3. Scope is meaningful (matches affected module/feature)
 4. Description: imperative mood, no trailing period
-5. If ticket exists: `[AIP-XXXX]` suffix in subject OR `Linear: AIP-XXXX` in footer
+5. If ticket exists: `[{TICKET_PREFIX}-XXXX]` suffix in subject OR a tracker footer line (e.g. `Linear: {TICKET_PREFIX}-XXXX`)
 6. Footer contains:
    - `Spec: openspec/changes/{name}/specs/{name}/spec.md`
    - `Scenarios: <names>`

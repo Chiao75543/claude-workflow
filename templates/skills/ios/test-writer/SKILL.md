@@ -58,6 +58,8 @@ Claude 扮演資深 QA/RD，以規格驗收條件為基準撰寫完整單元測�
 | `Fixtures/*.json` decode 測試 | **契約鎖**：真實 API 回應樣本，web 端改壞先在這爆 |
 | 真 UseCase + 假 Repository | ViewModel 測試，測真實協作，不做 mock 對 mock |
 
+**非同步等待**：直接 `await` 結果或用 Swift Testing 的 `confirmation`；**禁 `Task.sleep` / 輪詢真實時鐘**（flaky 主因）。時間相關邏輯把 clock 注入（`ContinuousClock` 之類走 protocol），測試端換假 clock。
+
 **測試方法命名**：`@Test` 的 display name 用中文，清楚描述情境與預期結果；function 名用簡短英文：
 ```swift
 @Test("登入成功時，ViewModel 應更新為已登入狀態")

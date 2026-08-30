@@ -240,7 +240,7 @@ Phase 5: View / Navigation
 - UI 變更：煙霧測試已跑，截圖路徑＋判讀結果 ✅（非 UI 變更標 N/A）
 
 📝 建議 commit message：
-  feat(module): implement xxx feature [AIP-XXX]
+  feat(module): implement xxx feature [{TICKET_PREFIX}-XXX if ticket]
 
   Spec: openspec/changes/{name}/specs/{spec}/spec.md
   Scenarios: scenario-1, scenario-2

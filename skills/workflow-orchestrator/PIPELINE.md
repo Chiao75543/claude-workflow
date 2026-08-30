@@ -4,6 +4,8 @@ A 12-stage pipeline that takes a feature from intent to archived spec, with mand
 
 Designed for AI-assisted, spec-first workflows. Tool-agnostic where possible — see [Customization](#customization) for substitution points.
 
+> **Canonical source:** the orchestrator's `SKILL.md` is authoritative; this file is its published, human-readable mirror. When they disagree, `SKILL.md` wins — and any SKILL.md change lands with the matching PIPELINE.md update in the same commit.
+
 ---
 
 ## Table of Contents
@@ -69,7 +71,8 @@ flowchart TD
     end
 
     subgraph P4[Phase 4: Close the loop]
-        S10 -. deferred .-> S11[11. PR review loop<br/>engine + per-comment gate]
+        S10 --> S105[10.5 Codex auto-review<br/>advisory, posts inline findings]
+        S105 -. deferred .-> S11[11. PR review loop<br/>engine + per-comment gate]
         S11 -->|reviewer ✅ + user OK| S12[12. Archive<br/>pre-merge commit on feature branch]
         S12 -->|final CI green| SMerge{Merge MR<br/>user merges: feature + archive together}
         SMerge --> EndDone([end])
@@ -100,6 +103,7 @@ Legend: yellow = user gate, green = stage added in this revision.
 | 8    | Commit             | auto                 | conventional commit + spec footer                                 | 2           | local commit                    | —                   |
 | 9    | Confirm push       | user                 | view diff stats + branch + remote                                 | —           | push / hold                     | yes                 |
 | 10   | Push + PR          | auto                 | `git push` + create pull request                                  | —           | remote branch + PR              | —                   |
+| 10.5 | Codex auto-review  | auto after push      | codex reviews the MR diff; dispatcher relay-posts inline + summary | advisory    | findings on MR                  | only if CRITICAL    |
 | 11   | PR review loop     | deferred             | fix engine + per-comment gate + auto-resolve                      | —           | resolved discussions, ready-to-merge | yes (2 per comment) |
 | 12   | Archive            | reviewer ✅ + user OK | `openspec archive` commit on feature branch → push → CI green → **user merges MR**; local cleanup user-side | —      | spec archived, env clean        | yes (OK-to-merge + final merge) |
 
@@ -111,19 +115,21 @@ Legend: yellow = user gate, green = stage added in this revision.
 
 Establish ticket + capability scope.
 
-- Prompt user for **ticket ID** (issue tracker). Optional for personal/exploratory work.
+- Prompt user for **ticket ID** (issue tracker). Optional for personal/exploratory work. Normalize to the full id `{TICKET_PREFIX}-<number>` and record as `{TICKET}`.
 - Prompt user for **one-line feature description**.
-- Derive `{name}` (kebab-case).
+- Derive and record `{feature-slug}` and `{name}` (kebab-case).
 - List existing capabilities (archived in spec tree + in-progress in other changes).
 - Decide: attach to existing capability (**MODIFIED**) or create a new one (**ADDED**).
 - If `openspec/changes/{name}/` already exists → ask user which stage to resume from.
 
 ### Stage 2 — Worktree
 
-Create isolated workspace.
+Create isolated workspace. `{branch_name}` = `[{TICKET}-]{feature-slug}`, both recorded at Stage 1.
 
 ```bash
-git worktree add .worktrees/{name} -b feat/{branch_name} <base_branch>
+base={INTEGRATION_BRANCH}   # AGENTS.md binding; if missing locally, use origin/{INTEGRATION_BRANCH};
+                            # absent on both → stop and ask, never fall back to another branch
+git worktree add .worktrees/{name} -b feat/{branch_name} "$base"
 cd .worktrees/{name}
 ```
 
@@ -213,7 +219,7 @@ For Mode 6c (manual-smoke) specs: skip the test gate (no automated tests); still
 Compose conventional commit with spec footer:
 
 ```
-{type}({scope}): {description} [TICKET-XXX]
+{type}({scope}): {description} [{TICKET_PREFIX}-XXXX if ticket]
 
 {optional body}
 
@@ -238,12 +244,22 @@ Show: commit hash, subject, diff stats, branch name, target remote — plus any 
 ```bash
 git push origin "feat/{branch_name}"
 # GitHub:
-gh pr create --base <integration_branch> --title "..." --body "..."
+gh pr create --base {INTEGRATION_BRANCH} --title "..." --body "..."
 # GitLab:
-glab mr create --target-branch <integration_branch> --title "..." --description "..."
+glab mr create --target-branch {INTEGRATION_BRANCH} --title "..." --description "..."
 ```
 
 PR description includes spec path + ticket link.
+
+### Stage 10.5 — Codex auto-review (advisory)
+
+Runs immediately after Stage 10's push — one final pass over the MR-as-deliverable by a second engine (`codex:codex-rescue`; engine detection mirrors Stage 11 Step 0; override with `--skip-codex-review` / `--engine=claude`). **Advisory: it never blocks the pipeline.**
+
+- The dispatcher gathers MR context (diff, SHA refs, project path) in the main shell and passes it into the prompt — the codex sandbox cannot reach the VCS API host.
+- Codex returns findings as a structured payload; the **dispatcher** posts them (inline comments + weighted summary). Never let codex post directly — it fails silently.
+- 0 CRITICAL → log the score, settle into Stage 11's deferred state. ≥1 CRITICAL → surface in chat: fix-and-repush / accept / close MR.
+
+Full contract (pre-flight commands, prompt template, idempotency): SKILL.md Stage 10.5 + `references/codex-mr-review-prompt-template.md`.
 
 ### Stage 11 — PR review loop
 
@@ -289,7 +305,7 @@ DO NOT commit, DO NOT run tests yet.
 ## PR context
 - Repository: {repo_root}
 - PR: #{PR_ID}, branch: {branch_name}
-- Base: {integration_branch}
+- Base: {INTEGRATION_BRANCH}
 - Related spec: openspec/changes/{name}/specs/{name}/spec.md
 - Relevant Scenario(s):
   {paste Requirement + Scenario verbatim}
@@ -490,7 +506,7 @@ When a stage says "dispatch N parallel reviewer agents":
 5. **De-duplicate**: when two reviewers raise the same item, merge into one entry; tag which reviewers flagged it. When merged findings disagree on `cost:`, keep the highest. Sort SUGGESTIONs by ROI (impact / the finding's `cost:` field).
 6. CRITICAL → fix → re-dispatch the same reviewers with the post-fix artifact — subject to the [Convergence Boundary](#convergence-boundary): at most 2 re-dispatch rounds per stage, and re-dispatch rounds verify only prior CRITICALs + the fix diff.
 7. After pass, append aggregated summary to `openspec/changes/{name}/review.md`. Do **not** store individual agent raw reports.
-8. **Disposition write-back.** Every finding line — CRITICAL, WARNING, and SUGGESTION alike — ends with `— disposition: fixed | rejected | deferred | pending` (em-dash `—` separator, tag always last on the line; `deferred`'s ticket follows the tag: `— disposition: deferred (AIP-XXXX)` — a deferral without a ticket historically never gets closed). New WARNING/SUGGESTION entries start `pending`; CRITICALs are logged `fixed` once the fix → re-dispatch loop clears them. Whichever later stage (or the user) acts on or dismisses a finding updates the tag **in place** — the only in-place edit allowed in this otherwise append-only log, and the rule extends past archive: updating a disposition tag inside an archived change's `review.md` is the only permitted post-archive edit (tag only, never content; the archived spec itself stays untouchable). This makes reviewer yield measurable (flagged vs. adopted), so low-yield personas can be pruned with data instead of faith.
+8. **Disposition write-back.** Every finding line — CRITICAL, WARNING, and SUGGESTION alike — ends with `— disposition: fixed | rejected | deferred | pending` (em-dash `—` separator, tag always last on the line; `deferred`'s ticket follows the tag: `— disposition: deferred ({TICKET_PREFIX}-XXXX)` — a deferral without a ticket historically never gets closed). New WARNING/SUGGESTION entries start `pending`; CRITICALs are logged `fixed` once the fix → re-dispatch loop clears them. Whichever later stage (or the user) acts on or dismisses a finding updates the tag **in place** — the only in-place edit allowed in this otherwise append-only log, and the rule extends past archive: updating a disposition tag inside an archived change's `review.md` is the only permitted post-archive edit (tag only, never content; the archived spec itself stays untouchable). This makes reviewer yield measurable (flagged vs. adopted), so low-yield personas can be pruned with data instead of faith.
 
 ### `review.md` format (append-only, one section per stage)
 
@@ -609,7 +625,8 @@ This pipeline is tool-agnostic. Substitution points:
 | ------------------- | ------------------------------------------------ | ------------------------------------------------------------ |
 | Spec system         | OpenSpec                                         | Custom markdown, RFC, ADR                                    |
 | VCS host            | GitHub (`gh`) / GitLab (`glab`)                  | Bitbucket, Gitea, Forgejo                                    |
-| Integration branch  | `main`                                           | `develop`, `release`, `integration`                          |
+| Integration branch `{INTEGRATION_BRANCH}` | project-specific (AGENTS.md)     | `main`, `develop`, `release`, `integration`                  |
+| Ticket prefix `{TICKET_PREFIX}` | project tracker key (AGENTS.md, e.g. `AIP`) | `JIRA`, `GH`, any                                            |
 | Test command        | project-specific                                 | `npm test`, `pytest`, `./gradlew test`, `cargo test`         |
 | Lint command        | project-specific `{LINT_COMMAND}` (no-op if none) | `./gradlew lint`, `npm run lint`, `ruff check`, SwiftLint    |
 | Fix engine          | `codex:codex-rescue` agent                       | Any code-writing agent + fixer skill                         |

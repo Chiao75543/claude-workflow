@@ -31,7 +31,7 @@ End-to-end pipeline. The user sees three checkpoints: spec approval, pre-push, a
 | `mr-reviewer` | Stage 10.5 | Stack-specific MR review dimensions |
 | `review-fixer` | Stage 11 | How to resolve review findings per stack conventions |
 
-Project-level config lives in `<repo>/AGENTS.md`. When this document refers to `{TEST_COMMAND}`, `{BUILD_COMMAND}`, `{LINT_COMMAND}`, or `{LAYERING_CONVENTION}`, substitute from AGENTS.md (`{LINT_COMMAND}` 沒有就綁 no-op)。註：AGENTS.md template 的 Common Commands 用小寫 `{lint_command}` 等拼法 — 大小寫兩式指同一個 binding，orchestrator 端慣例大寫。
+Project-level config lives in `<repo>/AGENTS.md`. When this document refers to `{TEST_COMMAND}`, `{BUILD_COMMAND}`, `{LINT_COMMAND}`, `{LAYERING_CONVENTION}`, `{INTEGRATION_BRANCH}`, or `{TICKET_PREFIX}`, substitute from AGENTS.md (`{LINT_COMMAND}` 沒有就綁 no-op)。註：AGENTS.md template 的 Common Commands 用小寫 `{lint_command}` 等拼法 — 大小寫兩式指同一個 binding，orchestrator 端慣例大寫。
 
 To bootstrap a project: run `scripts/init-project.sh <stack> <target-repo>` to scaffold the skill set from `templates/skills/<stack>/` (e.g. `android`). Hand-author new stacks by following any existing template.
 
@@ -89,11 +89,11 @@ digraph workflow {
 
 ### Stage 1: Identify
 
-1. Ask for **ticket ID** (Linear, Jira, GitHub Issues, etc.; or skip — personal/optimization work)
+1. Ask for **ticket ID** (Linear, Jira, GitHub Issues, etc.; or skip — personal/optimization work). **Normalize** to the full id `{TICKET_PREFIX}-<number>` using the AGENTS.md binding (a bare `3756` becomes e.g. `AIP-3756`) and record it as `{TICKET}` — downstream stages interpolate it verbatim
 2. Ask for a one-line feature description (if not in trigger args)
-3. Derive `{name}` (kebab-case):
-   - With ticket: `<ticket-id-lowercase>-<feature-slug>` (e.g. `aip-3756-fix-data-pinning`)
-   - Without ticket: `<feature-slug>` (e.g. `error-message-cleanup`)
+3. Derive and record **both** (Stage 2 consumes them separately — never re-derive one from the other by string surgery):
+   - `{feature-slug}` (kebab-case, no ticket parts; e.g. `fix-data-pinning`)
+   - `{name}`: with ticket `<ticket-id-lowercase>-{feature-slug}` (e.g. `aip-3756-fix-data-pinning`); without ticket just `{feature-slug}`
 4. List existing capabilities (**check both already-accumulated and in-progress**):
    - Archived: `ls openspec/specs/`
    - In-progress (not yet archived): `ls openspec/changes/*/specs/` — these capabilities exist on other branches but will appear in main spec tree after their respective MR merges (each MR bundles its own archive commit before merge, see Stage 12)
@@ -101,7 +101,7 @@ digraph workflow {
      > "Does this attach to an existing capability (MODIFIED) or create a new one (ADDED)?"
    - **MODIFIED**: record target capability name; subsequent spec uses `## MODIFIED Requirements`
    - **ADDED**: new capability; will live at `openspec/specs/{name}/` after archive
-   - **NOTE**: if you fork from `developer` and `developer` lags behind an in-progress capability merge, you may see "no capabilities" — that's expected; consult MEMORY.md or `openspec list` for what's in flight
+   - **NOTE**: if you fork from `{INTEGRATION_BRANCH}` and it lags behind an in-progress capability merge, you may see "no capabilities" — that's expected; consult MEMORY.md or `openspec list` for what's in flight
 5. **Existing-change check**: if `openspec/changes/{name}/` already exists:
    - Inspect contents. If `proposal.md + design.md + specs/*/spec.md + tasks.md` all present → spec is **already authored**
    - Ask user: "Spec already exists. Resume from which stage?"
@@ -117,7 +117,9 @@ digraph workflow {
 Branch behaviour depends on whether Stage 1 found an **existing** change or a **new** one. Per `worktree-before-new-spec` feedback, **new specs MUST get a fresh worktree**.
 
 ```bash
-branch_name="${TICKET:+AIP-${TICKET#AIP-}-}{name}"   # feat/AIP-3756-foo OR feat/foo
+# {TICKET} = normalized full ticket id recorded at Stage 1 (e.g. AIP-3756, JIRA-42);
+# {feature-slug} = recorded at Stage 1 (never re-derive it by stripping {name})
+branch_name="${TICKET:+${TICKET}-}{feature-slug}"   # feat/AIP-3756-fix-data-pinning OR feat/fix-data-pinning
 current_branch=$(git branch --show-current)
 ```
 
@@ -125,7 +127,14 @@ current_branch=$(git branch --show-current)
 MUST create a fresh linked worktree, **unless user explicitly says "skip worktree"**.
 
 ```bash
-base=$(git show-ref --verify --quiet refs/heads/developer && echo developer || echo main)
+base="{INTEGRATION_BRANCH}"   # from AGENTS.md — if the binding is missing/unsubstituted, STOP and ask; never guess
+if git show-ref --verify --quiet "refs/heads/${base}"; then
+    :   # local branch exists
+elif git show-ref --verify --quiet "refs/remotes/origin/${base}"; then
+    base="origin/${base}"   # fresh clone: base off the remote-tracking ref
+else
+    echo "integration branch '${base}' not found locally or on origin" >&2   # STOP — ask the user, do NOT fall back to another branch
+fi
 git worktree add .worktrees/{name} -b "feat/${branch_name}" "$base"
 cd .worktrees/{name}
 ```
@@ -272,7 +281,7 @@ For **mode 6c (manual-smoke)** specs: skip the test gate (no automated tests); s
 
 Compose conventional commit:
 ```
-{type}({scope}): {description} [AIP-XXXX if ticket]
+{type}({scope}): {description} [{TICKET_PREFIX}-XXXX if ticket]
 
 {optional body}
 
@@ -285,7 +294,7 @@ Dispatch **2 parallel reviewer agents** (Commit personas):
 - `review-commit-message` — type/scope correct, footer complete, ticket ref present
 - `review-changeset` — diff matches description (no scope creep, no stray files)
 
-CRITICAL → fix → re-dispatch. Then `git commit`. PreToolUse hook protects developer/main; PostToolUse hook displays verify reminder which we already satisfied.
+CRITICAL → fix → re-dispatch. Then `git commit`. (Projects may configure PreToolUse/PostToolUse hooks — e.g. guarding `{INTEGRATION_BRANCH}`/main, or a post-commit verify reminder. This repo ships none; never rely on a hook existing.)
 
 ### Stage 9: ⏸ User confirms push
 
@@ -296,8 +305,11 @@ Ask: "Push now, or hold?"
 ### Stage 10: Push + MR
 
 ```bash
-git push origin "feat/${branch_name}"   # hook protects developer/main
-glab mr create --target-branch developer --title "$(git log -1 --pretty=%s)" --description "..."
+git push origin "feat/${branch_name}"   # never push {INTEGRATION_BRANCH}/main directly
+# GitHub:
+gh pr create --base {INTEGRATION_BRANCH} --title "$(git log -1 --pretty=%s)" --body "..."
+# GitLab:
+glab mr create --target-branch {INTEGRATION_BRANCH} --title "$(git log -1 --pretty=%s)" --description "..."
 ```
 
 MR description includes spec path + ticket link (from Stage 1's tracker — Linear, Jira, GitHub Issues, etc.). **After MR is created, immediately proceed to Stage 10.5** — do NOT jump straight to Stage 11.
@@ -361,7 +373,7 @@ Do NOT let codex try `curl http://<gitlab_host>/...` — it will silently fail. 
 
 - 0 CRITICAL → log score in chat + proceed to Stage 11 deferred state. **No user checkpoint needed** (advisory mode).
 - ≥1 CRITICAL → surface findings in chat with `⏸` prompt:
-  - `fix` → user fixes locally; re-dispatch Stage 6.5/7.5 if needed; force-push (with explicit user consent per `no-force-push` memory) or new commit + push; re-run Stage 10.5 once
+  - `fix` → user fixes locally; re-run Stage 7.5 (tests + verify) if needed; force-push (with explicit user consent per `no-force-push` memory) or new commit + push; re-run Stage 10.5 once
   - `accept` → leave MR open with codex CRITICAL visible; proceed to Stage 11 deferred (human reviewers will see codex findings too)
   - `close` → `glab mr close {MR_ID}`; pipeline ends at Stage 10.5
 
@@ -521,7 +533,7 @@ When a stage says "dispatch N parallel reviewer agents":
 6. **De-duplicate**: when two reviewers raise effectively the same item (same file:line, same intent), merge into one entry and tag which reviewers flagged it. 合併後 `cost:` 不一致 → 取最高。Sort SUGGESTIONs by ROI (impact / 該條的 `cost:` 欄), highest first.
 7. If CRITICAL → fix → re-dispatch the same reviewers (same prompts, post-fix artifact) — 受收斂邊界約束：每 stage 初審 + 最多 2 輪重派，重派只驗「舊 CRITICAL 解了沒 + fix diff」（見下方「收斂邊界」）
 8. **After PASS**, append the aggregated summary to `openspec/changes/{name}/review.md` under a stage heading. Do NOT store individual agent raw reports.
-9. **Disposition write-back**: every finding line — CRITICAL, WARNING, and SUGGESTION alike — ends with `— disposition: fixed | rejected | deferred | pending`（em-dash `—` 分隔，tag 一律排在行尾；`deferred` 的 ticket 括號跟在 tag 後：`— disposition: deferred (AIP-XXXX)`，缺 ticket 的 deferral 歷史上永遠不會被關）。New WARNING/SUGGESTION entries start `pending`; CRITICALs are logged `fixed` once the fix → re-dispatch loop clears them. Whichever later stage (or the user) acts on or dismisses a finding updates the tag **in place** — the only in-place edit allowed in the append-only log，**且此規則延伸到 archive 之後**：更新 archived change 裡 `review.md` 的 disposition tag 是唯一允許的 post-archive 編輯（只改 tag，不改內容；spec 本體仍然 NEVER 動）。Purpose: reviewer yield becomes greppable (flagged vs. adopted), so low-yield personas get pruned with data instead of faith.
+9. **Disposition write-back**: every finding line — CRITICAL, WARNING, and SUGGESTION alike — ends with `— disposition: fixed | rejected | deferred | pending`（em-dash `—` 分隔，tag 一律排在行尾；`deferred` 的 ticket 括號跟在 tag 後：`— disposition: deferred ({TICKET_PREFIX}-XXXX)`，缺 ticket 的 deferral 歷史上永遠不會被關）。New WARNING/SUGGESTION entries start `pending`; CRITICALs are logged `fixed` once the fix → re-dispatch loop clears them. Whichever later stage (or the user) acts on or dismisses a finding updates the tag **in place** — the only in-place edit allowed in the append-only log，**且此規則延伸到 archive 之後**：更新 archived change 裡 `review.md` 的 disposition tag 是唯一允許的 post-archive 編輯（只改 tag，不改內容；spec 本體仍然 NEVER 動）。Purpose: reviewer yield becomes greppable (flagged vs. adopted), so low-yield personas get pruned with data instead of faith.
 
 ### review.md format
 
@@ -617,7 +629,7 @@ Review 迴圈必須收斂。目標對齊四件事：**程式碼正確、測試�
 | Stage | Action | Reviewers |
 |---|---|---|
 | 1 Identify | ticket + capability + name | — |
-| 2 Worktree | branch `feat/[AIP-XXX-]{name}` | — |
+| 2 Worktree | branch `feat/[{TICKET}-]{feature-slug}` | — |
 | 3 Spec | brainstorm + grill + draft | — |
 | 4 ⏸ | user approves spec | — |
 | 5 Split | 5 files + validate | — |
@@ -678,6 +690,7 @@ Review 迴圈必須收斂。目標對齊四件事：**程式碼正確、測試�
 
 ## Related
 
+- `PIPELINE.md` — human-readable published mirror of this document. **SKILL.md is canonical**: when they disagree SKILL.md wins, and any change here lands with the matching PIPELINE.md update in the same commit.
 - `superpowers:dispatching-parallel-agents` — technique used for multi-reviewer
 - `superpowers:brainstorming` — principles borrowed inline, NOT invoked
 - `superpowers:grill-me` — principles borrowed inline, NOT invoked

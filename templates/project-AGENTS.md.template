@@ -67,6 +67,19 @@ numbers permanently. Keep every entry concrete and checkable.
 {install_command}    # e.g. ./gradlew installDebug, npm install
 ```
 
+## Workflow Bindings
+
+Read by the workflow-orchestrator skill (see its "Project bindings"
+section). Declare concrete values — the orchestrator stops and asks
+rather than guess a missing one:
+
+- `{TICKET_PREFIX}`: {e.g. AIP / JIRA / GH — ticket-id prefix used in branch names, commit footers, and disposition tags}
+- `{INTEGRATION_BRANCH}`: {e.g. developer / main — MR/PR target and Stage 2 worktree base}
+- `{LAYERING_CONVENTION}`: {e.g. Domain → Data → DI → Presentation → Navigation}
+
+(`{TEST_COMMAND}` / `{LINT_COMMAND}` / `{BUILD_COMMAND}` come from Common
+Commands above; upper- and lower-case spellings refer to the same binding.)
+
 ## Development Workflow (TDD)
 
 ```

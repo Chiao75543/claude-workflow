@@ -143,6 +143,7 @@ Phase 5: Navigation
 #### Phase 3: DI（Koin Module）
 - 在既有 Module 檔案中註冊新增的 Repository / UseCase / ViewModel
 - DI 慣例：`single` = app-wide singleton, `factory` = new instance per injection, `viewModel` = ViewModel only
+- 有狀態的 Repository（曝露事件流 / 持有快取）必須 `single` — `factory` 會讓各注入點拿到不同實例、事件互不相通
 
 #### Phase 4: Presentation Layer
 - UiState / UiEvent — 依 `specs/*.md` UI Behavior section
@@ -196,7 +197,7 @@ Phase 5: Navigation
 - Phase 5 Navigation ✅
 
 📝 建議 commit message：
-  feat(module): implement xxx feature [AIP-XXX]
+  feat(module): implement xxx feature [{TICKET_PREFIX}-XXX if ticket]
 
   Spec: openspec/changes/{name}/specs/{spec}/spec.md
   Scenarios: scenario-1, scenario-2
