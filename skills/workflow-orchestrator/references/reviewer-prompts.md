@@ -253,7 +253,7 @@ Checklist:
 2. Format: `{type}({scope}): {description}` where type ∈ feat/fix/chore/docs/style/refactor/test/build/ci/perf
 3. Scope is meaningful (matches affected module/feature)
 4. Description: imperative mood, no trailing period
-5. If ticket exists: `[AIP-XXXX]` suffix in subject OR `Linear: AIP-XXXX` in footer
+5. If ticket exists: `[{TICKET_PREFIX}-XXXX]` suffix in subject OR a tracker footer line (e.g. `Linear: {TICKET_PREFIX}-XXXX`)
 6. Footer contains:
    - `Spec: openspec/changes/{name}/specs/{name}/spec.md`
    - `Scenarios: <names>`
