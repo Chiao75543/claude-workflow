@@ -135,8 +135,7 @@ elif git show-ref --verify --quiet "refs/remotes/origin/${base}"; then
 else
     echo "integration branch '${base}' not found locally or on origin" >&2   # STOP — ask the user, do NOT fall back to another branch
 fi
-git worktree add .worktrees/{name} -b "feat/${branch_name}" "$base"
-cd .worktrees/{name}
+git worktree add .worktrees/{name} -b "feat/${branch_name}" "$base" && cd .worktrees/{name} || exit 1
 ```
 
 Do NOT work in the main repo for new specs. Hard rule.
@@ -145,17 +144,26 @@ Do NOT work in the main repo for new specs. Hard rule.
 Use whatever is already set up:
 
 ```bash
+# Resolve the worktree by EXACT ref match. Never test with an unanchored
+# `git worktree list | grep feat/${branch_name}`: Stage 1 offers a `-v2`
+# suffix, so feat/foo matches the feat/foo-v2 line as a substring, the
+# exact-match lookup then yields "" and `cd ""` succeeds without moving —
+# the whole pipeline silently runs in the main repo.
+wt="$(git worktree list --porcelain \
+      | awk -v b="refs/heads/feat/${branch_name}" \
+            '/^worktree /{w=substr($0,10)} $0==("branch " b){print w; exit}')"
+
 if [ "$current_branch" = "feat/${branch_name}" ]; then
     : # already on right branch, work in place (main repo or linked worktree)
-elif git worktree list | grep -q "feat/${branch_name}"; then
-    # there's an existing linked worktree for this branch — cd into it
-    cd "$(git worktree list --porcelain | awk -v b="refs/heads/feat/${branch_name}" '/^worktree/ {w=$2} $0==("branch " b) {print w}')"
+elif [ -n "$wt" ]; then
+    cd "$wt" || exit 1   # existing linked worktree for this branch
 else
     # branch exists but not currently checked out anywhere — create fresh worktree
-    git worktree add .worktrees/{name} "feat/${branch_name}"
-    cd .worktrees/{name}
+    git worktree add .worktrees/{name} "feat/${branch_name}" && cd .worktrees/{name} || exit 1
 fi
 ```
+
+Every path above either lands in the intended worktree or exits non-zero — a failed `cd` must stop the pipeline, never fall through into the main repo.
 
 ### Stage 3: Spec author
 
@@ -316,7 +324,9 @@ MR description includes spec path + ticket link (from Stage 1's tracker — Line
 
 ### Stage 10.5: Codex auto-review (advisory, runs immediately after push)
 
-**Why**: prior reviewer passes (Stages 6/7/8) reviewed the change against the spec; Stage 10.5 gives the MR-as-deliverable one final pass through the actual GitLab MR surface, using `codex:codex-rescue` to mimic a senior human reviewer. Findings appear as inline DiffNotes on the MR before humans look at it — sets baseline quality + saves human reviewer cycles.
+**Why**: prior reviewer passes (Stages 6/7/8) reviewed the change against the spec; Stage 10.5 gives the MR-as-deliverable one final pass through the actual MR/PR surface, using `codex:codex-rescue` to mimic a senior human reviewer. Findings appear as inline comments on the MR before humans look at it — sets baseline quality + saves human reviewer cycles.
+
+**Host binding**: the commands below are shown for GitHub (`gh`) and GitLab (`glab`). The project's `mr-reviewer` skill owns the concrete host implementation (endpoints, inline-comment payloads, auth); when it disagrees with the examples here, **it wins**. A stack whose host is neither ships its own equivalents there.
 
 **Mode**: **advisory** (does NOT block pipeline). If codex finds CRITICAL, you surface it in chat and ask the user whether to fix-and-amend (re-push) or close MR. Default: leave findings on the MR and proceed to Stage 11 deferred state.
 
@@ -336,13 +346,17 @@ fi
 
 #### 1. Pre-flight (in main shell, before dispatch)
 
-The dispatcher (main Claude shell) MUST gather these and pass them into the codex prompt — codex sandbox cannot reach the GitLab API host:
+The dispatcher (main Claude shell) MUST gather MR title + state, the diff, and the commit SHAs that inline comments anchor to, then pass them into the codex prompt — the codex sandbox cannot reach the VCS API host:
 
 ```bash
+# GitHub:
+gh pr view {PR_ID} --json title,state,baseRefOid,headRefOid,url
+gh pr diff {PR_ID}
+# GitLab:
 glab mr view {MR_ID}                                          # title + state
 glab mr diff {MR_ID}                                          # diff
 glab api projects/<encoded>/merge_requests/{MR_ID} | jq '.diff_refs, .web_url'
-# capture base_sha / head_sha / start_sha / gitlab_host / project_path_encoded
+# capture base/head (+ start_sha on GitLab), api host, project path/encoding
 ```
 
 #### 2. Dispatch codex with explicit instructions
@@ -351,23 +365,23 @@ Use the prompt at `references/codex-mr-review-prompt-template.md` (see Templates
 
 - Worktree path
 - SHA refs
-- Project path (URL-encoded)
+- Project/repo identifier (URL-encoded where the host requires it)
 - Files in scope (production code only; **skip** `openspec/changes/**/*.md`)
 - "Set the bar HIGH — N prior reviewer passes already covered the obvious"
-- "**DO NOT** post comments yourself — return findings as structured payload; dispatcher will post via main-shell glab/curl"
+- "**DO NOT** post comments yourself — return findings as structured payload; the dispatcher posts them from the main shell"
 
 #### 3. Sandbox limitation — relay-post pattern
 
-Codex sandbox network access to GitLab API host is typically blocked (`connect: operation not permitted`). The skill contract is:
+Codex sandbox network access to the VCS API host is typically blocked (`connect: operation not permitted`). The skill contract is:
 
 | Step | Who | Action |
 |---|---|---|
 | Analysis | Codex | Read diff + files, classify CRITICAL/WARNING/SUGGESTION/SIMPLIFY |
 | Findings emit | Codex | Return findings JSON or markdown back to dispatcher |
-| DiffNote post | **Dispatcher** | `curl` each finding with PRIVATE-TOKEN + SHA position |
-| Summary post | **Dispatcher** | `glab mr note {MR_ID}` with weighted score |
+| Inline post | **Dispatcher** | one review comment per finding, anchored to file + line + SHA (GitHub: `gh api .../pulls/{PR_ID}/comments`; GitLab: DiffNote `curl` with PRIVATE-TOKEN + position) |
+| Summary post | **Dispatcher** | one summary comment with the weighted score (GitHub: `gh pr comment`; GitLab: `glab mr note`) |
 
-Do NOT let codex try `curl http://<gitlab_host>/...` — it will silently fail. Always relay.
+Do NOT let codex reach the API host itself — it will silently fail. Always relay.
 
 #### 4. After posting
 
@@ -379,7 +393,7 @@ Do NOT let codex try `curl http://<gitlab_host>/...` — it will silently fail. 
 
 #### 5. Idempotency
 
-Re-running Stage 10.5 on the same MR posts a **new** summary note + may duplicate inline comments. To avoid duplication, the dispatcher SHOULD `glab api projects/.../merge_requests/{MR_ID}/discussions` first, check if a discussion with `*🤖 Reviewed by Codex*` signature already exists, and skip / supersede if so. User can force re-review with `/workflow --re-review {MR_ID}`.
+Re-running Stage 10.5 on the same MR posts a **new** summary note + may duplicate inline comments. To avoid duplication, the dispatcher SHOULD list existing comments first (GitHub: `gh api .../pulls/{PR_ID}/comments` + `gh pr view --json comments`; GitLab: `glab api projects/.../merge_requests/{MR_ID}/discussions`), check if one carrying the `*🤖 Reviewed by Codex*` signature already exists, and skip / supersede if so. User can force re-review with `/workflow --re-review {MR_ID}`.
 
 ### Stage 11: MR review loop (deferred trigger)
 
@@ -415,7 +429,7 @@ fi
 
 #### 1. Fetch + Classify
 
-- Fetch：`mr-reviewer` skill 或 `glab api projects/:id/merge_requests/{MR_ID}/discussions`，取所有 unresolved discussions（含 inline + general）。
+- Fetch：優先用專案的 `mr-reviewer` skill（它擁有 host 實作）；沒有就直接打 API 取所有未解決的 comment thread（含 inline + general）——GitHub：`gh api .../pulls/{PR_ID}/comments` + `gh pr view --json reviews,comments`；GitLab：`glab api projects/:id/merge_requests/{MR_ID}/discussions`。
 - Classify by severity（CRITICAL / WARNING / SUGGESTION）。
 - SUGGESTION 列給 user 一次看完，user 決定整批吸收/略過，不進 per-comment loop。
 - CRITICAL / WARNING → 進步驟 2 per-comment checkpoint loop。
@@ -431,7 +445,7 @@ fi
 | 2c | **⏸ User decision** | user |
 | 2d | **Apply fix** 依 approved plan 改 code | engine |
 | 2e | **⏸ User verify**：show diff + 該 comment 範圍內 unit test 結果 | user |
-| 2f | **Auto-resolve discussion**：`glab api ... resolve` + reply 引用 commit hash + 一行 fix summary | Claude |
+| 2f | **Auto-resolve thread**：reply 引用 commit hash + 一行 fix summary，再標記已解決（GitHub：`gh api` 回覆該 review comment，thread 用 `resolveReviewThread` GraphQL mutation；GitLab：`glab api ... discussions/{id}/resolve`）。host 細節以專案 `review-fixer` / `mr-reviewer` skill 為準 | Claude |
 | 2g | 下一個 comment | — |
 
 **Step 2c user options**：
@@ -589,7 +603,7 @@ Review 迴圈必須收斂。目標對齊四件事：**程式碼正確、測試�
 
 **合法引用來源**（CRITICAL 可以錨定什麼）：
 - spec Scenario（指名）
-- Security Baseline 條文（指編號）。專案 AGENTS.md **沒有** Security Baseline 段落時，fallback 引用 `templates/project-AGENTS.md.template` 的 10 條預設，並把「缺段落」本身記一條 WARNING — 段落不存在絕不能讓真的資安 finding 被降級
+- Security Baseline 條文（指編號）。專案 AGENTS.md **沒有** Security Baseline 段落時，fallback 引用 severity rubric **內建**的 10 條預設（`references/reviewer-prompts.md`，與 `templates/project-AGENTS.md.template` 同步維護；不引檔案路徑 — reviewer 跑在 target worktree，該檔不存在，引路徑會被機械降級吃掉），並把「缺段落」本身記一條 WARNING — 段落不存在絕不能讓真的資安 finding 被降級
 - **專案鐵則** — 專案 CLAUDE.md 鐵則 / 架構文件裡可引述的條文。project-local reviewer skill 就是靠這條合法擴充四類：鐵則 CRITICAL 引條文即通過降級檢查
 - **僅限 commit stage persona**（`review-commit-message` / `review-changeset`）：commit 契約本身（缺 spec footer、scope 不符、staged secrets）— 屬流程正確性，豁免四類檢定，引契約條目即可
 
@@ -650,6 +664,7 @@ Review 迴圈必須收斂。目標對齊四件事：**程式碼正確、測試�
 | Invoking brainstorming/grill-me as separate skills | Borrow principles inline, never call Skill tool |
 | Creating new capability when an existing one fits | Stage 1: always offer MODIFIED first |
 | Working in main repo on a new spec | Case A is mandatory: fresh worktree (per `worktree-before-new-spec`) |
+| Case B 用 `grep` 找 resume 的 worktree | 只用精確 ref 比對 — 有 `-v2` 兄弟分支時 unanchored grep 會誤中，接著 `cd ""` 靜默留在 main repo；每條路徑不是進對 worktree 就是非零離開 |
 | Overwriting existing change instead of resuming | Stage 1 must detect existing, offer resume stage |
 | Forcing unit tests on a build-config-only spec | Use 6b (static-validation) or 6c (manual-smoke), not 6a |
 | Skipping reviewer agents for "fast" stages | NEVER skip — multi-reviewer is the contract (modes 6a/6b only) |
@@ -678,7 +693,8 @@ Review 迴圈必須收斂。目標對齊四件事：**程式碼正確、測試�
 | Using engine to write code at Step 2b | Step 2b is **plan only**, no code. User approves the plan before any file changes. Engine writing code at 2b violates checkpoint contract. |
 | Skipping Stage 10.5 codex review after push | Pipeline contract: every push triggers codex advisory pass. Skipping leaves the MR un-reviewed until humans look at it (could be hours). User override is `--skip-codex-review`. |
 | Acting as Codex yourself (Claude doing the review) | The skill name is "Codex 扮演..."; dispatch via `Agent(subagent_type="codex:codex-rescue")` to use the real codex CLI. Claude self-roleplay defeats the multi-engine quality goal. |
-| Letting codex curl GitLab directly from sandbox | Codex sandbox typically blocks the GitLab API host (`connect: operation not permitted`). Codex emits findings; **dispatcher** posts via main-shell glab/curl. |
+| Letting codex reach the VCS API host from its sandbox | Codex sandbox typically blocks it (`connect: operation not permitted`). Codex emits findings; **dispatcher** posts them from the main shell (`gh` / `glab`). |
+| 假設 pipeline 只跑 GitLab | Stage 10/10.5/11 的 host 指令都有 gh + glab 兩式；真正的 host 實作歸專案 `mr-reviewer` / `review-fixer` skill，與此處範例衝突時以 skill 為準。 |
 
 ## Templates
 
@@ -686,7 +702,7 @@ Review 迴圈必須收斂。目標對齊四件事：**程式碼正確、測試�
 - `references/file-mapping.md` — split rules to 5 OpenSpec files
 - `references/reviewer-prompts.md` — persona prompts for parallel agents
 - `references/codex-prompt-template.md` — Stage 11 prompt for `codex:codex-rescue` (PLAN ONLY + APPLY variants)
-- `references/codex-mr-review-prompt-template.md` — Stage 10.5 prompt for codex auto-review (read MR diff → emit findings → dispatcher relays to GitLab)
+- `references/codex-mr-review-prompt-template.md` — Stage 10.5 prompt for codex auto-review (read MR diff → emit findings → dispatcher relays to the VCS host)
 
 ## Related
 

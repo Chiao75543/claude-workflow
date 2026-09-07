@@ -16,9 +16,10 @@ Severity rubric (hard rules):
   (3) behavior correctness — direct conflict with a spec Scenario (cite it);
   (4) security — violation of a rule in the project's Security Baseline
       (AGENTS.md section; cite the rule number. If the project's AGENTS.md
-      has no such section, cite the default rules in
-      templates/project-AGENTS.md.template and flag the missing section
-      as a WARNING).
+      has no such section, cite "default Security Baseline rule N" from
+      the built-in list at the end of this rubric and flag the missing
+      section as a WARNING — never a template file path: reviewers run in
+      the target worktree, where no such file exists).
 - Also valid as CRITICAL anchors: a quotable project hard rule (CLAUDE.md
   鐵則 / architecture doc clause — cite it), and, for the commit-stage
   personas only, the commit contract (footer/scope requirements).
@@ -36,6 +37,20 @@ Severity rubric (hard rules):
 - Every finding in your reviewer report ends with `— cost: low | med | high` (low = localized,
   minutes; med = single module, hours; high = cross-module or design
   change). High cost + low benefit → downgrade or drop it before reporting.
+- Default Security Baseline (cite only when the project's AGENTS.md has no
+  Security Baseline section; mirrors templates/project-AGENTS.md.template —
+  keep the two in sync):
+   1. no secrets in git (keys, tokens, keystores, service accounts, .env)
+   2. no credentials, tokens, or personal data in logs
+   3. validate all external input at trust boundaries
+   4. authorization enforced at the protected flow, never client-side-only
+   5. no injection vectors — parameterized queries, no string-built SQL/shell
+   6. TLS everywhere; never disable certificate validation in shippable code
+   7. sensitive data at rest in keystore/encrypted storage, not plaintext
+   8. no knowingly vulnerable dependency versions; pin versions
+   9. user-facing errors must not leak internals (traces, paths, keys, hosts)
+  10. test code/fixtures touch only designated test accounts/endpoints and
+      never contain personal data (no designation → fake data only)
 ```
 
 ## Output format (every reviewer)
@@ -326,7 +341,7 @@ After all N reviewers return, orchestrator builds a combined report:
 - ...
 ```
 
-**Mechanical demotion (before computing the verdict)**: a CRITICAL is demoted to WARNING when its `failure:` field is missing, is vacuous (doesn't name a specific input/state and a specific wrong result), or its citation doesn't resolve — the named Scenario isn't in the spec, or the cited rule number isn't in AGENTS.md / the project's hard-rule doc. Verify the citation actually exists; do not take it on faith. No debate. This demotion runs in fast mode too — a single combined reviewer does not skip aggregation.
+**Mechanical demotion (before computing the verdict)**: a CRITICAL is demoted to WARNING when its `failure:` field is missing, is vacuous (doesn't name a specific input/state and a specific wrong result), or its citation doesn't resolve — the named Scenario isn't in the spec, or the cited rule number isn't in AGENTS.md / the project's hard-rule doc (a "default Security Baseline rule N" citation resolves against the built-in list in the severity rubric — no file lookup). Verify the citation actually exists; do not take it on faith. No debate. This demotion runs in fast mode too — a single combined reviewer does not skip aggregation.
 
 De-dup note: when merged findings disagree on `cost:`, keep the highest; carry a one-line `failure:` summary into the review.md CRITICAL entry so demotion decisions stay auditable.
 
