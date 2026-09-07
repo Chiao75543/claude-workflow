@@ -2,28 +2,36 @@
 
 Used when dispatching `Agent(subagent_type="codex:codex-rescue", prompt=…)` for the post-push advisory review.
 
+**Host coverage**: the dispatcher-side commands below are written out for GitLab (`glab`) with GitHub (`gh`) equivalents alongside. The codex-facing prompt body is host-agnostic. The project's `mr-reviewer` skill owns the authoritative host implementation — where it differs, it wins.
+
 ## Key contract
 
 | Concern | Owner |
 |---|---|
-| Read MR diff, classify findings | Codex |
-| Post inline DiffNote comments | **Dispatcher** (main shell) |
-| Post summary `glab mr note` | **Dispatcher** |
+| Read MR/PR diff, classify findings | Codex |
+| Post inline review comments | **Dispatcher** (main shell) |
+| Post summary comment | **Dispatcher** |
 | Compute weighted score | Codex (returns; dispatcher posts) |
 
-Codex sandbox typically cannot reach the GitLab API host. Treat codex's job as **analysis-only**; the dispatcher relays.
+Codex sandbox typically cannot reach the VCS API host. Treat codex's job as **analysis-only**; the dispatcher relays.
 
 ## Pre-flight (dispatcher gathers before dispatch)
 
 ```bash
+# GitLab:
 glab mr view {MR_ID}
 glab mr diff {MR_ID}
 glab api projects/{PROJECT_PATH_ENCODED}/merge_requests/{MR_ID} \
   | jq '{base: .diff_refs.base_sha, head: .diff_refs.head_sha, start: .diff_refs.start_sha, web: .web_url}'
-git remote get-url origin   # for project-path inference
+
+# GitHub:
+gh pr view {PR_ID} --json title,state,url,baseRefOid,headRefOid
+gh pr diff {PR_ID}
+
+git remote get-url origin   # for project/repo-path inference
 ```
 
-Save: `base_sha`, `head_sha`, `start_sha`, `gitlab_host` (from `web_url`), `project_path_encoded`.
+Save: `base_sha`, `head_sha` (GitLab also `start_sha`), api host (from `web_url`), and the project/repo path in whatever form the host's API needs (GitLab: URL-encoded).
 
 ## Prompt template
 
@@ -33,7 +41,7 @@ You are running as Codex acting as a senior {PROJECT} code reviewer per the
 
 **Working directory**: {WORKTREE_PATH} (branch {BRANCH})
 
-**MR to review**: GitLab MR !{MR_ID} at {MR_WEB_URL}
+**MR to review**: {MR_REF} at {MR_WEB_URL}   # e.g. GitLab MR !123 / GitHub PR #123
 - Title: {MR_TITLE}
 - Target branch: {TARGET_BRANCH}
 - Spec: {SPEC_PATH or "n/a"}
@@ -59,12 +67,12 @@ You are running as Codex acting as a senior {PROJECT} code reviewer per the
 
 **Your tasks**:
 
-1. Read each file in scope fully (`cat <file>` for context — `glab mr diff` for the change deltas).
+1. Read each file in scope fully (`cat <file>` for context; the diff is supplied in this prompt).
 2. Analyze per CRITICAL / WARNING / SUGGESTION / SIMPLIFY taxonomy.
    - Set the bar HIGH if prior reviews already passed; only raise items prior reviewers genuinely missed.
    - Do NOT duplicate items already in {REVIEW_MD_PATH}.
-3. **DO NOT** post comments yourself — the GitLab API host is typically blocked from your sandbox.
-4. Return your findings as a structured payload AND a draft summary. The dispatcher (main shell) will relay both to GitLab.
+3. **DO NOT** post comments yourself — the VCS API host is typically blocked from your sandbox.
+4. Return your findings as a structured payload AND a draft summary. The dispatcher (main shell) will relay both to the VCS host.
 
 **Return format** (strict — dispatcher parses this):
 
@@ -124,19 +132,25 @@ summary_markdown: |
 
 After codex returns the payload, dispatcher (main Claude shell):
 
-1. **For each finding** → curl POST DiffNote with `body` + `position` fields:
+1. **For each finding** → post one inline comment anchored to file + line + SHA:
    ```bash
+   # GitLab — DiffNote (verify the response contains "type":"DiffNote";
+   # plain "Note" means the position was mis-set → retry with a corrected line):
    curl -s --request POST \
      --header "PRIVATE-TOKEN: $(glab auth status -t 2>&1 | grep -oE 'gl[a-zA-Z0-9_-]+')" \
      --header "Content-Type: application/json" \
      --data @<(jq -n --argjson f "$FINDING_JSON" '{body: $f.body, position: $f.diff_position + {base_sha: $base, start_sha: $start, head_sha: $head, position_type: "text"}}') \
      "http://{GITLAB_HOST}/api/v4/projects/{PROJECT_PATH_ENCODED}/merge_requests/{MR_ID}/discussions"
+
+   # GitHub — review comment on the head commit:
+   gh api --method POST "repos/{OWNER}/{REPO}/pulls/{PR_ID}/comments" \
+     -f body="$FINDING_BODY" -f commit_id="$head" -f path="$FILE" -F line="$LINE" -f side=RIGHT
    ```
-   Verify response contains `"type":"DiffNote"`. If `"Note"` → position mis-set; retry with corrected line.
 
 2. **Post summary**:
    ```bash
-   glab mr note {MR_ID} --message "$summary_markdown"
+   glab mr note {MR_ID} --message "$summary_markdown"    # GitLab
+   gh pr comment {PR_ID} --body "$summary_markdown"      # GitHub
    ```
 
 3. **Report back to user** in chat:
@@ -146,11 +160,16 @@ After codex returns the payload, dispatcher (main Claude shell):
 
 ## Idempotency check (recommended)
 
-Before dispatching codex, check if a `*🤖 Reviewed by Codex*`-signed discussion already exists on the MR:
+Before dispatching codex, check if a `*🤖 Reviewed by Codex*`-signed comment already exists on the MR:
 
 ```bash
+# GitLab:
 glab api projects/{PROJECT_PATH_ENCODED}/merge_requests/{MR_ID}/discussions \
   | jq '[.[] | select(.notes[]?.body | contains("🤖 Reviewed by Codex"))] | length'
+
+# GitHub:
+gh pr view {PR_ID} --json comments \
+  | jq '[.comments[] | select(.body | contains("🤖 Reviewed by Codex"))] | length'
 ```
 
 If ≥1 and user did not request `--re-review`, skip Stage 10.5 and inform user.

@@ -256,7 +256,7 @@ PR description includes spec path + ticket link.
 
 Runs immediately after Stage 10's push — one final pass over the MR-as-deliverable by a second engine (`codex:codex-rescue`; engine detection mirrors Stage 11 Step 0; override with `--skip-codex-review` / `--engine=claude`). **Advisory: it never blocks the pipeline.**
 
-- The dispatcher gathers MR context (diff, SHA refs, project path) in the main shell and passes it into the prompt — the codex sandbox cannot reach the VCS API host.
+- The dispatcher gathers MR context (diff, SHA refs, project path) in the main shell and passes it into the prompt — the codex sandbox cannot reach the VCS API host. Host commands exist in `gh` and `glab` form; the project's `mr-reviewer` skill owns the authoritative implementation and wins over the examples.
 - Codex returns findings as a structured payload; the **dispatcher** posts them (inline comments + weighted summary). Never let codex post directly — it fails silently.
 - 0 CRITICAL → log the score, settle into Stage 11's deferred state. ≥1 CRITICAL → surface in chat: fix-and-repush / accept / close MR.
 
@@ -418,7 +418,7 @@ User options at **2e (verify diff)**:
 
 | Option           | Behavior                                                  |
 | ---------------- | --------------------------------------------------------- |
-| `ok`             | Auto-resolve discussion (2f) + next comment               |
+| `ok`             | Auto-resolve the thread (2f) + next comment — reply with the commit hash, then mark resolved (GitHub: `resolveReviewThread` GraphQL mutation; GitLab: discussion `resolve` endpoint; project `review-fixer` skill is authoritative) |
 | `redo <hint>`    | Engine re-plans (back to 2b)                              |
 | `revert`         | `git checkout -- <files>` to undo; mark deferred          |
 

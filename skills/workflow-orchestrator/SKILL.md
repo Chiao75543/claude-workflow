@@ -324,7 +324,9 @@ MR description includes spec path + ticket link (from Stage 1's tracker — Line
 
 ### Stage 10.5: Codex auto-review (advisory, runs immediately after push)
 
-**Why**: prior reviewer passes (Stages 6/7/8) reviewed the change against the spec; Stage 10.5 gives the MR-as-deliverable one final pass through the actual GitLab MR surface, using `codex:codex-rescue` to mimic a senior human reviewer. Findings appear as inline DiffNotes on the MR before humans look at it — sets baseline quality + saves human reviewer cycles.
+**Why**: prior reviewer passes (Stages 6/7/8) reviewed the change against the spec; Stage 10.5 gives the MR-as-deliverable one final pass through the actual MR/PR surface, using `codex:codex-rescue` to mimic a senior human reviewer. Findings appear as inline comments on the MR before humans look at it — sets baseline quality + saves human reviewer cycles.
+
+**Host binding**: the commands below are shown for GitHub (`gh`) and GitLab (`glab`). The project's `mr-reviewer` skill owns the concrete host implementation (endpoints, inline-comment payloads, auth); when it disagrees with the examples here, **it wins**. A stack whose host is neither ships its own equivalents there.
 
 **Mode**: **advisory** (does NOT block pipeline). If codex finds CRITICAL, you surface it in chat and ask the user whether to fix-and-amend (re-push) or close MR. Default: leave findings on the MR and proceed to Stage 11 deferred state.
 
@@ -344,13 +346,17 @@ fi
 
 #### 1. Pre-flight (in main shell, before dispatch)
 
-The dispatcher (main Claude shell) MUST gather these and pass them into the codex prompt — codex sandbox cannot reach the GitLab API host:
+The dispatcher (main Claude shell) MUST gather MR title + state, the diff, and the commit SHAs that inline comments anchor to, then pass them into the codex prompt — the codex sandbox cannot reach the VCS API host:
 
 ```bash
+# GitHub:
+gh pr view {PR_ID} --json title,state,baseRefOid,headRefOid,url
+gh pr diff {PR_ID}
+# GitLab:
 glab mr view {MR_ID}                                          # title + state
 glab mr diff {MR_ID}                                          # diff
 glab api projects/<encoded>/merge_requests/{MR_ID} | jq '.diff_refs, .web_url'
-# capture base_sha / head_sha / start_sha / gitlab_host / project_path_encoded
+# capture base/head (+ start_sha on GitLab), api host, project path/encoding
 ```
 
 #### 2. Dispatch codex with explicit instructions
@@ -359,23 +365,23 @@ Use the prompt at `references/codex-mr-review-prompt-template.md` (see Templates
 
 - Worktree path
 - SHA refs
-- Project path (URL-encoded)
+- Project/repo identifier (URL-encoded where the host requires it)
 - Files in scope (production code only; **skip** `openspec/changes/**/*.md`)
 - "Set the bar HIGH — N prior reviewer passes already covered the obvious"
-- "**DO NOT** post comments yourself — return findings as structured payload; dispatcher will post via main-shell glab/curl"
+- "**DO NOT** post comments yourself — return findings as structured payload; the dispatcher posts them from the main shell"
 
 #### 3. Sandbox limitation — relay-post pattern
 
-Codex sandbox network access to GitLab API host is typically blocked (`connect: operation not permitted`). The skill contract is:
+Codex sandbox network access to the VCS API host is typically blocked (`connect: operation not permitted`). The skill contract is:
 
 | Step | Who | Action |
 |---|---|---|
 | Analysis | Codex | Read diff + files, classify CRITICAL/WARNING/SUGGESTION/SIMPLIFY |
 | Findings emit | Codex | Return findings JSON or markdown back to dispatcher |
-| DiffNote post | **Dispatcher** | `curl` each finding with PRIVATE-TOKEN + SHA position |
-| Summary post | **Dispatcher** | `glab mr note {MR_ID}` with weighted score |
+| Inline post | **Dispatcher** | one review comment per finding, anchored to file + line + SHA (GitHub: `gh api .../pulls/{PR_ID}/comments`; GitLab: DiffNote `curl` with PRIVATE-TOKEN + position) |
+| Summary post | **Dispatcher** | one summary comment with the weighted score (GitHub: `gh pr comment`; GitLab: `glab mr note`) |
 
-Do NOT let codex try `curl http://<gitlab_host>/...` — it will silently fail. Always relay.
+Do NOT let codex reach the API host itself — it will silently fail. Always relay.
 
 #### 4. After posting
 
@@ -387,7 +393,7 @@ Do NOT let codex try `curl http://<gitlab_host>/...` — it will silently fail. 
 
 #### 5. Idempotency
 
-Re-running Stage 10.5 on the same MR posts a **new** summary note + may duplicate inline comments. To avoid duplication, the dispatcher SHOULD `glab api projects/.../merge_requests/{MR_ID}/discussions` first, check if a discussion with `*🤖 Reviewed by Codex*` signature already exists, and skip / supersede if so. User can force re-review with `/workflow --re-review {MR_ID}`.
+Re-running Stage 10.5 on the same MR posts a **new** summary note + may duplicate inline comments. To avoid duplication, the dispatcher SHOULD list existing comments first (GitHub: `gh api .../pulls/{PR_ID}/comments` + `gh pr view --json comments`; GitLab: `glab api projects/.../merge_requests/{MR_ID}/discussions`), check if one carrying the `*🤖 Reviewed by Codex*` signature already exists, and skip / supersede if so. User can force re-review with `/workflow --re-review {MR_ID}`.
 
 ### Stage 11: MR review loop (deferred trigger)
 
@@ -423,7 +429,7 @@ fi
 
 #### 1. Fetch + Classify
 
-- Fetch：`mr-reviewer` skill 或 `glab api projects/:id/merge_requests/{MR_ID}/discussions`，取所有 unresolved discussions（含 inline + general）。
+- Fetch：優先用專案的 `mr-reviewer` skill（它擁有 host 實作）；沒有就直接打 API 取所有未解決的 comment thread（含 inline + general）——GitHub：`gh api .../pulls/{PR_ID}/comments` + `gh pr view --json reviews,comments`；GitLab：`glab api projects/:id/merge_requests/{MR_ID}/discussions`。
 - Classify by severity（CRITICAL / WARNING / SUGGESTION）。
 - SUGGESTION 列給 user 一次看完，user 決定整批吸收/略過，不進 per-comment loop。
 - CRITICAL / WARNING → 進步驟 2 per-comment checkpoint loop。
@@ -439,7 +445,7 @@ fi
 | 2c | **⏸ User decision** | user |
 | 2d | **Apply fix** 依 approved plan 改 code | engine |
 | 2e | **⏸ User verify**：show diff + 該 comment 範圍內 unit test 結果 | user |
-| 2f | **Auto-resolve discussion**：`glab api ... resolve` + reply 引用 commit hash + 一行 fix summary | Claude |
+| 2f | **Auto-resolve thread**：reply 引用 commit hash + 一行 fix summary，再標記已解決（GitHub：`gh api` 回覆該 review comment，thread 用 `resolveReviewThread` GraphQL mutation；GitLab：`glab api ... discussions/{id}/resolve`）。host 細節以專案 `review-fixer` / `mr-reviewer` skill 為準 | Claude |
 | 2g | 下一個 comment | — |
 
 **Step 2c user options**：
@@ -687,7 +693,8 @@ Review 迴圈必須收斂。目標對齊四件事：**程式碼正確、測試�
 | Using engine to write code at Step 2b | Step 2b is **plan only**, no code. User approves the plan before any file changes. Engine writing code at 2b violates checkpoint contract. |
 | Skipping Stage 10.5 codex review after push | Pipeline contract: every push triggers codex advisory pass. Skipping leaves the MR un-reviewed until humans look at it (could be hours). User override is `--skip-codex-review`. |
 | Acting as Codex yourself (Claude doing the review) | The skill name is "Codex 扮演..."; dispatch via `Agent(subagent_type="codex:codex-rescue")` to use the real codex CLI. Claude self-roleplay defeats the multi-engine quality goal. |
-| Letting codex curl GitLab directly from sandbox | Codex sandbox typically blocks the GitLab API host (`connect: operation not permitted`). Codex emits findings; **dispatcher** posts via main-shell glab/curl. |
+| Letting codex reach the VCS API host from its sandbox | Codex sandbox typically blocks it (`connect: operation not permitted`). Codex emits findings; **dispatcher** posts them from the main shell (`gh` / `glab`). |
+| 假設 pipeline 只跑 GitLab | Stage 10/10.5/11 的 host 指令都有 gh + glab 兩式；真正的 host 實作歸專案 `mr-reviewer` / `review-fixer` skill，與此處範例衝突時以 skill 為準。 |
 
 ## Templates
 
@@ -695,7 +702,7 @@ Review 迴圈必須收斂。目標對齊四件事：**程式碼正確、測試�
 - `references/file-mapping.md` — split rules to 5 OpenSpec files
 - `references/reviewer-prompts.md` — persona prompts for parallel agents
 - `references/codex-prompt-template.md` — Stage 11 prompt for `codex:codex-rescue` (PLAN ONLY + APPLY variants)
-- `references/codex-mr-review-prompt-template.md` — Stage 10.5 prompt for codex auto-review (read MR diff → emit findings → dispatcher relays to GitLab)
+- `references/codex-mr-review-prompt-template.md` — Stage 10.5 prompt for codex auto-review (read MR diff → emit findings → dispatcher relays to the VCS host)
 
 ## Related
 
