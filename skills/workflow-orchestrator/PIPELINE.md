@@ -129,11 +129,12 @@ Create isolated workspace. `{branch_name}` = `[{TICKET}-]{feature-slug}`, both r
 ```bash
 base={INTEGRATION_BRANCH}   # AGENTS.md binding; if missing locally, use origin/{INTEGRATION_BRANCH};
                             # absent on both → stop and ask, never fall back to another branch
-git worktree add .worktrees/{name} -b feat/{branch_name} "$base"
-cd .worktrees/{name}
+git worktree add .worktrees/{name} -b feat/{branch_name} "$base" && cd .worktrees/{name} || exit 1
 ```
 
 Rule: new specs MUST NOT work in the main repo. Resume of existing change → reuse existing worktree or current branch.
+
+Resume lookups resolve the worktree by **exact ref match** (`git worktree list --porcelain` + an `awk` equality test on `refs/heads/feat/{branch_name}`), never by grepping the branch name: Stage 1 offers a `-v2` suffix, so an unanchored match hits the `-v2` worktree, the exact lookup returns empty, and `cd ""` succeeds without moving — the pipeline would silently run in the main repo. Every path either lands in the intended worktree or exits non-zero.
 
 ### Stage 3 — Spec author
 
@@ -678,6 +679,7 @@ To adapt: copy this file, substitute the slot values, and replace the commands i
 | Engine writing code at Step 2b                          | Plan only at 2b. Code only at 2d after user approves plan.                                                |
 | Editing the 5 derived files by hand                     | Edit `spec.md` and re-split. Derived files are projections.                                               |
 | Dispatching reviewers sequentially                      | One message, N tool calls = parallel.                                                                     |
+| Resolving a resume worktree by grepping the branch name | Exact ref match only — a `-v2` sibling makes an unanchored grep match, then `cd ""` silently keeps you in the main repo. |
 | Severity inflation (style / taste flagged CRITICAL)     | CRITICAL is four categories only, each with a statable failure or citation; aggregation demotes the rest mechanically. |
 | Re-review rounds mining new findings on untouched code  | Re-dispatch verifies prior CRITICALs + fix diff only; net-new findings log as `pending`, never loop.      |
 | Looping past the round cap                              | Initial + 2 re-dispatch rounds per stage; cap hit → user gate; flip-flop (fixed finding reappears) → immediate stop. |

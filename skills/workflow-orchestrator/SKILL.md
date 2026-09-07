@@ -135,8 +135,7 @@ elif git show-ref --verify --quiet "refs/remotes/origin/${base}"; then
 else
     echo "integration branch '${base}' not found locally or on origin" >&2   # STOP — ask the user, do NOT fall back to another branch
 fi
-git worktree add .worktrees/{name} -b "feat/${branch_name}" "$base"
-cd .worktrees/{name}
+git worktree add .worktrees/{name} -b "feat/${branch_name}" "$base" && cd .worktrees/{name} || exit 1
 ```
 
 Do NOT work in the main repo for new specs. Hard rule.
@@ -145,17 +144,26 @@ Do NOT work in the main repo for new specs. Hard rule.
 Use whatever is already set up:
 
 ```bash
+# Resolve the worktree by EXACT ref match. Never test with an unanchored
+# `git worktree list | grep feat/${branch_name}`: Stage 1 offers a `-v2`
+# suffix, so feat/foo matches the feat/foo-v2 line as a substring, the
+# exact-match lookup then yields "" and `cd ""` succeeds without moving —
+# the whole pipeline silently runs in the main repo.
+wt="$(git worktree list --porcelain \
+      | awk -v b="refs/heads/feat/${branch_name}" \
+            '/^worktree /{w=substr($0,10)} $0==("branch " b){print w; exit}')"
+
 if [ "$current_branch" = "feat/${branch_name}" ]; then
     : # already on right branch, work in place (main repo or linked worktree)
-elif git worktree list | grep -q "feat/${branch_name}"; then
-    # there's an existing linked worktree for this branch — cd into it
-    cd "$(git worktree list --porcelain | awk -v b="refs/heads/feat/${branch_name}" '/^worktree/ {w=$2} $0==("branch " b) {print w}')"
+elif [ -n "$wt" ]; then
+    cd "$wt" || exit 1   # existing linked worktree for this branch
 else
     # branch exists but not currently checked out anywhere — create fresh worktree
-    git worktree add .worktrees/{name} "feat/${branch_name}"
-    cd .worktrees/{name}
+    git worktree add .worktrees/{name} "feat/${branch_name}" && cd .worktrees/{name} || exit 1
 fi
 ```
+
+Every path above either lands in the intended worktree or exits non-zero — a failed `cd` must stop the pipeline, never fall through into the main repo.
 
 ### Stage 3: Spec author
 
@@ -650,6 +658,7 @@ Review 迴圈必須收斂。目標對齊四件事：**程式碼正確、測試�
 | Invoking brainstorming/grill-me as separate skills | Borrow principles inline, never call Skill tool |
 | Creating new capability when an existing one fits | Stage 1: always offer MODIFIED first |
 | Working in main repo on a new spec | Case A is mandatory: fresh worktree (per `worktree-before-new-spec`) |
+| Case B 用 `grep` 找 resume 的 worktree | 只用精確 ref 比對 — 有 `-v2` 兄弟分支時 unanchored grep 會誤中，接著 `cd ""` 靜默留在 main repo；每條路徑不是進對 worktree 就是非零離開 |
 | Overwriting existing change instead of resuming | Stage 1 must detect existing, offer resume stage |
 | Forcing unit tests on a build-config-only spec | Use 6b (static-validation) or 6c (manual-smoke), not 6a |
 | Skipping reviewer agents for "fast" stages | NEVER skip — multi-reviewer is the contract (modes 6a/6b only) |
