@@ -556,7 +556,7 @@ CRITICAL is reserved for exactly four categories:
 **Valid citations** — what a CRITICAL may anchor to:
 
 - a spec Scenario (by name);
-- a Security Baseline rule (by number). If the project's AGENTS.md has **no** Security Baseline section, fall back to the 10 default rules in `templates/project-AGENTS.md.template` and log the missing section as a WARNING — the absence of the section must never demote a real security finding;
+- a Security Baseline rule (by number). If the project's AGENTS.md has **no** Security Baseline section, fall back to the 10 default rules **built into** the reviewer severity rubric (`references/reviewer-prompts.md`, kept in sync with `templates/project-AGENTS.md.template`; never a file path — reviewers run in the target worktree, where that file doesn't exist and a path citation would be mechanically demoted) and log the missing section as a WARNING — the absence of the section must never demote a real security finding;
 - a **project hard rule** — a numbered/quotable clause from the project's CLAUDE.md 鐵則 or architecture doc. This is how project-local reviewer skills legitimately extend the four categories: their hard-rule CRITICALs cite the clause and pass demotion;
 - for the **commit-stage personas only** (`review-commit-message`, `review-changeset`): the commit contract itself (missing spec footer, scope mismatch, staged secrets). These are process-correctness checks, exempt from the four-category test — their CRITICALs cite the contract line instead.
 

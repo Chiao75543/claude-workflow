@@ -589,7 +589,7 @@ Review 迴圈必須收斂。目標對齊四件事：**程式碼正確、測試�
 
 **合法引用來源**（CRITICAL 可以錨定什麼）：
 - spec Scenario（指名）
-- Security Baseline 條文（指編號）。專案 AGENTS.md **沒有** Security Baseline 段落時，fallback 引用 `templates/project-AGENTS.md.template` 的 10 條預設，並把「缺段落」本身記一條 WARNING — 段落不存在絕不能讓真的資安 finding 被降級
+- Security Baseline 條文（指編號）。專案 AGENTS.md **沒有** Security Baseline 段落時，fallback 引用 severity rubric **內建**的 10 條預設（`references/reviewer-prompts.md`，與 `templates/project-AGENTS.md.template` 同步維護；不引檔案路徑 — reviewer 跑在 target worktree，該檔不存在，引路徑會被機械降級吃掉），並把「缺段落」本身記一條 WARNING — 段落不存在絕不能讓真的資安 finding 被降級
 - **專案鐵則** — 專案 CLAUDE.md 鐵則 / 架構文件裡可引述的條文。project-local reviewer skill 就是靠這條合法擴充四類：鐵則 CRITICAL 引條文即通過降級檢查
 - **僅限 commit stage persona**（`review-commit-message` / `review-changeset`）：commit 契約本身（缺 spec footer、scope 不符、staged secrets）— 屬流程正確性，豁免四類檢定，引契約條目即可
 
