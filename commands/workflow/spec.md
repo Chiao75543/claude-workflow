@@ -1,28 +1,22 @@
 ---
 name: "workflow:spec"
-description: "Author a new spec only — brainstorm + grill + draft + OpenSpec auto-split. Stops at the spec checkpoint, does not implement or test."
+description: "只寫規格 —— scope audit、挑洞、兩個隔離讀者偵測歧義、產說明頁給你批准、定稿凍結。停在 S6,不寫測試也不實作。"
 category: Workflow
-tags: [workflow, openspec, spec]
+tags: [workflow, spec]
 ---
 
-Run only the spec-authoring portion of the workflow pipeline.
+只跑規格階段(S1–S6)。
 
-**Input**: free-text feature description in `$ARGUMENTS`.
+**輸入**:一句功能描述。空的話先問。
 
-**Action**
-
-Invoke the `workflow-orchestrator` skill via the **Skill tool** with these constraints:
+**動作**
 
 ```
-Skill(
-  skill="workflow-orchestrator",
-  args="--spec-only $ARGUMENTS"
-)
+Skill(skill="workflow-orchestrator", args="--only-spec $ARGUMENTS")
 ```
 
-In the skill prompt, **stop after Stage 5 (spec approval checkpoint)**. Do NOT continue into TDD tests (Stage 6), implementation (Stage 7), or downstream stages. Surface the final `openspec/changes/{name}/spec.md` for review and end the turn.
+**注意**
 
-**Notes**
-
-- If `$ARGUMENTS` is empty, ask for a one-line feature description first.
-- After the spec is approved, the user can resume with `/workflow:test` and `/workflow:implement` manually, or re-enter the full pipeline with `/workflow {description}`.
+- 產出:`specs/{name}/spec.yaml`(通過 `spec-lint`、hash 凍結)+ 一頁說明給你批准。
+- **不會**寫測試、不會實作。要繼續就跑 `/workflow:test`。
+- S3 會跑 `scan-siblings`,把跟其他在飛分支撞到的檔案列出來。

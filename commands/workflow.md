@@ -1,29 +1,26 @@
 ---
 name: workflow
-description: End-to-end pipeline from a feature description to a pushed branch — spec authoring (brainstorm + grill + OpenSpec auto-split), TDD tests, implementation, commit, push, with 2–3 parallel reviewer agents at every stage. Supports --fast (1 combined reviewer per stage) and --full overrides.
+description: 從一句需求到可推送的分支 —— 規格撰寫(挑洞 + 隔離讀者偵測歧義 + 說明頁批准)、TDD 測試、實作、十二道驗證關卡、證據表、commit、推送。人類只出現三次,而且沒有一次需要讀程式碼。
 category: Workflow
-tags: [workflow, pipeline, openspec, tdd]
+tags: [workflow, pipeline, tdd, verification]
 ---
 
-Run the end-to-end workflow pipeline.
+跑完整的 pipeline。
 
-**Input** (passed as `$ARGUMENTS` after `/workflow`):
-- Free-text feature description, e.g. `/workflow 新增使用者登入功能`
-- Optional flags:
-  - `--fast` → force fast mode (1 combined reviewer per stage)
-  - `--full` → force full mode (2–3 parallel reviewers per stage)
+**輸入**(`/workflow` 後面的 `$ARGUMENTS`):一句功能描述,例如 `/workflow 新增收藏夾`
 
-**Action**
+**動作**
 
-Invoke the `workflow-orchestrator` skill via the **Skill tool** immediately, passing `$ARGUMENTS` as the `args`. Do NOT use the Read tool on the skill file — let the Skill tool load it.
+立刻用 **Skill 工具**叫 `workflow-orchestrator`,把 `$ARGUMENTS` 當 args 傳進去。
+不要用 Read 讀 skill 檔 —— 讓 Skill 工具去載。
 
 ```
 Skill(skill="workflow-orchestrator", args="$ARGUMENTS")
 ```
 
-**Notes**
+**注意**
 
-- If `$ARGUMENTS` is empty, ask the user for a one-line feature description before invoking the skill.
-- The skill owns the full pipeline (Stages 1–12): identify → worktree → spec → TDD tests → implement → review → commit → push → MR review loop → archive.
-- User checkpoints are inside the skill (spec approval, pre-push). Don't add extra confirmations here.
-- If the user mentions skipping (e.g. trivial UI tweak), follow the skill's `Skip rule` — don't override it from this command.
+- `$ARGUMENTS` 空的話,先問一句功能描述再叫 skill。
+- Skill 擁有 S1–S13 的完整流程。人類介入點(批說明頁、看證據表按推、按 merge)
+  都在 skill 裡面,**不要在這裡多加確認**。
+- 使用者提到要跳過(例如純樣式微調),照 skill 的 Skip rule,不要從這裡覆寫。
