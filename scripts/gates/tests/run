@@ -216,6 +216,23 @@ def test_spec_lint(tmp: pathlib.Path) -> None:
     check("中文佔位符「待補」→ 擋(CJK 沒有 word boundary,\\b 對它無效)",
           code == 1 and "佔位符" in out, out[:160])
 
+    bad = VALID_SPEC.replace("out: {returns: empty_list}", 'out: {returns: "符合預期"}')
+    root = make_repo(tmp / "lint-vague2", bad)
+    code, out = run_gate("spec-lint", "specs/demo/spec.yaml", cwd=root)
+    check("「符合預期」這種先前繞得過的空話 → 擋", code == 1 and "空話" in out, out[:160])
+
+    bad = VALID_SPEC.replace("then: {returns: empty_list}",
+                             'then: {returns: "回傳一個空的清單給呼叫端然後由畫面層顯示成空狀態的提示文字"}')
+    root = make_repo(tmp / "lint-longprose", bad)
+    code, out = run_gate("spec-lint", "specs/demo/spec.yaml", cwd=root)
+    check("then 的葉值是一整句話 → 擋(長度上限)", code == 1 and "一句話不是一個值" in out, out[:160])
+
+    bad = VALID_SPEC.replace("then: {returns: empty_list}",
+                             'then: {order: "created_at.desc.nullslast,id.desc.nullslast"}')
+    root = make_repo(tmp / "lint-token", bad)
+    code, out = run_gate("spec-lint", "specs/demo/spec.yaml", cwd=root)
+    check("長但沒有空白的 token(query 參數)→ 過(不是句子)", code == 0, out[:160])
+
     bad = VALID_SPEC.replace("why: 測試用的規格", "why: TBD")
     root = make_repo(tmp / "lint-tbd", bad)
     code, out = run_gate("spec-lint", "specs/demo/spec.yaml", cwd=root)
@@ -363,6 +380,26 @@ def test_red_capture(tmp: pathlib.Path) -> None:
     check("有 Scenario 沒有 RED 證據 → 擋(不是只 warn)",
           code == 1 and "沒有出現在任何一層的 RED 證據裡" in out, out[:250])
 
+    # W6:文件宣稱六類,red.json 就要讀得到六類。compile 與 hang 先前從不出現。
+    root = setup_red(tmp, "red-compile-json", tmp / "compile.txt", 1, ONE_SCENARIO)
+    run_gate("red-capture", "specs/demo/spec.yaml", cwd=root)
+    red = json.loads((root / "specs/demo/evidence/red.json").read_text())
+    check("編譯失敗會以 failure_class=compile 寫進 red.json",
+          any(t["failure_class"] == "compile" for t in red["tests"]), str(red["counts"]))
+
+    hang_src = '@Test("SC-001 跑得完")\nfunc a() {}\n@Test("SC-001 掛住的那條")\nfunc b() {}\n'
+    hang_out = ('◇ Test "SC-001 跑得完" started.\n'
+                '✘ Test "SC-001 跑得完" recorded an issue at F.swift:1:1: Expectation failed: 1 == 2\n'
+                '✘ Test "SC-001 跑得完" failed after 0.001 seconds with 1 issue.\n')
+    (tmp / "hang2.txt").write_text(hang_out)
+    root = setup_red(tmp, "red-hang-named", tmp / "hang2.txt", 2, ONE_SCENARIO)
+    (root / "tests" / "Stub.swift").write_text(hang_src)
+    run_gate("red-capture", "specs/demo/spec.yaml", cwd=root)
+    red = json.loads((root / "specs/demo/evidence/red.json").read_text())
+    hung = [t for t in red["tests"] if t["failure_class"] == "hang"]
+    check("掛住的測試會以 failure_class=hang 寫進 red.json,而且指得出名字",
+          len(hung) == 1 and hung[0]["test"] == "SC-001 掛住的那條", str(hung))
+
     # 有書面豁免 → 過
     exempt_spec = ONE_SCENARIO.replace(
         "      - id: SC-001\n        mode: 6a",
@@ -395,6 +432,13 @@ def test_traceability(tmp: pathlib.Path) -> None:
     root = build("trace-orphan", '@Test("SC-001 a")\n@Test("SC-002 b")\n@Test("SC-777 孤兒")\n')
     code, out = run_gate("traceability", "specs/demo/spec.yaml", cwd=root)
     check("測試引用不存在的 Scenario → 擋", code == 1 and "SC-777" in out, out[:160])
+
+    root = make_repo(tmp / "trace-comment")
+    (root / "Tests").mkdir()
+    (root / "Tests" / "T.swift").write_text('@Test("SC-001 a")\nfunc a() {}\n// SC-002 另外處理,先不寫\n')
+    (root / "specs" / "pipeline.yaml").write_text('runner: swift-testing\ntests:\n  globs: ["Tests/**/*.swift"]\n')
+    code, out = run_gate("traceability", "specs/demo/spec.yaml", cwd=root)
+    check("註解裡的 SC-id 不算測試(預設 pattern 錨在 @Test)", code == 1 and "SC-002" in out, out[:160])
 
     manual = VALID_SPEC.replace(
         "      - id: SC-002\n        mode: 6a",
@@ -483,6 +527,32 @@ def test_spec_diff(tmp: pathlib.Path) -> None:
     check("多加一組 example → 收緊,不擋", code == 0 and "多了" in out, out[:200])
 
 
+# ---------------------------------------------------------------- landed
+
+def test_landed_compares_content(tmp: pathlib.Path) -> None:
+    """W3:MODIFIED 的規格在整合分支上本來就有同一路徑。只比存在會把它誤當已落地。要比 blob hash。"""
+    root = make_repo(tmp / "landed")
+    subprocess.run(["git", "add", "-A"], cwd=root, check=True)
+    subprocess.run(["git", "commit", "-qm", "on main"], cwd=root, check=True)
+    subprocess.run(["git", "branch", "-M", "main"], cwd=root, check=True)
+    subprocess.run(["git", "checkout", "-qb", "feat/x"], cwd=root, check=True)
+    spec = root / "specs" / "demo" / "spec.yaml"
+    spec.write_text(spec.read_text().replace("why: 測試用的規格", "why: 在分支上改過"))
+    subprocess.run(["git", "add", "-A"], cwd=root, check=True)
+    subprocess.run(["git", "commit", "-qm", "modified on branch"], cwd=root, check=True)
+
+    import importlib
+    if str(GATES) not in sys.path:
+        sys.path.insert(0, str(GATES))
+    common = importlib.import_module("_common")
+    check("同路徑但內容改過的規格 → 判為在飛(不是已落地)",
+          not common.landed(root, "specs/demo/spec.yaml", "main"))
+    spec.write_text(subprocess.run(["git", "show", "main:specs/demo/spec.yaml"], cwd=root,
+                                   capture_output=True, text=True, check=True).stdout)
+    check("內容與整合分支一模一樣 → 判為已落地",
+          common.landed(root, "specs/demo/spec.yaml", "main"))
+
+
 # ---------------------------------------------------------------- dashboard
 
 def test_dashboard_requires_verification(tmp: pathlib.Path) -> None:
@@ -498,6 +568,23 @@ def test_dashboard_requires_verification(tmp: pathlib.Path) -> None:
           "沒設 test" in out and code == 1, out[:200])
     check("沒設 lint 指令 → G3 判失敗(不是跳過)",
           "沒設 lint" in out, out[:200])
+
+    root = make_repo(tmp / "dash-anchor")
+    freeze(root)
+    shutil.copy(root / "specs/demo/spec.yaml", root / "specs/demo/evidence/spec.approved.yaml")
+    (root / "specs" / "pipeline.yaml").write_text("runner: swift-testing\n")
+    subprocess.run(["git", "add", "-A"], cwd=root, check=True)
+    code, out = run_gate("dashboard", "specs/demo/spec.yaml", cwd=root)
+    html_out = (root / "specs/demo/evidence/dashboard.html").read_text()
+    check("批准快照沒 commit → 證據表點名「無外部錨定」", "無外部錨定" in html_out, out[:200])
+
+    ylog = root / "specs" / "_yield.jsonl"
+    check("跑完會追加一筆到 specs/_yield.jsonl", ylog.exists() and ylog.read_text().count("\n") == 1,
+          ylog.read_text()[:120] if ylog.exists() else "不存在")
+    run_gate("dashboard", "specs/demo/spec.yaml", cwd=root)
+    check("_yield.jsonl 是 append-only(第二次跑變兩筆)", ylog.read_text().count("\n") == 2)
+    code, out = run_gate("runs", "--yield", cwd=root)
+    check("runs --yield 能彙整出每道關擋下/跑過", code == 0 and "擋下 / 跑過" in out, out[:200])
 
     # 可達性不只要算得對,還要真的接上 gate 並影響退出碼
     root = make_repo(tmp / "dash-unreachable")
@@ -591,7 +678,7 @@ def main() -> int:
         tmp = pathlib.Path(td)
         for fn in (test_spec_lint, test_freeze_check, test_red_capture,
                    test_traceability, test_spec_diff,
-                   test_dashboard_requires_verification,
+                   test_dashboard_requires_verification, test_landed_compares_content,
                    test_reachability, test_reachability_hardening):
             try:
                 fn(tmp)

@@ -15,7 +15,9 @@
 
 from __future__ import annotations
 
+import datetime
 import html
+import json
 import pathlib
 import re
 import subprocess
@@ -178,6 +180,18 @@ def main(argv: list[str]) -> int:
     # 沒有批准快照就無從判斷 —— 那本身是個問題,要講出來。
     approved = ev / "spec.approved.yaml"
     if approved.exists():
+        # evidence/ 全部是 AI 可寫的。唯一不在 AI 手裡的錨點是 git 歷史:
+        # 批准快照必須 commit,之後任何改動才會在 diff 裡被人看見。
+        rel_approved = str(approved.resolve().relative_to(root.resolve()))
+        tracked = git(root, "ls-files", "--error-unmatch", rel_approved).strip() != ""
+        dirty = git(root, "status", "--porcelain", "--", rel_approved).strip() != ""
+        if not tracked or dirty:
+            attention.append({
+                "tag": "無外部錨定", "title": "批准快照沒有 commit",
+                "body": "evidence/ 底下每個檔案 AI 都能重寫。spec.approved.yaml 一定要在批准當下 commit,"
+                        "之後對它的任何改動才會出現在 git diff 裡被人看見。現在它"
+                        + ("還沒被 git 追蹤。" if not tracked else "有未提交的改動。"),
+            })
         diff_ok, diff_out = run([str(here / "spec-diff"), str(spec_path)], root)
         factual = [ln.strip() for ln in diff_out.splitlines() if "事實修正" in ln]
         gates.append({"id": "G1/2", "what": "規格與測試沒被偷改", "ok": frozen_ok and diff_ok,
@@ -281,12 +295,26 @@ def main(argv: list[str]) -> int:
                           "body": "如果這次有畫面變更,單元測試驗不到它的呈現。"})
 
     stat = git(root, "diff", "--cached", "--shortstat").strip() or git(root, "diff", "--shortstat", f"{base}...HEAD").strip()
+    context_name = (spec.get("meta") or {}).get("name", spec_path.parent.name)
     context = {
-        "name": (spec.get("meta") or {}).get("name", spec_path.parent.name),
+        "name": context_name,
         "branch": git(root, "rev-parse", "--abbrev-ref", "HEAD").strip(),
         "scale": stat or "—",
         "gates": gates, "attention": attention, "screenshots": shots,
     }
+    # 命中率紀錄:哪道關擋過東西、擋了幾次,才有數據決定哪道關值得留。
+    # append-only,跨功能累積。舊版有 disposition 標記做同一件事,重寫時被誤刪,這裡補回。
+    findings = read_json(ev / "findings.json") or {}
+    yield_line = {
+        "at": datetime.datetime.now().astimezone().isoformat(timespec="seconds"),
+        "name": context_name,
+        "gates": {g["id"]: g["ok"] for g in gates},
+        "attention": [a["tag"] for a in attention],
+        "review": findings,
+    }
+    with (root / "specs" / "_yield.jsonl").open("a") as fh:
+        fh.write(json.dumps(yield_line, ensure_ascii=False) + "\n")
+
     out_path = pathlib.Path(argv[argv.index("-o") + 1]) if "-o" in argv else ev / "dashboard.html"
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(render(context))

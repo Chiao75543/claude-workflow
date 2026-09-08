@@ -107,22 +107,42 @@ def sibling_worktrees(root: pathlib.Path) -> list[pathlib.Path]:
     return [p for p in paths if p.resolve() != root.resolve() and p.exists()]
 
 
-def landed(root: pathlib.Path, rel: str, branch: str = "main") -> bool:
-    """規格是否已經在整合分支上。是的話它已經落地,不算在飛。
-
-    B 模式下每個 worktree 都會 checkout 到 main 已有的規格,
-    不濾掉的話已完成的功能會一直出現在「在飛」清單裡。"""
+def integration_branch(root: pathlib.Path) -> str:
+    """整合分支名稱來自 specs/pipeline.yaml;沒設就用 main。
+    寫死 main 的話,整合分支叫 develop 的專案永遠沒有規格會被判成已落地。"""
     try:
-        return subprocess.run(
-            ["git", "cat-file", "-e", f"{branch}:{rel}"],
-            cwd=root, capture_output=True,
-        ).returncode == 0
+        import _config
+        return str(_config.load(root).get("integration_branch") or "main")
+    except Exception:  # noqa: BLE001
+        return "main"
+
+
+def landed(root: pathlib.Path, rel: str, branch: str | None = None) -> bool:
+    """規格是否已經**以現在的內容**落在整合分支上。
+
+    只查路徑存在是不夠的:MODIFIED 的規格在整合分支上本來就有同一路徑,
+    只比存在會把它誤當已落地,碰撞偵測與狀態列表就都看不到它。
+    所以比 blob hash —— 內容一模一樣才算落地。"""
+    branch = branch or integration_branch(root)
+    try:
+        on_branch = subprocess.run(
+            ["git", "rev-parse", f"{branch}:{rel}"],
+            cwd=root, capture_output=True, text=True,
+        )
+        if on_branch.returncode != 0:
+            return False
+        local = subprocess.run(
+            ["git", "hash-object", rel],
+            cwd=root, capture_output=True, text=True, check=True,
+        )
+        return on_branch.stdout.strip() == local.stdout.strip()
     except (subprocess.CalledProcessError, FileNotFoundError):
         return False
 
 
-def in_flight_specs(root: pathlib.Path, branch: str = "main") -> list[pathlib.Path]:
+def in_flight_specs(root: pathlib.Path, branch: str | None = None) -> list[pathlib.Path]:
     """這個 worktree 裡尚未落地的規格。"""
+    branch = branch or integration_branch(root)
     out = []
     for path in find_specs(root):
         rel = str(path.relative_to(root))

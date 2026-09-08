@@ -64,8 +64,8 @@ MUTATIONS: list[tuple[str, str, str, str]] = [
      '            f.error(where, "then 必須是非空的 mapping —— 散文沒有欄位可以放")',
      "            pass"),
     ("spec-lint", "then / out 不掃空話",
-     '                        f.error(spot, f"空話「{word}」—— 這裡只收具體的值")',
-     "                        pass"),
+     '                if hit:\n                    f.error(spot, f"空話「{hit}」—— 這裡只收具體的值")',
+     "                if hit:\n                    pass"),
     ("spec-lint", "mode 不驗",
      '            f.error(where, f"mode 必須是 {\'/\'.join(sorted(MODES))} 其一,得到 {sc.get(\'mode\')!r}")',
      "            pass"),
@@ -146,6 +146,34 @@ MUTATIONS: list[tuple[str, str, str, str]] = [
      '        f.error(str(rid), "Requirement 不見了(被移除或改了 id)—— 它的完備性表態無從比對")',
      "        pass"),
 
+    # ---- W2 / W3 / W4 / W5 / W6 / Y ----
+    ("red-capture", "compile 不寫進 red.json",
+     '            tests.append({"layer": layer, "scenario": None, "test": "(整層編譯失敗)",\n'
+     '                          "failure_class": "compile", "message": None})',
+     "            pass"),
+    ("red-capture", "hang 不指名、不寫進 red.json",
+     "        if not reconciled and declared_names and len(declared_names) == declared:",
+     "        if False:"),
+    ("_common.py", "landed() 只比路徑存在,不比內容",
+     "        return on_branch.stdout.strip() == local.stdout.strip()",
+     "        return True"),
+    ("_config.py", "traceability 預設 pattern 退回裸的 (SC-\\d+),註解也算測試",
+     "        \"scenario_pattern\": r'@Test\\(\\s*\"(SC-\\d+[a-z]?)',",
+     "        \"scenario_pattern\": r\"(SC-\\d+[a-z]?)\","),
+    ("spec-lint", "葉值長度不擋(一整句話也能當值)",
+     "                elif (limit := prose_limit(text)) is not None and len(text) > limit:",
+     "                elif False:"),
+    ("spec-lint", "空話「符合預期」不擋(黑名單退回舊版)",
+     '    "正確", "適當", "合理", "正常", "良好", "妥善", "應該要能", "符合預期", "成功處理",',
+     '    "正確", "適當", "合理", "正常", "良好", "妥善", "應該要能",'),
+    ("dashboard", "批准快照沒 commit 也不點名",
+     "        if not tracked or dirty:",
+     "        if False:"),
+    ("dashboard", "命中率紀錄不追加",
+     '    with (root / "specs" / "_yield.jsonl").open("a") as fh:\n'
+     '        fh.write(json.dumps(yield_line, ensure_ascii=False) + "\\n")',
+     "    pass"),
+
     # ---- traceability ----
     ("traceability", "有 Scenario 沒測試不擋",
      '        f.error(sid, "規格有這條 Scenario,但沒有任何測試引用它")',
@@ -177,6 +205,24 @@ MUTATIONS: list[tuple[str, str, str, str]] = [
 ]
 
 
+BACKUP = HERE / ".mutate-backup"
+
+
+def restore_leftovers() -> list[str]:
+    """上一次跑到一半被砍(例如系統記憶體不足送 SIGKILL)時,finally 不會執行,
+    腳本會停在被改壞的狀態。實際發生過一次:dashboard 留著一條 `if False:`。
+    所以注入前先落備份,啟動時先把殘留的備份還回去。"""
+    restored = []
+    if BACKUP.is_dir():
+        for bak in sorted(BACKUP.iterdir()):
+            target = GATES / bak.name
+            target.write_text(bak.read_text())
+            bak.unlink()
+            restored.append(bak.name)
+        BACKUP.rmdir()
+    return restored
+
+
 def run_tests() -> bool:
     proc = subprocess.run([str(HERE / "run")], capture_output=True, text=True)
     return proc.returncode == 0
@@ -186,6 +232,10 @@ def main(argv: list[str]) -> int:
     max_survivors = 0
     if "--max-survivors" in argv:
         max_survivors = int(argv[argv.index("--max-survivors") + 1])
+
+    leftovers = restore_leftovers()
+    if leftovers:
+        print(f"⚠ 上次沒跑完,已從備份還原: {', '.join(leftovers)}")
 
     if not run_tests():
         print("✘ 基線就沒過,先修好測試再談變異")
@@ -204,11 +254,17 @@ def main(argv: list[str]) -> int:
             # 一個會說謊的工具比沒有工具更糟。
             skipped.append((script, label, f"注入點出現 {occurrences} 次,有歧義"))
             continue
+        BACKUP.mkdir(exist_ok=True)
+        bak = BACKUP / script
+        bak.write_text(original)          # 先落備份,被砍也還得回來
         try:
             path.write_text(original.replace(find, replace, 1))
             (survived if run_tests() else killed).append((script, label))
         finally:
             path.write_text(original)
+            bak.unlink(missing_ok=True)
+    if BACKUP.is_dir() and not any(BACKUP.iterdir()):
+        BACKUP.rmdir()
 
     total = len(survived) + len(killed)
     for script, label in survived:

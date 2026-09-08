@@ -114,6 +114,7 @@ cp ~/code/claude-workflow/templates/project-AGENTS.md.template <repo>/AGENTS.md
 | `/workflow:verify` | 跑十二道關卡 |
 | `/workflow:dashboard` | 產出證據表 |
 | `/workflow:runs` | 跨 worktree 看誰卡在哪、誰在等你 |
+| `scripts/gates/runs --yield` | 哪道關擋過東西、擋了幾次;跑過 ≥5 次從沒擋過的會被點名 |
 
 ---
 
@@ -145,11 +146,13 @@ claude-workflow/
 │   └── references/
 │       ├── spec-template.yaml      通得過自己的 spec-lint
 │       └── dispatch-prompts.md
-├── agents/                          四個精簡定義,綁 fable + xhigh
-│   ├── spec-grill.md               挑洞,兼第一個讀者
-│   ├── spec-reader.md              隔離,tools: []
-│   ├── spec-oracle.md              隔離,tools: []
-│   └── code-adversary.md           有 Bash,要真的去跑重現
+├── agents/                          六個精簡定義
+│   ├── spec-grill.md               fable · 挑洞,兼第一個讀者
+│   ├── spec-reader.md              fable · 隔離,tools: []
+│   ├── spec-oracle.md              fable · 隔離,tools: []
+│   ├── code-adversary.md           fable · 有 Bash,要真的去跑重現
+│   ├── red-writer.md               opus  · S7 寫測試並擷取 RED 證據
+│   └── green-writer.md             opus  · S8 實作;「衝突就停」寫死在定義裡
 ├── scripts/
 │   ├── gates/                       十二道關卡的實作
 │   ├── setup.sh
@@ -177,9 +180,9 @@ scripts/gates/tests/mutate     # 測試自己有沒有牙齒
 `mutate` 把已知的破壞逐一注入關卡腳本,跑測試,看有沒有被抓到。
 存活 = 那條防線目前是裝飾品。`--max-survivors N` 可以當 CI 門檻。
 
-軌跡:對抗審查初測 **1/29 被殺(存活 97%)** → 現在 **46/46 被殺(存活 0%)**。
+軌跡:對抗審查初測 **1/29 被殺(存活 97%)** → 現在 **54 條變異全被殺(存活 0%)**。
 
-65 條測試,每一條都對應真實出過的錯,不是為了覆蓋率而寫:
+77 條測試,每一條都對應真實出過的錯,不是為了覆蓋率而寫:
 
 - 完備性指向別的 Requirement 的 Scenario(挑洞者抓到的,linter 當時擋不住)
 - 指紋一致但 YAML 載不進來(切片凍結了一個解析不了的規格)
@@ -192,6 +195,9 @@ scripts/gates/tests/mutate     # 測試自己有沒有牙齒
 用 `TBD` 驗中文佔位符偵測、斷言 `"mapping" in out` 卻被 YAML 錯誤訊息滿足、
 斷言 `"error" in out` 卻被統計行滿足。每一次那個檢查都看起來有效,其實沒有。
 `mutate` 存在的理由就是把「這條測試真的守著那個行為嗎」自動化,不靠自覺。
+
+**門檻要照語言校。** 中文密度高,一句 33 個字的話低於拉丁文校出來的 40 字上限而漏過;
+中文另設 20 字門檻,純 ASCII 無空白的 token(query 參數、識別字)則不受長度規則管。
 
 **兩個方向都要測。** 可達性那條的假訊號是「全部誤報成到不了」——
 只測「該擋有沒有擋」看不出來,要有「該過有沒有過」才抓得到。

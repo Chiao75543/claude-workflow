@@ -79,20 +79,29 @@ PARSERS = {"swift-testing": parse_swift_testing}
 
 # ---------------------------------------------------------------- main
 
-def count_declared(root: pathlib.Path, test_files: list[str], runner: str) -> tuple[int, list[str]]:
-    """回傳 (宣告數, 找不到的檔案)。
+# 從原始碼把每條測試的**名字**也抓出來,才能指名哪一條沒跑完(hang),
+# 而不是只知道「少了 N 條」。
+DESC = {"swift-testing": re.compile(r'@Test\(\s*"((?:[^"\\]|\\.)*)"')}
+
+
+def count_declared(root: pathlib.Path, test_files: list[str], runner: str) -> tuple[int, list[str], list[str]]:
+    """回傳 (宣告數, 宣告的測試名稱, 找不到的檔案)。
 
     找不到的檔案**不能靜默算 0** —— 那會讓對帳的三個數字一起變成 0 而「一致」,
     等於整個 G5 形同虛設(對抗審查實證)。"""
     marker = {"swift-testing": r"^\s*@Test\b"}.get(runner, r"^\s*(@Test|def test_|func test)")
-    total, missing_files = 0, []
+    desc = DESC.get(runner)
+    total, names, missing_files = 0, [], []
     for rel in test_files:
         path = root / rel
         if not path.exists():
             missing_files.append(rel)
             continue
-        total += len(re.findall(marker, path.read_text(errors="ignore"), re.M))
-    return total, missing_files
+        text = path.read_text(errors="ignore")
+        total += len(re.findall(marker, text, re.M))
+        if desc:
+            names += [m.replace('\\"', '"') for m in desc.findall(text)]
+    return total, names, missing_files
 
 
 def main(argv: list[str]) -> int:
@@ -138,7 +147,7 @@ def main(argv: list[str]) -> int:
         raw = out_path.read_text(errors="ignore")
         parsed = parser(raw, marker)
 
-        declared, missing_files = count_declared(root, entry.get("tests", []), runner)
+        declared, declared_names, missing_files = count_declared(root, entry.get("tests", []), runner)
         for rel in missing_files:
             f.error(layer, f"red-inputs 列的測試檔不存在: {rel} —— 宣告數會被算成 0,對帳形同虛設")
         if not entry.get("tests"):
@@ -148,6 +157,9 @@ def main(argv: list[str]) -> int:
 
         if parsed["compile_error"]:
             f.error(layer, "編譯錯誤 —— 編不過的東西沒有資格談紅不紅")
+            # 文件宣稱六類,下游就要讀得到六類。compile 沒有測試名,用整層記一筆。
+            tests.append({"layer": layer, "scenario": None, "test": "(整層編譯失敗)",
+                          "failure_class": "compile", "message": None})
         # 對帳:三個數字必須一致。不一致 = 有測試沒跑(掛住/程序被砍),證據不完整。
         reconciled = declared == runner_total == len(started)
         if not reconciled:
@@ -161,6 +173,14 @@ def main(argv: list[str]) -> int:
             "reported_by_runner": runner_total, "started": len(started),
             "reconciled": reconciled,
         })
+        # 對帳不符時,能指名就指名:原始碼有宣告、輸出裡沒有 started 的,就是掛住或被拖死的那些。
+        # 只有名稱數與宣告數對得上才敢用名稱比對(有些測試沒寫描述字串)。
+        if not reconciled and declared_names and len(declared_names) == declared:
+            for name in sorted(set(declared_names) - started):
+                sid_match = re.match(r"(SC-\d+[a-z]?)", name)
+                tests.append({"layer": layer, "scenario": sid_match.group(1) if sid_match else None,
+                              "test": name, "failure_class": "hang",
+                              "message": "原始碼有宣告,輸出裡沒有 started —— 沒跑完或被前面掛住的測試拖死"})
 
         for name in sorted(started):
             klass = parsed["classify"](name)

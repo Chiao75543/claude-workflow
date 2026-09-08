@@ -29,16 +29,34 @@ from _common import (  # noqa: E402
 
 # 最後一道網:硬塞進字串值的空話。schema 已經擋掉大部分。
 VAGUE = [
-    "正確", "適當", "合理", "正常運作", "良好", "妥善", "應該要能",
-    "等等", "若干", "一些", "快速", "大量", "足夠",
-    "correct", "appropriate", "proper", "reasonable", "properly",
-    "as expected", "and so on", "etc.", "fast enough",
+    "正確", "適當", "合理", "正常", "良好", "妥善", "應該要能", "符合預期", "成功處理",
+    "沒問題", "順利", "等等", "若干", "一些", "快速", "大量", "足夠",
+    "correct", "appropriate", "proper", "reasonable", "properly", "gracefully",
+    "as expected", "and so on", "etc.", "fast enough", "works", "valid", "handled",
+    "successfully", "fine", "ok",
 ]
+# then / out 的葉值要是**具體的值**,不是一句話。超過這個長度的字串幾乎都是散文。
+# 黑名單本質上隨手可繞(對抗審查實證),長度上限才是結構性的門。
+# 中文密度高 —— 20 個字已經是一整句,門檻要分開設(33 字的中文句子曾經因為 <40 而漏過)。
+LEAF_MAX = 40
+LEAF_MAX_CJK = 20
+CJK = re.compile(r"[\u3000-\u9fff\uf900-\ufaff]")
 # CJK 字元屬於 \w,所以「內容待補」兩側都沒有 word boundary —— \b 對它完全無效。
 # 拉丁字用 \b,CJK 用裸比對。
 PLACEHOLDER = re.compile(r"\b(TBD|TODO|FIXME|XXX)\b|(待補|待定|待確認|暫定)", re.I)
 
 REQUIRED_TOP = ["meta", "why", "what", "impact", "requirements"]
+
+
+def prose_limit(text: str) -> int | None:
+    """回傳這個字串適用的長度上限;None 表示它是 token,不受長度規則管。
+    有空白或中文的是句子;沒有空白、純 ASCII 的是 token(query 參數、識別字、URL),
+    例如 created_at.desc.nullslast,id.desc.nullslast。"""
+    if CJK.search(text):
+        return LEAF_MAX_CJK
+    if re.search(r"\s", text):
+        return LEAF_MAX
+    return None
 
 
 def walk_strings(node, trail=""):
@@ -210,11 +228,16 @@ def check_vague(spec: dict, f: Findings) -> None:
                 targets.append((f"examples[{index}].out", example.get("out")))
         for label, node in targets:
             for trail, text in walk_strings(node):
+                spot = f"{where} {label}" + (f".{trail}" if trail else "")
                 low = text.lower()
-                for word in VAGUE:
-                    if word.lower() in low:
-                        spot = f"{where} {label}" + (f".{trail}" if trail else "")
-                        f.error(spot, f"空話「{word}」—— 這裡只收具體的值")
+                # 整個字串等於黑名單詞,或黑名單詞當成一個「詞」出現(前後不是英數字)
+                hit = next((w for w in VAGUE
+                            if low == w.lower() or re.search(rf"(?<![a-z0-9]){re.escape(w.lower())}(?![a-z0-9])", low)),
+                           None)
+                if hit:
+                    f.error(spot, f"空話「{hit}」—— 這裡只收具體的值")
+                elif (limit := prose_limit(text)) is not None and len(text) > limit:
+                    f.error(spot, f"葉值長達 {len(text)} 字,這是一句話不是一個值(上限 {limit})")
 
     for trail, text in walk_strings(spec):
         if PLACEHOLDER.search(text):

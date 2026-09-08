@@ -13,3 +13,6 @@ node_modules/
 # python bytecode
 __pycache__/
 *.pyc
+
+# mutate 跑到一半被砍時的備份
+scripts/gates/tests/.mutate-backup/

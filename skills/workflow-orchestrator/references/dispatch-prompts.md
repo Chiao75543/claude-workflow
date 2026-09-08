@@ -94,3 +94,32 @@ Agent(subagent_type="code-adversary", prompt=...)
 > 那是有價值的資訊,不是失敗。不要為了交差硬湊。
 
 沒有這句,它會為了交差生出低品質的 finding。
+
+---
+
+## S7 · red-writer(opus)
+
+```
+Agent(subagent_type="red-writer", prompt=...)
+```
+
+素材:凍結規格的路徑、專案 `test-writer` skill 的路徑、測試指令、`red-capture` 的用法
+(`evidence/red-inputs.json` 的格式)。
+
+**不要在派遣訊息重述 stub 規則** —— 定義裡有。給素材就好。
+
+驗收:報告必須含 `red-capture` 的輸出原文。只回「完成」→ 退回。
+
+---
+
+## S8 · green-writer(opus)
+
+```
+Agent(subagent_type="green-writer", prompt=...)
+```
+
+素材:凍結測試的路徑、專案 `rd-implementer` skill 的路徑、測試指令、
+**已知並已接受的取捨**(不列的話它會重提)。
+
+驗收:報告必須含測試結果原文,以及「規格與現實的衝突」一節(沒有就明寫沒有)。
+收到衝突回報 → orchestrator 走 `spec-diff` 流程,**不要叫它自己解**。

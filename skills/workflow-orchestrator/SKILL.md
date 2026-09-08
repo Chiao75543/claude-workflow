@@ -68,7 +68,8 @@ lint: "swiftlint lint --quiet"
 **`<repo>/AGENTS.md`** —— 給 AI 讀的散文:`{TEST_COMMAND}`、`{BUILD_COMMAND}`、
 `{LAYERING_CONVENTION}`、`{INTEGRATION_BRANCH}`、`{TICKET_PREFIX}`、Security Baseline、專案鐵則。
 
-**專案自備的 skill 只剩兩個**(舊版六個,其餘已被腳本與內建 agent 取代):
+**專案自備的 skill 只剩兩個**(舊版六個,其餘已被腳本與內建 agent 取代)。
+內建的 `red-writer` / `green-writer` 會在派遣時讀它們,拿到 stack 的慣例:
 
 | 慣例名 | 用在 | 專案要提供 |
 |---|---|---|
@@ -187,6 +188,9 @@ wt="$(git worktree list --porcelain \
 
 ### S7 測試 RED
 
+**派遣 `red-writer`**(opus)。派遣訊息給它:凍結的規格路徑、專案 `test-writer` skill 的路徑、
+測試指令。它寫完會回報 `red-capture` 的輸出原文;**只回「完成」的報告不接受**。
+
 強制 **stub-first**。`compile-fail-as-RED` 不接受 —— 編譯不過不證明任何斷言有效。
 
 **stub 必須回傳/拋出「沒有任何 Scenario 預期的東西」:**
@@ -209,7 +213,14 @@ wt="$(git worktree list --porcelain \
 
 ### S8 實作 GREEN
 
-叫 `rd-implementer` 或直接實作。**能動**:產品程式碼、`impl/` 命名空間的測試。
+**派遣 `green-writer`**(opus)。派遣訊息給它:凍結測試的路徑、專案 `rd-implementer` skill 的路徑、
+測試指令。「衝突就停」寫死在它的定義裡,不靠派遣訊息記得。
+
+**為什麼現在敢外派:** 凍結規則把它圍住了。它最壞能做的是動規格或規格測試(G1/G2 擋)、
+卡住(它回報)、寫出醜的 code(lint + 對抗審查咬)—— 失敗模式有界而且偵測得到。
+沒有凍結的話,把契約交給 subagent 才危險。
+
+**能動**:產品程式碼、`impl/` 命名空間的測試。
 **不能動**:`spec/` 命名空間的測試、`spec.yaml`。兩個都靠 hash 在 S9 擋。
 
 **遇到「規格與現實衝突」時停下來回報,不要自己解決。**
@@ -345,6 +356,15 @@ gh pr create --base {INTEGRATION_BRANCH} ...   # 或 glab mr create
 停下來不是叫你看程式碼,是在證據表上列一行:「SC-003 有一條已證實的失敗,2 次修復未果」。
 你的決定是:照樣出貨 / 分支停在這 / 回頭改規格。**這是決策,不是 code review。**
 
+## 命中率:哪道關值得留
+
+`dashboard` 每跑一次追加一筆到 `specs/_yield.jsonl`(append-only,跨功能累積):
+每道關過或擋、需要注意的標籤、審查提出/證實幾條。`runs --yield` 彙整成
+「每道關擋下 / 跑過」,**跑過 ≥5 次從沒擋過東西的會被點名** —— 那是問「它還該不該留」的時候。
+
+沒有這個數據,「這道關要不要留」的討論只能靠直覺。舊版的 `disposition:` 標記做同一件事,
+重寫時被誤刪,這裡補回。
+
 ## 同時進行多個需求
 
 **pipeline,不是 parallel。** 機器階段 30–60 分鐘、人類階段約 6 分鐘,比例 7:1 ——
@@ -408,7 +428,8 @@ gh pr create --base {INTEGRATION_BRANCH} ...   # 或 glab mr create
 ## Related
 
 - `scripts/gates/*` —— 十二道關卡的實作
-- `agents/*` —— spec-grill / spec-reader / spec-oracle / code-adversary
+- `agents/*` —— spec-grill / spec-reader / spec-oracle / code-adversary(fable)+ red-writer / green-writer(opus)
+- `scripts/gates/runs --yield` —— 哪道關擋過東西、擋了幾次;跑過 ≥5 次從沒擋過的會被點名
 - `eli5` skill —— S5 的說明頁
 - `test-writer` / `rd-implementer` —— **專案自備**的兩個 skill
 - `PIPELINE.md` —— 對外的簡介(不是鏡像,只是入口)

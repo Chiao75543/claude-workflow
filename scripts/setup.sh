@@ -77,7 +77,9 @@ else
 fi
 echo ""
 
-# 3b. Symlink pipeline agents (spec-grill / spec-reader / spec-oracle / code-adversary)
+# 3b. Symlink pipeline agents
+#     fable: spec-grill / spec-reader / spec-oracle / code-adversary
+#     opus:  red-writer / green-writer(S7 / S8 外派;凍結規則讓外派變安全)
 #     這些是精簡定義,工具集刻意最小化。實測開機成本(單次派遣,零工作量):
 #         general-purpose(全套工具)  31,554
 #         spec-grill(3 個工具)        5,587
