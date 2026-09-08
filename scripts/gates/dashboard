@@ -147,8 +147,36 @@ def main(argv: list[str]) -> int:
     ok, _ = run([str(here / "spec-lint"), str(spec_path)], root)
     gates.append({"id": "G0", "what": "規格檢查", "ok": ok, "note": "schema/完備性/可測性"})
 
-    ok, _ = run([str(here / "freeze-check"), str(spec_path)], root)
-    gates.append({"id": "G1/2", "what": "規格與測試沒被偷改", "ok": ok, "note": "指紋比對"})
+    frozen_ok, _ = run([str(here / "freeze-check"), str(spec_path)], root)
+
+    # 指紋不符時,由 spec-diff 判定是「要重新批准的行為改變」還是「事實修正」。
+    # 沒有批准快照就無從判斷 —— 那本身是個問題,要講出來。
+    approved = ev / "spec.approved.yaml"
+    if approved.exists():
+        diff_ok, diff_out = run([str(here / "spec-diff"), str(spec_path)], root)
+        factual = [ln.strip() for ln in diff_out.splitlines() if "事實修正" in ln]
+        gates.append({"id": "G1/2", "what": "規格與測試沒被偷改", "ok": frozen_ok and diff_ok,
+                      "note": "指紋比對" if frozen_ok else
+                              ("規格有改,但只是事實修正" if diff_ok else "規格有行為改變 → 要重新批准")})
+        if not diff_ok:
+            attention.append({
+                "tag": "要重新批准", "title": "規格的行為契約改過了",
+                "body": "你批准的是那些具體例子,而例子(或 then / mode / 覆蓋)變了。"
+                        "退回說明頁重新確認一次,再重存批准快照。",
+            })
+        elif factual:
+            attention.append({
+                "tag": "事實修正", "title": "規格改過,但不影響契約",
+                "body": " ".join(factual) + " —— 不需要重新批准,但你應該知道它改過。",
+            })
+    else:
+        gates.append({"id": "G1/2", "what": "規格與測試沒被偷改", "ok": False,
+                      "note": "缺 spec.approved.yaml"})
+        attention.append({
+            "tag": "缺快照", "title": "沒有批准快照,無從判斷規格改動",
+            "body": "S5 批准時要存下 evidence/spec.approved.yaml。"
+                    "沒有它,任何後續改動都分不出是事實修正還是行為改變。",
+        })
 
     ok, out = run([str(here / "traceability"), str(spec_path)], root)
     covered = re.search(r"測試涵蓋 (\d+) 條", out)
