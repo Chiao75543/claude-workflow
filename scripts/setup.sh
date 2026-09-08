@@ -78,8 +78,14 @@ fi
 echo ""
 
 # 3b. Symlink pipeline agents (spec-grill / spec-reader / spec-oracle / code-adversary)
-#     這些是精簡定義:工具集刻意最小化。實測 general-purpose 每次派遣有 ~31k token 的
-#     開機成本,其中約 23k 純粹是 tool schema;隔離型 agent 更是連讀檔都不該有。
+#     這些是精簡定義,工具集刻意最小化。實測開機成本(單次派遣,零工作量):
+#         general-purpose(全套工具)  31,554
+#         spec-grill(3 個工具)        5,587
+#         spec-reader(tools: [])      3,137
+#     也就是說 tool schema 佔了 general-purpose 開機費的九成。
+#     隔離型 agent(spec-reader / spec-oracle)的 tools: [] 是**結構性**保證 ——
+#     實測確認空陣列會被接受,agent 內部確實沒有任何工具可用,
+#     不是只靠 prompt 裡的指示。看得到程式碼就測不出規格歧義。
 #     注意:agent 定義要 session 重啟才會載入。
 mkdir -p "$CLAUDE_DIR/agents"
 for agent_src in "$REPO_DIR"/agents/*.md; do
