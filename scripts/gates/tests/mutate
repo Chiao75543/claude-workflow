@@ -1,0 +1,206 @@
+#!/usr/bin/env python3
+"""mutate — 測試套件自己有沒有牙齒。
+
+把已知的破壞注入關卡腳本,跑一次測試,看它有沒有被抓到。
+
+  被殺 (killed)   注入後測試變紅 → 這個行為有被守住
+  存活 (survived) 注入後測試照樣全綠 → **這條防線目前是裝飾品**
+
+「幾條測試」不是驗收標準,**變異存活率**才是。
+對抗審查第一次跑這份清單時:29 個變異、28 個存活。
+
+用法: scripts/gates/tests/mutate [--max-survivors N]
+退出碼: 0 存活數在容忍範圍內 / 1 超過
+"""
+
+from __future__ import annotations
+
+import pathlib
+import subprocess
+import sys
+
+HERE = pathlib.Path(__file__).resolve().parent
+GATES = HERE.parent
+
+# (腳本, 說明, 找, 換)
+MUTATIONS: list[tuple[str, str, str, str]] = [
+    # ---- red-capture ----
+    ("red-capture", "error/compile/hang 不再擋",
+     'BLOCKING = {"error", "compile", "hang", "passed"}',
+     'BLOCKING = {"passed"}'),
+    ("red-capture", "哨兵標記不比對:所有 Caught error 都算 stub_sentinel",
+     'return "stub_sentinel" if marker in message else "error"',
+     'return "stub_sentinel"'),
+    ("red-capture", "三方對帳退化成兩方(不看原始碼宣告數)",
+     "reconciled = declared == runner_total == len(started)",
+     "reconciled = runner_total == len(started)"),
+    ("red-capture", "輸出檔不存在時靜默略過",
+     '            f.error(layer, f"找不到測試輸出 {out_path}")',
+     "            pass"),
+    ("red-capture", "編譯錯誤不報",
+     '            f.error(layer, "編譯錯誤 —— 編不過的東西沒有資格談紅不紅")',
+     "            pass"),
+    ("red-capture", "實作前就綠不再擋",
+     '                    f.error(f"{layer} / {sid or name[:32]}",\n'
+     '                            "實作前就是綠的 —— 空測試。真有理由請在規格該條寫 red_exempt_reason")',
+     "                    pass"),
+    # ---- spec-lint ----
+    ("spec-lint", "完備性可以指向別的 Requirement 的 Scenario",
+     "                    if sid not in own:",
+     "                    if False:"),
+    ("spec-lint", "六類可以不表態",
+     '                f.error(where, "未表態(要嘛列 Scenario,要嘛寫「N/A — 理由」)")',
+     "                pass"),
+    ("spec-lint", "N/A 可以不寫理由",
+     '                    f.error(where, "N/A 必須附理由(且要說得出所以然,不是一個詞)")',
+     "                    pass"),
+    ("spec-lint", "可以完全沒有 examples",
+     '            f.error(where, "至少要有一組 examples(具體的 in → out);examples 就是契約")',
+     "            pass"),
+    ("spec-lint", "example 可以沒有 in",
+     '                f.error(spot, "缺少 in")',
+     "                pass"),
+    ("spec-lint", "then 可以是散文",
+     '            f.error(where, "then 必須是非空的 mapping —— 散文沒有欄位可以放")',
+     "            pass"),
+    ("spec-lint", "then / out 不掃空話",
+     '                        f.error(spot, f"空話「{word}」—— 這裡只收具體的值")',
+     "                        pass"),
+    ("spec-lint", "mode 不驗",
+     '            f.error(where, f"mode 必須是 {\'/\'.join(sorted(MODES))} 其一,得到 {sc.get(\'mode\')!r}")',
+     "            pass"),
+    ("spec-lint", "Scenario id 可以重複",
+     '        elif sid in seen_sc:\n            f.error(where, "id 重複")',
+     "        elif False:\n            pass"),
+    ("spec-lint", "6d 可以不寫 manual_reason",
+     '                f.error(where, "mode 6d 必須寫 manual_reason:為什麼這條不能自動化")',
+     "                pass"),
+    ("spec-lint", "豁免理由可以只寫一個字",
+     '                f.error(where, "red_exempt_reason 太短 —— 豁免必須說得出所以然,"',
+     '                pass  # ("'),
+    ("spec-lint", "佔位符不擋",
+     '            f.error(trail or "(頂層)", f"殘留佔位符: {text.strip()[:48]}")',
+     "            pass"),
+    # ---- freeze-check ----
+    ("freeze-check", "tests.hash 可以是空的",
+     '            f.error("evidence/tests.hash", "內容為空")',
+     "            pass"),
+    ("freeze-check", "凍結的測試檔被刪不報",
+     '                f.error(rel, "凍結時存在,現在不見了")',
+     "                pass"),
+    ("freeze-check", "規格被改過不報",
+     '                f.error(str(spec_path), f"規格已被改動',
+     '                pass  # (f"規格已被改動'),
+    ("freeze-check", "測試檔被改過不報",
+     '                f.error(rel, "測試檔已被改動 —— 實作階段不得動規格測試")',
+     "                pass"),
+    ("freeze-check", "規格解析不了也放行",
+     '        print("\\nfreeze-check: FAIL  (規格解析不了 —— 指紋一致也沒有意義)")\n        return 1',
+     "        pass"),
+    # ---- spec-diff ----
+    ("spec-diff", "then 改了不擋",
+     '            f.error(f"{sid}.then", "行為契約變了")',
+     "            pass"),
+    ("spec-diff", "examples 的 in 改了不擋",
+     '            f.error(f"{sid} examples[{i}].in",',
+     '            f.warn(f"{sid} examples[{i}].in",'),
+    ("spec-diff", "examples 的 out 改了不擋",
+     '            f.error(f"{sid} examples[{i}].out",',
+     '            f.warn(f"{sid} examples[{i}].out",'),
+    ("spec-diff", "Scenario 被移除不擋",
+     '        f.error(sid, "Scenario 被移除 —— 你批准過的東西不見了")',
+     "        pass"),
+    ("spec-diff", "example 被刪不擋",
+     '        f.error(f"{sid} examples", f"少了 {len(old) - len(new)} 組例子 —— 契約被縮減")',
+     "        pass"),
+    ("spec-diff", "mode 改了不擋",
+     '            f.error(f"{sid}.mode", f"驗證方式變了 {a.get(\'mode\')} → {b.get(\'mode\')}"',
+     '            f.warn(f"{sid}.mode", f"驗證方式變了 {a.get(\'mode\')} → {b.get(\'mode\')}"'),
+    ("spec-diff", "覆蓋改成 N/A 不擋",
+     '                f.error(f"{rid}.{category}", "原本有 Scenario 覆蓋,現在改成 N/A —— 覆蓋被放棄")',
+     "                pass"),
+    ("spec-diff", "批准後新增豁免不擋",
+     '                f.error(f"{sid}.red_exempt_reason",\n'
+     '                        "批准後新增 RED 豁免 —— 這條測試從此不必先紅過,是契約鬆綁")',
+     "                pass"),
+    # ---- traceability ----
+    ("traceability", "有 Scenario 沒測試不擋",
+     '        f.error(sid, "規格有這條 Scenario,但沒有任何測試引用它")',
+     "        pass"),
+    ("traceability", "孤兒測試不擋",
+     '        f.error(sid, f"測試引用了規格裡不存在的 Scenario ({\', \'.join(sorted(in_tests[sid]))})")',
+     "        pass"),
+    # ---- dashboard ----
+    ("dashboard", "可達性:到不了的型別不報",
+     "    unreachable = [r for r in reach if not r[\"sites\"]]",
+     "    unreachable = []"),
+    ("dashboard", "可達性:只看檔案第一個型別",
+     "        for name in names:",
+     "        for name in names[:1]:"),
+    ("dashboard", "可達性:建構點不限產品碼(測試檔也算)",
+     "    production = {t for t in tracked if in_reach_scope(root, t, globs)}",
+     "    production = set(tracked)"),
+    ("dashboard", "沒設 test 指令也算過",
+     '        gates.append({"id": "G4", "what": "測試實作後是綠的", "ok": False,\n'
+     '                      "note": "specs/pipeline.yaml 沒設 test"})',
+     '        gates.append({"id": "G4", "what": "測試實作後是綠的", "ok": True, "note": "略過"})'),
+    ("dashboard", "沒設 lint 指令也算過",
+     '        gates.append({"id": "G3", "what": "lint(變更的檔案)", "ok": False,\n'
+     '                      "note": "specs/pipeline.yaml 沒設 lint"})',
+     '        gates.append({"id": "G3", "what": "lint(變更的檔案)", "ok": True, "note": "略過"})'),
+    ("dashboard", "退出碼永遠 0",
+     '    return 0 if all(g["ok"] for g in gates) else 1',
+     "    return 0"),
+]
+
+
+def run_tests() -> bool:
+    proc = subprocess.run([str(HERE / "run")], capture_output=True, text=True)
+    return proc.returncode == 0
+
+
+def main(argv: list[str]) -> int:
+    max_survivors = 0
+    if "--max-survivors" in argv:
+        max_survivors = int(argv[argv.index("--max-survivors") + 1])
+
+    if not run_tests():
+        print("✘ 基線就沒過,先修好測試再談變異")
+        return 2
+
+    survived, killed, skipped = [], [], []  # skipped: (script, label, reason)
+    for script, label, find, replace in MUTATIONS:
+        path = GATES / script
+        original = path.read_text()
+        occurrences = original.count(find)
+        if occurrences == 0:
+            skipped.append((script, label, "找不到注入點"))
+            continue
+        if occurrences > 1:
+            # 歧義的變異會靜默打到第一個出現處,測出來的結果是假的。
+            # 一個會說謊的工具比沒有工具更糟。
+            skipped.append((script, label, f"注入點出現 {occurrences} 次,有歧義"))
+            continue
+        try:
+            path.write_text(original.replace(find, replace, 1))
+            (survived if run_tests() else killed).append((script, label))
+        finally:
+            path.write_text(original)
+
+    total = len(survived) + len(killed)
+    for script, label in survived:
+        print(f"  存活  {script:<14} {label}")
+    if skipped:
+        print()
+        for script, label, reason in skipped:
+            print(f"  跳過  {script:<14} {label}  ({reason})")
+    rate = len(survived) / total * 100 if total else 0
+    print(f"\n{len(killed)}/{total} 被殺 · 存活 {len(survived)} ({rate:.0f}%)")
+    if len(survived) > max_survivors:
+        print(f"存活數超過容忍值 {max_survivors} —— 這些行為目前沒有測試守著")
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

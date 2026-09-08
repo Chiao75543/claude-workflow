@@ -25,7 +25,16 @@ sys.path.insert(0, str(pathlib.Path(__file__).parent))
 import _config  # noqa: E402
 from _common import evidence_dir, load_spec, read_json, scenario_ids  # noqa: E402
 
-DECL = re.compile(r"^\s*(?:public\s+|internal\s+|final\s+)*(?:struct|class|enum|object|interface)\s+(\w+)", re.M)
+# 型別宣告。要吃得下常見寫法,否則最該檢查的東西反而隱形:
+#   @MainActor final class XViewModel / actor XService / data class / sealed class / object
+# 以及 Compose 的 @Composable fun XScreen(。
+ATTRS = r"(?:@[\w.]+(?:\([^)]*\))?\s+)*"
+MODS = r"(?:(?:public|private|fileprivate|internal|open|final|abstract|sealed|data|value|export|default)\s+)*"
+DECL = re.compile(rf"^\s*{ATTRS}{MODS}(?:struct|class|enum|actor|protocol|interface|object|record)\s+(\w+)", re.M)
+# 大寫開頭的 fun 是 Compose 畫面的慣例
+FUNC_DECL = re.compile(rf"^\s*{ATTRS}{MODS}fun\s+([A-Z]\w*)\s*\(", re.M)
+# file-local 的型別本來就不該對外可達,不是 G8 要問的問題
+PRIVATE = re.compile(rf"^\s*{ATTRS}(?:private|fileprivate)\s", re.M)
 
 
 def git(root: pathlib.Path, *args: str) -> str:
@@ -36,19 +45,28 @@ def git(root: pathlib.Path, *args: str) -> str:
         return ""
 
 
+def in_reach_scope(root: pathlib.Path, rel: str, globs: list[str]) -> bool:
+    return any(pathlib.Path(root, rel).match(g) or rel.startswith(g.split("*")[0]) for g in globs)
+
+
 def check_reachability(root: pathlib.Path, base: str, config: dict) -> list[dict]:
     """G8:新增的型別有沒有人建構它。缺席類問題唯一的機械防線。"""
     added = [p for p in git(root, "diff", "--name-only", "--diff-filter=A", f"{base}...HEAD").split("\n") if p]
     if not added:  # 尚未 commit 的情況
         added = [p for p in git(root, "diff", "--cached", "--name-only", "--diff-filter=A").split("\n") if p]
     globs = config["reachability"]["globs"]
-    in_scope = {p for g in globs for p in added if pathlib.Path(root, p).match(g) or p.startswith(g.split("*")[0])}
+    in_scope = {p for p in added if in_reach_scope(root, p, globs)}
 
     # 自己用 Python 搜,不外包給 git grep ——
     # git grep -E 是 POSIX ERE,不支援 \b 與 \s,pattern 會靜默匹配不到而全部誤報。
+    #
+    # **建構點只能在產品程式碼裡。** 測試檔、markdown、註解都不算 ——
+    # 每個型別都有規格測試會 Name(),把測試算進來的話 G8 幾乎必然通過,
+    # 那它就完全失去存在意義(對抗審查實證)。
     tracked = [t for t in git(root, "ls-files").split("\n") if t]
+    production = {t for t in tracked if in_reach_scope(root, t, globs)}
     contents: dict[str, str] = {}
-    for rel in tracked:
+    for rel in production:
         path = root / rel
         if path.is_file() and path.stat().st_size < 2_000_000:
             try:
@@ -61,8 +79,15 @@ def check_reachability(root: pathlib.Path, base: str, config: dict) -> list[dict
         text = contents.get(rel)
         if text is None:
             continue
-        names = DECL.findall(text)
-        for name in names[:1]:  # 只看檔案的主型別
+        # 檔案裡**每一個**對外型別都要檢查,不是只看第一個 ——
+        # 常見寫法是一個檔案放 View + ViewModel,只看第一個等於主型別沒被檢查。
+        names = list(dict.fromkeys(DECL.findall(text) + FUNC_DECL.findall(text)))
+        for name in names:
+            # file-local 的型別不是 G8 要問的問題(它本來就不該對外可達)
+            decl_line = next((ln for ln in text.splitlines() if re.search(rf"\b{re.escape(name)}\b", ln)
+                              and (DECL.match(ln + "\n") or FUNC_DECL.match(ln + "\n"))), "")
+            if PRIVATE.match(decl_line + "\n"):
+                continue
             use = re.compile(rf"\b{re.escape(name)}\s*\(")
             sites = [other for other, body in contents.items()
                      if other != rel and use.search(body)]

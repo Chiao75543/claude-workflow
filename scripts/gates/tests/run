@@ -155,6 +155,35 @@ def test_spec_lint(tmp: pathlib.Path) -> None:
     code, out = run_gate("spec-lint", "specs/demo/spec.yaml", cwd=root)
     check("豁免理由說得出所以然 → 過", code == 0, out[:160])
 
+    bad = VALID_SPEC.replace('      concurrency: "N/A — 單一 entry point 觸發且有重入鎖"\n', "")
+    root = make_repo(tmp / "lint-nocat", bad)
+    code, out = run_gate("spec-lint", "specs/demo/spec.yaml", cwd=root)
+    check("六類少表態一項 → 擋", code == 1 and "未表態" in out, out[:160])
+
+    bad = VALID_SPEC.replace("""        examples:
+          - in: {size: 0}
+            out: {returns: empty_list}
+""", "")
+    root = make_repo(tmp / "lint-noex", bad)
+    code, out = run_gate("spec-lint", "specs/demo/spec.yaml", cwd=root)
+    check("Scenario 完全沒有 examples → 擋", code == 1 and "examples" in out, out[:160])
+
+    bad = VALID_SPEC.replace("          - in: {size: 0}\n            out: {returns: empty_list}",
+                             "          - out: {returns: empty_list}")
+    root = make_repo(tmp / "lint-noin", bad)
+    code, out = run_gate("spec-lint", "specs/demo/spec.yaml", cwd=root)
+    check("example 少了 in → 擋", code == 1 and "缺少 in" in out, out[:160])
+
+    bad = VALID_SPEC.replace("        mode: 6a\n        given: {size: 0}", "        mode: 6z\n        given: {size: 0}")
+    root = make_repo(tmp / "lint-mode", bad)
+    code, out = run_gate("spec-lint", "specs/demo/spec.yaml", cwd=root)
+    check("mode 值不合法 → 擋", code == 1 and "mode" in out, out[:160])
+
+    bad = VALID_SPEC.replace("      - id: SC-002", "      - id: SC-001")
+    root = make_repo(tmp / "lint-dup", bad)
+    code, out = run_gate("spec-lint", "specs/demo/spec.yaml", cwd=root)
+    check("Scenario id 重複 → 擋", code == 1 and "重複" in out, out[:160])
+
     bad = VALID_SPEC.replace("why: 測試用的規格", "why: TBD")
     root = make_repo(tmp / "lint-tbd", bad)
     code, out = run_gate("spec-lint", "specs/demo/spec.yaml", cwd=root)
@@ -180,6 +209,18 @@ def test_freeze_check(tmp: pathlib.Path) -> None:
     (root / "tests" / "T.swift").write_text('@Test("SC-001 a")\n// 實作階段偷改測試\n')
     code, out = run_gate("freeze-check", "specs/demo/spec.yaml", cwd=root)
     check("實作階段動到規格測試 → 擋", code == 1 and "測試檔已被改動" in out, out[:160])
+
+    root = make_repo(tmp / "freeze-emptyhash")
+    freeze(root, [])
+    code, out = run_gate("freeze-check", "specs/demo/spec.yaml", cwd=root)
+    check("tests.hash 是空的 → 擋(等於沒凍結任何測試)",
+          code == 1 and "內容為空" in out, out[:160])
+
+    root = make_repo(tmp / "freeze-deleted")
+    freeze(root, with_test(root))
+    (root / "tests" / "T.swift").unlink()
+    code, out = run_gate("freeze-check", "specs/demo/spec.yaml", cwd=root)
+    check("凍結的測試檔被刪掉 → 擋", code == 1 and "不見了" in out, out[:160])
 
     root = make_repo(tmp / "freeze-changed")
     freeze(root, with_test(root))
@@ -241,6 +282,34 @@ def test_red_capture(tmp: pathlib.Path) -> None:
     root = setup_red(tmp, "red-green", tmp / "green.txt", 1)
     code, out = run_gate("red-capture", "specs/demo/spec.yaml", cwd=root)
     check("實作前就綠且無豁免 → 擋", code == 1 and "空測試" in out, out[:160])
+
+    # 哨兵標記不符 = 真的爆掉,不是假實作逸出 → 必須擋
+    err = ('◇ Test "SC-001 爆了" started.\n'
+           '✘ Test "SC-001 爆了" recorded an issue at F.swift:1:1: Caught error: SomeRealCrash\n'
+           '✘ Test "SC-001 爆了" failed after 0.001 seconds with 1 issue.\n'
+           "Test run with 1 test in 1 suite failed after 0.001 seconds with 1 issue.\n")
+    (tmp / "err.txt").write_text(err)
+    root = setup_red(tmp, "red-realerror", tmp / "err.txt", 1)
+    code, out = run_gate("red-capture", "specs/demo/spec.yaml", cwd=root)
+    check("不帶哨兵標記的錯誤逸出 → 擋(不能算成 stub_sentinel)",
+          code == 1 and "error" in out, out[:200])
+
+    # 三方對帳:原始碼宣告數是唯一不來自輸出檔的那一方,拿掉它就形同虛設
+    root = setup_red(tmp, "red-twoway", tmp / "green.txt", 5)  # 宣告 5、runner 1、啟動 1
+    code, out = run_gate("red-capture", "specs/demo/spec.yaml", cwd=root)
+    check("宣告數與實際執行數不符 → 擋(兩方對帳不夠)",
+          code == 1 and "對帳不符" in out, out[:200])
+
+    root = setup_red(tmp, "red-nofile", tmp / "does-not-exist.txt", 1)
+    code, out = run_gate("red-capture", "specs/demo/spec.yaml", cwd=root)
+    check("測試輸出檔不存在 → 擋(不能靜默略過)",
+          code == 1 and "找不到測試輸出" in out, out[:200])
+
+    (tmp / "compile.txt").write_text("F.swift:3:5: error: cannot find 'Foo' in scope\n")
+    root = setup_red(tmp, "red-compile", tmp / "compile.txt", 1)
+    code, out = run_gate("red-capture", "specs/demo/spec.yaml", cwd=root)
+    check("編譯錯誤 → 擋(編不過的東西沒資格談紅不紅)",
+          code == 1 and "編譯錯誤" in out, out[:200])
 
     # 有書面豁免 → 過
     exempt_spec = VALID_SPEC.replace(
@@ -316,6 +385,28 @@ def test_spec_diff(tmp: pathlib.Path) -> None:
     code, out = run_gate("spec-diff", "specs/demo/spec.yaml", cwd=root)
     check("有覆蓋改成 N/A → 要重新批准", code == 1 and "覆蓋被放棄" in out, out[:200])
 
+    root = build("diff-then", lambda s: s.replace(
+        "        then: {returns: empty_list}", "        then: {returns: null_value}"))
+    code, out = run_gate("spec-diff", "specs/demo/spec.yaml", cwd=root)
+    check("then 的行為契約改了 → 要重新批准", code == 1 and "行為契約" in out, out[:200])
+
+    root = build("diff-in", lambda s: s.replace("          - in: {size: 0}", "          - in: {size: 99}"))
+    code, out = run_gate("spec-diff", "specs/demo/spec.yaml", cwd=root)
+    check("example 的輸入改了 → 要重新批准", code == 1 and "輸入變了" in out, out[:200])
+
+    root = build("diff-removed", lambda s: s.split("      - id: SC-002")[0])
+    code, out = run_gate("spec-diff", "specs/demo/spec.yaml", cwd=root)
+    check("Scenario 被移除 → 要重新批准", code == 1 and "被移除" in out, out[:200])
+
+    root = build("diff-exdel", lambda s: s.replace(
+        "          - in: {transport: offline}\n            out: {throws: NetworkError, user_sees_error: true}",
+        "          - in: {transport: offline}\n            out: {throws: NetworkError, user_sees_error: true}\n"
+    ).replace("""        examples:
+          - in: {size: 0}
+            out: {returns: empty_list}""", """        examples: []"""))
+    code, out = run_gate("spec-diff", "specs/demo/spec.yaml", cwd=root)
+    check("example 被刪光 → 要重新批准", code == 1 and "契約被縮減" in out, out[:200])
+
     root = build("diff-exempt-added", lambda s: s.replace(
         "      - id: SC-001\n        mode: 6a",
         "      - id: SC-001\n        mode: 6a\n        red_exempt_reason: 事後補上的理由夠長了"))
@@ -345,6 +436,18 @@ def test_dashboard_requires_verification(tmp: pathlib.Path) -> None:
           "沒設 test" in out and code == 1, out[:200])
     check("沒設 lint 指令 → G3 判失敗(不是跳過)",
           "沒設 lint" in out, out[:200])
+
+    # 可達性不只要算得對,還要真的接上 gate 並影響退出碼
+    root = make_repo(tmp / "dash-unreachable")
+    freeze(root)
+    (root / "App").mkdir()
+    (root / "App" / "Ghost.swift").write_text("struct Ghost {\n    init() {}\n}\n")
+    (root / "specs" / "pipeline.yaml").write_text(
+        'runner: swift-testing\nreachability:\n  globs: ["App/**/*.swift"]\n')
+    subprocess.run(["git", "add", "-A"], cwd=root, check=True)
+    code, out = run_gate("dashboard", "specs/demo/spec.yaml", cwd=root)
+    check("到不了的型別 → G8 判失敗且反映在退出碼",
+          "1 個沒有建構點" in out and code == 1, out[:250])
 
 
 # ---------------------------------------------------------------- 可達性
@@ -376,6 +479,49 @@ def test_reachability(tmp: pathlib.Path) -> None:
           "Lonely" in by_symbol and not by_symbol["Lonely"], str(by_symbol))
 
 
+def test_reachability_hardening(tmp: pathlib.Path) -> None:
+    """對抗審查找到的三個洞:測試檔算建構點、只看第一個型別、認不得常見宣告。
+    這三個合起來讓 G8 幾乎必然通過 —— 那道關就只是劇場。"""
+    import importlib.util
+    module = importlib.util.module_from_spec(importlib.util.spec_from_loader("dash2", loader=None))
+    module.__dict__["__file__"] = str(GATES / "dashboard")
+    exec(compile((GATES / "dashboard").read_text(), "dashboard", "exec"), module.__dict__)
+
+    root = make_repo(tmp / "reach-hard")
+    (root / "App").mkdir()
+    (root / "Tests").mkdir()
+    # C2:測試檔與 markdown 不該算建構點
+    (root / "App" / "Orphan.swift").write_text("struct Orphan {\n    init() {}\n}\n")
+    (root / "Tests" / "OrphanTests.swift").write_text("let t = Orphan()\n")
+    (root / "NOTES.md").write_text("TODO: wire Orphan() into navigation\n")
+    # C3:一個檔案兩個型別,只有第一個有建構點
+    (root / "App" / "Feature.swift").write_text(
+        "struct FeatureRow {\n    init() {}\n}\n\nstruct FeatureView {\n    init() {}\n}\n")
+    (root / "App" / "Uses.swift").write_text("let r = FeatureRow()\n")
+    # C3:認不得的宣告寫法
+    (root / "App" / "Vm.swift").write_text("@MainActor final class ThingViewModel {\n    init() {}\n}\n")
+    (root / "App" / "Svc.swift").write_text("actor ThingService {\n    init() {}\n}\n")
+    # private 是 file-local,不是 G8 要問的
+    (root / "App" / "Helper.swift").write_text("private struct Helper {\n    init() {}\n}\n")
+    subprocess.run(["git", "add", "-A"], cwd=root, check=True)
+
+    config = {"reachability": {"globs": ["App/**/*.swift"]}}
+    by = {r["symbol"]: r["sites"] for r in module.check_reachability(root, "HEAD", config)}
+
+    check("測試檔與 markdown 不算建構點",
+          "Orphan" in by and not by["Orphan"], str(by.get("Orphan")))
+    check("一個檔案的第二個型別也要檢查(不是只看第一個)",
+          "FeatureView" in by and not by["FeatureView"], str(sorted(by)))
+    check("@MainActor final class 認得出來",
+          "ThingViewModel" in by and not by["ThingViewModel"], str(sorted(by)))
+    check("actor 認得出來",
+          "ThingService" in by and not by["ThingService"], str(sorted(by)))
+    check("private 型別跳過(file-local 本來就不對外可達)",
+          "Helper" not in by, str(sorted(by)))
+    check("有建構點的仍然判為到得了",
+          by.get("FeatureRow") == ["App/Uses.swift"], str(by.get("FeatureRow")))
+
+
 # ---------------------------------------------------------------- main
 
 def main() -> int:
@@ -383,7 +529,8 @@ def main() -> int:
         tmp = pathlib.Path(td)
         for fn in (test_spec_lint, test_freeze_check, test_red_capture,
                    test_traceability, test_spec_diff,
-                   test_dashboard_requires_verification, test_reachability):
+                   test_dashboard_requires_verification,
+                   test_reachability, test_reachability_hardening):
             try:
                 fn(tmp)
             except Exception as exc:  # noqa: BLE001
