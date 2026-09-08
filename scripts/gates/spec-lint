@@ -156,6 +156,17 @@ def check_testability(spec: dict, f: Findings) -> None:
         if not isinstance(then, dict) or not then:
             f.error(where, "then 必須是非空的 mapping —— 散文沒有欄位可以放")
 
+        # 豁免是一句可被挑戰的主張,不是一個 truthy 欄位。
+        # 對抗審查實證:批准後偷加 `red_exempt_reason: x` 可以整條繞過 G5。
+        exempt = sc.get("red_exempt_reason")
+        if exempt is not None:
+            text = str(exempt).strip()
+            if len(text) < 12:
+                f.error(where, "red_exempt_reason 太短 —— 豁免必須說得出所以然,"
+                               "而且會被 reviewer 挑戰(有 stub 縫卻宣稱沒有就是鑽漏洞)")
+            elif PLACEHOLDER.search(text):
+                f.error(where, "red_exempt_reason 是佔位符")
+
         if mode == "6d":
             if not str(sc.get("manual_reason") or "").strip():
                 f.error(where, "mode 6d 必須寫 manual_reason:為什麼這條不能自動化")

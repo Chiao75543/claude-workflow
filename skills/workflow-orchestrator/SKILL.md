@@ -28,7 +28,7 @@ description: 從一句需求到可推送的分支 —— 規格撰寫(挑洞 + �
 而凍結規則存在的全部理由就是拿掉那個裁量權。人類批准的是**那些具體例子** ——
 例子變了就給他看一眼,五秒鐘的事,比一個自我認證的判斷可靠得多。
 
-**3. 成本規則。** 八道腳本關卡全綠,才啟動四道付費關卡。
+**3. 成本規則。** 七道腳本關卡全綠,才啟動四道付費關卡。
 絕不花錢請 AI 去審一個腳本本來就會擋掉的東西。
 
 **4. 隔離規則。** 獨立讀者看不到程式碼 —— 這是它存在的**全部理由**。
@@ -258,7 +258,7 @@ gh pr create --base {INTEGRATION_BRANCH} ...   # 或 glab mr create
 
 **orchestrator 一律不代按 merge。**
 
-## 十二道關卡
+## 十一道關卡
 
 ```
 腳本判定 · 幾乎不花錢 · 全綠才啟動下半
@@ -267,19 +267,27 @@ gh pr create --base {INTEGRATION_BRANCH} ...   # 或 glab mr create
                        指紋不符時跑 spec-diff 分類:行為改變 → 退回 S5;
                        事實修正 → 記錄後重新凍結
   G2  freeze-check     規格測試指紋
-  G3  lint             **只看變更的檔案** —— 真實 repo 都有歷史債,
-                       要求整包乾淨等於這關從第一天就失效
-  G4  測試 + 專案自有的靜態檢查
-  G5  red-capture      六類 + 三方對帳
+  G3  lint             **只看變更的檔案**。真實 repo 都有歷史債,要求整包乾淨
+                       等於這關從第一天就失效。**既有債的基準線推給 lint 工具自己處理**
+                       (例如 swiftlint 的 --baseline)—— 關卡不重造這個輪子
+  G4  測試             跑 `specs/pipeline.yaml` 的 `test` 指令。
+                       **沒設定 = 失敗,不是跳過** —— 「沒有人檢查」和「檢查通過」
+                       是兩件完全不同的事。沒有這一關,RED 證據只證明實作前是紅的,
+                       不證明實作後是綠的,GREEN 就還是「AI 說 OK」
+  G5  red-capture      六類 + 三方對帳。**豁免會浮上證據表**,不能只躺在 red.json 裡
   G6  traceability     Scenario ↔ 測試雙向
-  G7  examples 覆蓋
-  G8  可達性           新增的型別有沒有人建構它
+  G7  可達性           新增的型別有沒有人建構它
 ────────────────────────────────────────────
 付費判定
-  G9   變異測試        有工具才跑;沒有就對關鍵斷言做定向變異
-  G10  spec-oracle     fable,隔離,只憑規格寫驗收測試
-  G11  code-adversary  fable,每條主張附可執行的重現
-  G12  UI 截圖         有畫面變更才跑,導航到目標畫面截圖
+  G8   變異測試        有工具才跑;沒有就對關鍵斷言做定向變異
+  G9   spec-oracle     fable,隔離,只憑規格寫驗收測試
+  G10  code-adversary  fable,每條主張附可執行的重現
+  G11  UI 截圖         有畫面變更才跑,導航到目標畫面截圖
+
+**「每個 example 都有測試覆蓋」沒有獨立的關卡。** 舊版列過,但那需要測試逐一標記
+它覆蓋哪一組 example,或者測試直接參數化讀規格 —— 那是專案層級的選擇,不是通用機制。
+現在由 spec-lint(每條 Scenario 必須有 examples)+ traceability(每條 Scenario 必須有測試)
+兩邊夾住。**列一個不存在的關卡比少列一個更糟,所以拿掉。**
 ```
 
 ### G5 的六類
@@ -299,7 +307,7 @@ gh pr create --base {INTEGRATION_BRANCH} ...   # 或 glab mr create
 
 錨點要用 **started 行**,不是最終結果行 —— 參數化測試不發單一最終結果行。
 
-### G10 失敗了算誰的
+### G9 失敗了算誰的
 
 人不讀程式碼,所以裁判必須是機械的。**規格的 `examples` 當裁判:**
 
@@ -312,7 +320,7 @@ gh pr create --base {INTEGRATION_BRANCH} ...   # 或 glab mr create
 第三列是設計**明確接受殘留風險**的地方:擋的話 oracle 可以無中生有任意需求,
 迴圈永遠不收斂。代價是真有可能出貨一個 bug,所以它必須在你按推之前具名出現。
 
-### G11 的重現形式
+### G10 的重現形式
 
 | finding 類別 | 重現 | 判定 |
 |---|---|---|
@@ -324,9 +332,9 @@ gh pr create --base {INTEGRATION_BRANCH} ...   # 或 glab mr create
 
 ## 迴圈與收斂
 
-- 修完之後**重跑 G0–G8**(腳本,幾乎免費)+ 該條重現測試
-- **不重派 G10/G11**,除非 fix diff 跨超過一個檔或超過行數門檻
-- G11 最多重派 **1 次**(它是最貴的一次派遣)
+- 修完之後**重跑 G0–G7**(腳本,幾乎免費)+ 該條重現測試
+- **不重派 G9/G10**,除非 fix diff 跨超過一個檔或超過行數門檻
+- G10 最多重派 **1 次**(它是最貴的一次派遣)
 
 實測的派遣開機費(單次、零工作量):`general-purpose` 31,554 · `spec-grill`(3 工具)5,587 ·
 `spec-reader`(零工具)3,137。**tool schema 佔了 general-purpose 開機費的九成** ——
@@ -348,7 +356,7 @@ gh pr create --base {INTEGRATION_BRANCH} ...   # 或 glab mr create
 - `scan-siblings` —— 跨 worktree 掃規格,得到能力清單與碰撞警告
 - `runs` —— 跨 worktree 狀態列表,一眼看完誰卡在哪、誰在等你
 - 兄弟分支 merge 進整合分支後,其他 worktree 的基準線失效 →
-  rebase 後**重跑 G0–G8**(呼叫點清單與 lint 基準都要重算)
+  rebase 後**重跑 G0–G7**(呼叫點清單與 lint 基準都要重算)
 
 ## Common Mistakes
 

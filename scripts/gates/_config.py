@@ -12,7 +12,8 @@ AGENTS.md 是寫給 AI 讀的散文;腳本需要真正的設定檔。
       scenario_pattern: '@Test\\("(SC-[\\w]+)'
     reachability:
       globs: ["App/**/*.swift"]    # G8 在哪裡找建構點
-    lint: "swiftlint lint --quiet"
+    lint: "swiftlint lint --quiet"     # 會把變更的檔案路徑接在後面
+    test: "./scripts/verify.sh"        # 沒設定的話 G4 直接算失敗
 """
 
 from __future__ import annotations
@@ -27,7 +28,10 @@ DEFAULTS = {
         "scenario_pattern": r"(SC-\d+[a-z]?)",
     },
     "reachability": {"globs": ["**/*"]},
+    # 兩個都預設 None。**沒設定 = 無法驗證 = 失敗**,不是「跳過」——
+    # 「沒有人檢查」和「檢查通過」是兩件完全不同的事。
     "lint": None,
+    "test": None,
 }
 
 

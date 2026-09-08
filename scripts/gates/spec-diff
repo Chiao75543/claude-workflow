@@ -93,6 +93,15 @@ def main(argv: list[str]) -> int:
         _, b = new_sc[sid]
         if a.get("then") != b.get("then"):
             f.error(f"{sid}.then", "行為契約變了")
+        # 批准後新增豁免 = 讓某條測試不必先紅過。那是契約鬆綁,不是事實修正。
+        if a.get("red_exempt_reason") != b.get("red_exempt_reason"):
+            if not a.get("red_exempt_reason"):
+                f.error(f"{sid}.red_exempt_reason",
+                        "批准後新增 RED 豁免 —— 這條測試從此不必先紅過,是契約鬆綁")
+            elif not b.get("red_exempt_reason"):
+                f.warn(f"{sid}.red_exempt_reason", "移除了豁免(收緊,不擋)")
+            else:
+                f.error(f"{sid}.red_exempt_reason", "豁免理由被改寫 —— 人批准的是原本那個理由")
         if a.get("mode") != b.get("mode"):
             f.error(f"{sid}.mode", f"驗證方式變了 {a.get('mode')} → {b.get('mode')}"
                                    + (" —— 從自動驗證降級成只能人工" if b.get("mode") == "6d" else ""))

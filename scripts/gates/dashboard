@@ -183,6 +183,37 @@ def main(argv: list[str]) -> int:
     gates.append({"id": "G6", "what": "規格↔測試雙向", "ok": ok,
                   "note": f"{len(scenario_ids(spec))} 條 Scenario · 涵蓋 {covered.group(1) if covered else '?'}"})
 
+    # G3 lint —— 只看變更的檔案。契約:設定的指令接受檔案路徑當結尾參數。
+    changed = [c for c in (
+        git(root, "diff", "--name-only", "--diff-filter=ACM", f"{base}...HEAD").split("\n")
+        + git(root, "diff", "--cached", "--name-only", "--diff-filter=ACM").split("\n")
+    ) if c and (root / c).is_file()]
+    lint_cmd = config.get("lint")
+    if not lint_cmd:
+        gates.append({"id": "G3", "what": "lint(變更的檔案)", "ok": False,
+                      "note": "specs/pipeline.yaml 沒設 lint"})
+    elif not changed:
+        gates.append({"id": "G3", "what": "lint(變更的檔案)", "ok": True, "note": "沒有變更的檔案"})
+    else:
+        ok, out = run(lint_cmd.split() + changed, root)
+        gates.append({"id": "G3", "what": "lint(變更的檔案)", "ok": ok,
+                      "note": f"{len(changed)} 個檔案" if ok else out.strip().splitlines()[-1][:60]})
+
+    # G4 測試 —— 沒設定指令就是失敗。證據表不能宣稱「綠」而沒有人跑過。
+    test_cmd = config.get("test")
+    if not test_cmd:
+        gates.append({"id": "G4", "what": "測試實作後是綠的", "ok": False,
+                      "note": "specs/pipeline.yaml 沒設 test"})
+        attention.append({
+            "tag": "無法驗證", "title": "沒有人確認測試現在是綠的",
+            "body": "RED 證據只證明測試在實作前是紅的,不證明實作後是綠的。"
+                    "沒設 test 指令的話,GREEN 仍然只是「AI 說 OK」—— 那正是這條線要消滅的東西。",
+        })
+    else:
+        ok, out = run(test_cmd.split(), root)
+        gates.append({"id": "G4", "what": "測試實作後是綠的", "ok": ok,
+                      "note": "全綠" if ok else out.strip().splitlines()[-1][:60]})
+
     red = read_json(ev / "red.json")
     if red:
         counts = red.get("counts", {})
@@ -190,6 +221,15 @@ def main(argv: list[str]) -> int:
         recon_ok = all(r.get("reconciled") for r in red.get("reconciliation", []))
         gates.append({"id": "G5", "what": "每條測試都曾真的紅過", "ok": not blocking and recon_ok,
                       "note": " · ".join(f"{k} {v}" for k, v in counts.items())})
+        exempted = [t for t in red.get("tests", []) if t.get("failure_class") == "exempt"]
+        if exempted:
+            reasons = red.get("exemptions", {})
+            attention.append({
+                "tag": "書面豁免", "title": f"{len(exempted)} 條測試靠豁免通過 G5",
+                "body": "這些測試在實作前就是綠的,靠規格裡寫的理由放行:"
+                        + "；".join(f"{k} —— {v}" for k, v in list(reasons.items())[:3])
+                        + "。豁免只在該測試完全沒建構 repository stub 時成立,請確認理由站得住。",
+            })
     else:
         gates.append({"id": "G5", "what": "每條測試都曾真的紅過", "ok": False, "note": "缺 red.json"})
 

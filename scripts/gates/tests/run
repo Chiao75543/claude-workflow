@@ -135,6 +135,26 @@ def test_spec_lint(tmp: pathlib.Path) -> None:
     code, out = run_gate("spec-lint", "specs/demo/spec.yaml", cwd=root)
     check("6d 沒寫 manual_reason → 擋", code == 1 and "manual_reason" in out, out[:120])
 
+    # 對抗審查實證的完整繞道:批准後偷加 red_exempt_reason: x → 五道關卡全綠
+    bad = VALID_SPEC.replace("      - id: SC-001\n        mode: 6a",
+                             "      - id: SC-001\n        mode: 6a\n        red_exempt_reason: x")
+    root = make_repo(tmp / "lint-exempt-short", bad)
+    code, out = run_gate("spec-lint", "specs/demo/spec.yaml", cwd=root)
+    check("豁免理由只寫一個字 → 擋", code == 1 and "red_exempt_reason" in out, out[:160])
+
+    bad = VALID_SPEC.replace("      - id: SC-001\n        mode: 6a",
+                             "      - id: SC-001\n        mode: 6a\n        red_exempt_reason: TBD 之後再補理由")
+    root = make_repo(tmp / "lint-exempt-tbd", bad)
+    code, out = run_gate("spec-lint", "specs/demo/spec.yaml", cwd=root)
+    check("豁免理由是佔位符 → 擋", code == 1, out[:160])
+
+    bad = VALID_SPEC.replace(
+        "      - id: SC-001\n        mode: 6a",
+        "      - id: SC-001\n        mode: 6a\n        red_exempt_reason: 純值型別的對照表,無 repository 縫可 stub")
+    root = make_repo(tmp / "lint-exempt-ok", bad)
+    code, out = run_gate("spec-lint", "specs/demo/spec.yaml", cwd=root)
+    check("豁免理由說得出所以然 → 過", code == 0, out[:160])
+
     bad = VALID_SPEC.replace("why: 測試用的規格", "why: TBD")
     root = make_repo(tmp / "lint-tbd", bad)
     code, out = run_gate("spec-lint", "specs/demo/spec.yaml", cwd=root)
@@ -296,12 +316,35 @@ def test_spec_diff(tmp: pathlib.Path) -> None:
     code, out = run_gate("spec-diff", "specs/demo/spec.yaml", cwd=root)
     check("有覆蓋改成 N/A → 要重新批准", code == 1 and "覆蓋被放棄" in out, out[:200])
 
+    root = build("diff-exempt-added", lambda s: s.replace(
+        "      - id: SC-001\n        mode: 6a",
+        "      - id: SC-001\n        mode: 6a\n        red_exempt_reason: 事後補上的理由夠長了"))
+    code, out = run_gate("spec-diff", "specs/demo/spec.yaml", cwd=root)
+    check("批准後新增 RED 豁免 → 要重新批准", code == 1 and "契約鬆綁" in out, out[:200])
+
     root = build("diff-add", lambda s: s.replace(
         "          - in: {size: 0}\n            out: {returns: empty_list}",
         "          - in: {size: 0}\n            out: {returns: empty_list}\n"
         "          - in: {size: 1}\n            out: {returns: one_item}"))
     code, out = run_gate("spec-diff", "specs/demo/spec.yaml", cwd=root)
     check("多加一組 example → 收緊,不擋", code == 0 and "多了" in out, out[:200])
+
+
+# ---------------------------------------------------------------- dashboard
+
+def test_dashboard_requires_verification(tmp: pathlib.Path) -> None:
+    """「沒有人檢查」和「檢查通過」是兩件不同的事。
+    沒設 test 指令時 G4 必須失敗,不能沉默跳過 ——
+    否則 RED 證據只證明實作前是紅的,GREEN 仍然是「AI 說 OK」。"""
+    root = make_repo(tmp / "dash-notest")
+    freeze(root)
+    (root / "specs" / "pipeline.yaml").write_text("runner: swift-testing\n")
+    subprocess.run(["git", "add", "-A"], cwd=root, check=True)
+    code, out = run_gate("dashboard", "specs/demo/spec.yaml", cwd=root)
+    check("沒設 test 指令 → G4 判失敗(不是跳過)",
+          "沒設 test" in out and code == 1, out[:200])
+    check("沒設 lint 指令 → G3 判失敗(不是跳過)",
+          "沒設 lint" in out, out[:200])
 
 
 # ---------------------------------------------------------------- 可達性
@@ -339,7 +382,8 @@ def main() -> int:
     with tempfile.TemporaryDirectory() as td:
         tmp = pathlib.Path(td)
         for fn in (test_spec_lint, test_freeze_check, test_red_capture,
-                   test_traceability, test_spec_diff, test_reachability):
+                   test_traceability, test_spec_diff,
+                   test_dashboard_requires_verification, test_reachability):
             try:
                 fn(tmp)
             except Exception as exc:  # noqa: BLE001

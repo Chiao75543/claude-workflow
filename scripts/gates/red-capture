@@ -159,6 +159,9 @@ def main(argv: list[str]) -> int:
             if klass == "passed":
                 if sid and sid in exemptions:
                     klass = "exempt"
+                    # 豁免不是靜靜通過:它必須被看見,才有被挑戰的機會
+                    f.warn(f"{layer} / {sid}",
+                           f"實作前就綠,靠書面豁免通過:{str(exemptions[sid])[:60]}")
                 else:
                     f.error(f"{layer} / {sid or name[:32]}",
                             "實作前就是綠的 —— 空測試。真有理由請在規格該條寫 red_exempt_reason")
