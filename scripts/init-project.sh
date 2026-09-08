@@ -9,9 +9,11 @@
 #
 # What it does:
 #   - Copies templates/skills/<stack>/<name>/SKILL.md → <target>/.claude/skills/<name>/SKILL.md
-#     for each skill convention referenced by workflow-orchestrator
-#     (test-writer, rd-implementer, code-reviewer, reporter, mr-reviewer,
-#     review-fixer — see workflow-orchestrator's "Project bindings" section).
+#     for each skill convention referenced by workflow-orchestrator.
+#     Only two remain project-local (test-writer, rd-implementer) — the other
+#     four were replaced by scripts/gates/* and the shipped agents/*.
+#     Also scaffolds specs/pipeline.yaml, the machine-readable stack binding
+#     the gate scripts read (AGENTS.md is prose for the AI; this is for scripts).
 #   - Auto-substitutes {PROJECT_ROOT} with the absolute path of <target-repo>.
 #   - Backs up any pre-existing skill file in-place as SKILL.md.bak.<ts>.
 #   - Lists remaining placeholders the user must edit by hand.
@@ -81,6 +83,34 @@ for skill_dir in "$SRC_DIR"/*/; do
   copied=$((copied + 1))
 done
 
+# Scaffold the machine-readable stack binding the gate scripts read.
+PIPELINE_CFG="$TARGET/specs/pipeline.yaml"
+if [ -f "$PIPELINE_CFG" ]; then
+  echo "    [keep]   $PIPELINE_CFG (already exists)"
+else
+  mkdir -p "$TARGET/specs"
+  cat > "$PIPELINE_CFG" <<'CFG'
+# 機器可讀的技術棧綁定,給 scripts/gates/* 用。
+# AGENTS.md 是寫給 AI 讀的散文;這份是給腳本讀的。
+# 每個 {PLACEHOLDER} 都要手動填。
+
+runner: {TEST_OUTPUT_FORMAT}        # red-capture 的輸出解析器,例如 swift-testing
+
+tests:
+  globs:
+    - "{TEST_GLOB}"                 # 例如 "Packages/*/Tests/**/*.swift"
+  # 慣例:測試描述以 Scenario 編號開頭
+  scenario_pattern: '(SC-\d+[a-z]?)'
+
+reachability:
+  globs:
+    - "{APP_SOURCE_GLOB}"           # G8 在哪裡找建構點,例如 "App/**/*.swift"
+
+lint: "{LINT_COMMAND}"
+CFG
+  echo "    [write]  $PIPELINE_CFG"
+fi
+
 echo ""
 echo "==> Done. $copied skill(s) scaffolded."
 echo ""
@@ -103,6 +133,10 @@ if [ -n "$remaining" ]; then
   echo "  {GITLAB_API_HOST}     — GitLab API host or IP"
   echo "  {GITLAB_WEB_HOST}     — GitLab web UI host"
   echo "  {INTEGRATION_BRANCH}  — e.g. developer / main"
+  echo "  {TEST_OUTPUT_FORMAT}  — red-capture parser: swift-testing (add more in scripts/gates/red-capture)"
+  echo "  {TEST_GLOB}           — where the tests live"
+  echo "  {APP_SOURCE_GLOB}     — where G8 looks for construction sites"
+  echo "  {LINT_COMMAND}        — lint command (checked on changed files only)"
 else
   echo "No unresolved placeholders detected."
 fi

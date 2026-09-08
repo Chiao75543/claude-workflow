@@ -2,7 +2,7 @@
 name: test-writer
 description: >
   依據規格文件的驗收條件撰寫 Android 單元測試。當使用者輸入 /test 指令，或說「幫我寫測試」「依照規格寫單元測試」「test-writer」「按驗收條件寫測試」時，必須使用此技能包。
-  Claude 扮演資深 QA/RD 角色，從 OpenSpec change 讀取規格與 production code，撰寫涵蓋 UseCase、Repository、ViewModel 的單元測試，並回報 Scenario 覆蓋率與發現的問題。
+  Claude 扮演資深 QA/RD 角色，從結構化規格與 production code，撰寫涵蓋 UseCase、Repository、ViewModel 的單元測試，並回報 Scenario 覆蓋率與發現的問題。
   只要任務牽涉到依照規格文件生成測試、驗證業務邏輯、確認 Scenario 覆蓋，一律觸發此技能包。
 compatibility: "需要 bash / 檔案系統（讀取 production code 與寫入測試，必要）"
 ---
@@ -14,13 +14,13 @@ Claude 扮演資深 QA/RD，以規格驗收條件為基準撰寫完整單元測�
 ## 觸發方式
 
 ```
-/test <OpenSpec change 名稱或路徑>
+/test <規格名稱或 specs/{name}/spec.yaml 路徑>
 ```
 
 ### 範例
 ```
 /test etf-curated-themes
-/test openspec/changes/etf-curated-themes/
+/test specs/etf-curated-themes/
 ```
 
 ---
@@ -66,14 +66,58 @@ app/src/test/java/{PACKAGE_PATH}/
 
 ---
 
+## RED 證據的紀律(pipeline S7 要求)
+
+這一節不是 stack 特有的,但它決定了測試能不能當作證據。
+
+### stub 必須回傳「沒有任何 Scenario 預期的東西」
+
+實作還沒寫的時候先跑一次測試,是為了證明每條測試**對實作敏感**。
+但如果 stub 剛好回傳了某條 Scenario 預期的值,那條測試在實作前就綠 —— 它是空測試。
+
+| stub 寫法 | 後果 |
+|---|---|
+| 清單回 `[]` | 「沒有資料時回空清單」那條**實作前就綠** ❌ |
+| void 靜默成功 | 「不該報錯」那條**實作前就綠** ❌ |
+| 清單回**哨兵列**、void **拋哨兵錯誤** | 全部紅,而且紅得可分類 ✅ |
+
+哨兵值要帶一個**可辨識的標記字串**(慣例 `STUB-NOT-IMPLEMENTED`),
+`red-capture` 靠它區分「哨兵逸出」與「真的爆掉」。
+
+### 測試要斷言具體錯誤訊息,不只斷言型別
+
+哨兵如果是 `.validation("STUB-...")`,那麼只斷言「拋 validation」的測試會被它矇混過去。
+斷言完整的錯誤值(含訊息)才紅得對。
+
+### 兩個測試命名空間
+
+| 命名空間 | 來源 | RED 後凍結 | 算證據 |
+|---|---|---|---|
+| `spec/` | 規格的 examples | **是** | **是** |
+| `impl/` | 實作者自己加的 | 否 | 否 |
+
+只有 `spec/` 進凍結指紋。實作階段動到 `spec/` 任何一個檔,S9 會擋。
+真的需要改 = 承認規格錯了 = 明確事件,退回重跑並留紀錄。
+
+### 順序:寫測試 → **格式化** → 跑 → 擷取證據 → 凍結
+
+先格式化再擷取。反過來的話,之後修 lint 跑一次 formatter,
+凍結指紋就對不上了 —— 但行為根本沒變。
+
+### 無界等待會拖死整個測試程序
+
+任何「等某件事發生」的迴圈都必須有上限。實作還沒寫的時候那件事永遠不會發生,
+測試會掛住,**而且它後面的測試會靜默不執行** —— 證據檔看不出少了誰。
+超過上限就記一條明確的失敗訊息。
+
 ## 執行流程
 
-### Step 1 — 讀取規格（OpenSpec 優先）
+### Step 1 — 讀取規格
 
-**優先讀取 OpenSpec 結構：**
+**優先讀取 規格結構：**
 
 ```
-openspec/changes/{name}/
+specs/{name}/
 ├── specs/*.md     → 取得 Requirement + Scenario（SHALL/WHEN/THEN）
 ├── android.md     → 取得 API 契約、錯誤碼定義
 ├── design.md      → 取得 Domain Model 設計
@@ -88,7 +132,7 @@ openspec/changes/{name}/
 
 將每個 Scenario 記錄，供後續覆蓋率報告使用。
 
-**找不到 OpenSpec**：先要求使用者建立 OpenSpec change（或將舊規格遷移成 canonical spec），不另走 fallback。
+**找不到規格**:先要求使用者建立 `specs/{name}/spec.yaml`(或把舊規格遷移過來),不另走 fallback。
 
 ---
 
@@ -121,7 +165,7 @@ cat app/src/main/java/{PACKAGE_PATH}/ui/feature/xxx/XxxViewModel.kt
 
 ```
 📋 測試計畫 — <功能名稱>
-📄 規格來源：openspec/changes/{name}/
+📄 規格來源：specs/{name}/
 
 UseCaseTest（domain/usecase/XxxUseCaseTest.kt）
   ✅ Scenario: 正常流程成功
@@ -353,7 +397,7 @@ cd {PROJECT_ROOT}
 
 ### Step 6 — 更新規格 Test Coverage
 
-在 OpenSpec change 內補充 test coverage 資訊（若 spec 有欄位），或在 `tasks.md` 勾選 test 任務完成。
+覆蓋率由 `scripts/gates/traceability` 機械檢查,不需要在規格裡手動記錄。
 
 ---
 
@@ -363,7 +407,7 @@ cd {PROJECT_ROOT}
 ✅ 測試撰寫完成！
 
 📦 功能：<功能名稱>
-📄 規格：openspec/changes/{name}/
+📄 規格：specs/{name}/
 
 📊 Scenario 覆蓋率：10/10（100%）
 📊 程式碼覆蓋率：XX%（目標 ≥ 90%）
@@ -391,5 +435,5 @@ cd {PROJECT_ROOT}
 | Production code 不存在（TDD 模式） | 正常，依據規格的介面定義撰寫測試 |
 | specs/*.md 的 Scenario 不存在 | 停止，提示先完善規格再執行 /test |
 | 程式碼與規格行為不一致 | 不自行決定，回報給使用者 |
-| OpenSpec change 不存在 | 停止，請使用者先建立或遷移成 canonical OpenSpec spec |
+| 規格不存在 | 停止，請使用者先建立或遷移成 specs/{name}/spec.yaml |
 | UiState / Event 型別定義與預期不符 | 列出差異，確認後再撰寫 |
