@@ -1,0 +1,71 @@
+#!/usr/bin/env python3
+"""runs — 跨 worktree 的狀態列表。B 模式沒有塔台,用這支代替開四個終端問。
+
+  runs                                    列出所有在飛的功能卡在哪
+  runs --set <spec.yaml> S9 "驗證關"        更新狀態
+  runs --set <spec.yaml> S5 "等你批說明頁" --blocked-on human
+
+狀態寫在 <spec 目錄>/evidence/status.json。
+"""
+
+from __future__ import annotations
+
+import datetime
+import pathlib
+import sys
+
+sys.path.insert(0, str(pathlib.Path(__file__).parent))
+from _common import evidence_dir, in_flight_specs, read_json, repo_root, sibling_worktrees, write_json  # noqa: E402
+
+
+def set_status(argv: list[str]) -> int:
+    if len(argv) < 3:
+        print(__doc__)
+        return 2
+    spec_path = pathlib.Path(argv[0])
+    blocked = "human" if "--blocked-on" in argv else None
+    if blocked and (idx := argv.index("--blocked-on")) + 1 < len(argv):
+        blocked = argv[idx + 1]
+    write_json(evidence_dir(spec_path) / "status.json", {
+        "stage": argv[1],
+        "label": argv[2],
+        "blocked_on": blocked,
+        "updated_at": datetime.datetime.now().astimezone().isoformat(timespec="seconds"),
+    })
+    flag = f" (等 {blocked})" if blocked else ""
+    print(f"{spec_path.parent.name}: {argv[1]} {argv[2]}{flag}")
+    return 0
+
+
+def main(argv: list[str]) -> int:
+    if argv and argv[0] == "--set":
+        return set_status(argv[1:])
+
+    root = repo_root()
+    rows = []
+    for tree in [root] + sibling_worktrees(root):
+        for spec_path in in_flight_specs(tree):
+            status = read_json(evidence_dir(spec_path) / "status.json") or {}
+            rows.append((tree.name, spec_path.parent.name, status))
+
+    if not rows:
+        print("沒有在飛的功能。")
+        return 0
+
+    waiting = [r for r in rows if (r[2] or {}).get("blocked_on")]
+    print(f"▸ {len(rows)} 個在飛" + (f",{len(waiting)} 個等你" if waiting else ""))
+    width = max(len(r[1]) for r in rows)
+    for tree_name, name, status in sorted(rows, key=lambda r: (not (r[2] or {}).get("blocked_on"), r[1])):
+        stage = status.get("stage", "—")
+        label = status.get("label", "(尚未回報狀態)")
+        blocked = status.get("blocked_on")
+        mark = "⏸" if blocked else "  "
+        when = (status.get("updated_at") or "")[:16].replace("T", " ")
+        print(f"  {mark} {name.ljust(width)}  {stage:<5} {label:<22} {when}  [{tree_name}]")
+    if waiting:
+        print(f"\n  等你的: {', '.join(r[1] for r in waiting)}")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

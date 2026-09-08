@@ -1,0 +1,223 @@
+#!/usr/bin/env python3
+"""spec-lint — 規格的機械檢查(S6 / G1 前置)。
+
+三類:
+  schema    必要欄位、型別、ID 唯一且可解析
+  完備性    每個 Requirement 對六類遺漏逐項表態:列 Scenario,或寫「N/A + 理由」
+  可測性    then 必須是結構化 mapping;examples 必須是具體字面值;
+            6d(只能人工驗)必須說明為何不能自動化
+
+設計理由:規格只給 AI 讀,所以不必是散文。改成結構化之後,
+「正確地處理」這種空話**根本沒有欄位可以放** —— 不是被偵測到,是寫不進去。
+詞彙黑名單只是最後一道網,擋那些硬塞進字串值的。
+
+用法: spec-lint <spec.yaml> [more.yaml ...]
+退出碼: 0 通過 / 1 有錯誤
+"""
+
+from __future__ import annotations
+
+import pathlib
+import re
+import sys
+
+sys.path.insert(0, str(pathlib.Path(__file__).parent))
+from _common import (  # noqa: E402
+    COMPLETENESS_CATEGORIES, MODES, NAME, REQUIREMENT_ID, SCENARIO_ID,
+    Findings, load_spec, scenarios,
+)
+
+# 最後一道網:硬塞進字串值的空話。schema 已經擋掉大部分。
+VAGUE = [
+    "正確", "適當", "合理", "正常運作", "良好", "妥善", "應該要能",
+    "等等", "若干", "一些", "快速", "大量", "足夠",
+    "correct", "appropriate", "proper", "reasonable", "properly",
+    "as expected", "and so on", "etc.", "fast enough",
+]
+PLACEHOLDER = re.compile(r"\b(TBD|TODO|FIXME|XXX|待補|待定)\b", re.I)
+
+REQUIRED_TOP = ["meta", "why", "what", "impact", "requirements"]
+
+
+def walk_strings(node, trail=""):
+    """走訪巢狀結構裡所有字串值,回傳 (路徑, 值)。"""
+    if isinstance(node, dict):
+        for key, value in node.items():
+            yield from walk_strings(value, f"{trail}.{key}" if trail else str(key))
+    elif isinstance(node, list):
+        for index, value in enumerate(node):
+            yield from walk_strings(value, f"{trail}[{index}]")
+    elif isinstance(node, str):
+        yield trail, node
+
+
+def check_schema(spec: dict, f: Findings) -> None:
+    for key in REQUIRED_TOP:
+        if key not in spec:
+            f.error("(頂層)", f"缺少必要區塊 `{key}`")
+
+    meta = spec.get("meta")
+    if isinstance(meta, dict):
+        name = meta.get("name")
+        if not name or not NAME.match(str(name)):
+            f.error("meta.name", f"必須是 kebab-case 名稱,得到 {name!r}")
+        if meta.get("change_type") not in {"ADDED", "MODIFIED"}:
+            f.error("meta.change_type", "必須是 ADDED 或 MODIFIED")
+    else:
+        f.error("meta", "必須是 mapping")
+
+    impact = spec.get("impact")
+    if isinstance(impact, dict):
+        if not impact.get("files"):
+            f.error("impact.files", "必須列出受影響的檔案(scope audit 的產出)")
+        if not impact.get("call_sites"):
+            f.error("impact.call_sites", "必須列出受影響的呼叫點,或明寫「無既有呼叫點」")
+    else:
+        f.error("impact", "必須是 mapping")
+
+    reqs = spec.get("requirements")
+    if not isinstance(reqs, list) or not reqs:
+        f.error("requirements", "必須是非空的 list")
+        return
+
+    seen_req: set[str] = set()
+    seen_sc: set[str] = set()
+    for req in reqs:
+        if not isinstance(req, dict):
+            f.error("requirements[]", "每個 Requirement 必須是 mapping")
+            continue
+        rid = req.get("id")
+        where = str(rid or "(無 id 的 Requirement)")
+        if not rid or not REQUIREMENT_ID.match(str(rid)):
+            f.error(where, "id 必須形如 REQ-001")
+        elif rid in seen_req:
+            f.error(where, "id 重複")
+        else:
+            seen_req.add(rid)
+        if not str(req.get("statement") or "").strip():
+            f.error(where, "缺少 statement")
+        if not req.get("scenarios"):
+            f.error(where, "至少要有一條 Scenario")
+
+    for req, sc in scenarios(spec):
+        sid = sc.get("id")
+        where = f"{req.get('id')} / {sid or '(無 id)'}"
+        if not sid or not SCENARIO_ID.match(str(sid)):
+            f.error(where, "id 必須形如 SC-001 或 SC-001b")
+        elif sid in seen_sc:
+            f.error(where, "id 重複")
+        else:
+            seen_sc.add(sid)
+        if sc.get("mode") not in MODES:
+            f.error(where, f"mode 必須是 {'/'.join(sorted(MODES))} 其一,得到 {sc.get('mode')!r}")
+
+
+def check_completeness(spec: dict, f: Findings) -> None:
+    """六類遺漏逐項表態。指向的 Scenario 必須在**同一個** Requirement 裡 ——
+    指到別的 Requirement 的 Scenario 等於這個 Requirement 自己零覆蓋。"""
+    for req in spec.get("requirements") or []:
+        if not isinstance(req, dict):
+            continue
+        rid = req.get("id")
+        own = {sc.get("id") for sc in (req.get("scenarios") or []) if isinstance(sc, dict)}
+        table = req.get("completeness")
+        if not isinstance(table, dict):
+            f.error(str(rid), "缺少 completeness 區塊(六類遺漏必須逐項表態)")
+            continue
+        for category in COMPLETENESS_CATEGORIES:
+            where = f"{rid}.{category}"
+            if category not in table:
+                f.error(where, "未表態(要嘛列 Scenario,要嘛寫「N/A — 理由」)")
+                continue
+            value = table[category]
+            if isinstance(value, list):
+                if not value:
+                    f.error(where, "空 list 等於沒表態")
+                for sid in value:
+                    if sid not in own:
+                        f.error(where, f"{sid} 不在 {rid} 自己的 Scenario 裡")
+            elif isinstance(value, str):
+                text = value.strip()
+                if not text.upper().startswith("N/A"):
+                    f.error(where, "字串形式只接受「N/A — 理由」")
+                elif len(re.sub(r"^N/?A\s*[—\-:：]?\s*", "", text, flags=re.I).strip()) < 8:
+                    f.error(where, "N/A 必須附理由(且要說得出所以然,不是一個詞)")
+            else:
+                f.error(where, "必須是 Scenario id 的 list,或「N/A — 理由」字串")
+
+
+def check_testability(spec: dict, f: Findings) -> None:
+    for req, sc in scenarios(spec):
+        sid = sc.get("id")
+        where = f"{req.get('id')} / {sid}"
+        mode = sc.get("mode")
+
+        then = sc.get("then")
+        if not isinstance(then, dict) or not then:
+            f.error(where, "then 必須是非空的 mapping —— 散文沒有欄位可以放")
+
+        if mode == "6d":
+            if not str(sc.get("manual_reason") or "").strip():
+                f.error(where, "mode 6d 必須寫 manual_reason:為什麼這條不能自動化")
+            continue  # 6d 沒有 examples
+
+        examples = sc.get("examples")
+        if not isinstance(examples, list) or not examples:
+            f.error(where, "至少要有一組 examples(具體的 in → out);examples 就是契約")
+            continue
+        for index, example in enumerate(examples):
+            spot = f"{where} examples[{index}]"
+            if not isinstance(example, dict):
+                f.error(spot, "每組 example 必須是 mapping")
+                continue
+            if "in" not in example:
+                f.error(spot, "缺少 in")
+            if "out" not in example:
+                f.error(spot, "缺少 out")
+
+
+def check_vague(spec: dict, f: Findings) -> None:
+    """最後一道網。只掃 then 與 examples.out —— 敘述性欄位(why/design/理由)不掃。"""
+    for req, sc in scenarios(spec):
+        where = f"{req.get('id')} / {sc.get('id')}"
+        targets = [("then", sc.get("then"))]
+        for index, example in enumerate(sc.get("examples") or []):
+            if isinstance(example, dict):
+                targets.append((f"examples[{index}].out", example.get("out")))
+        for label, node in targets:
+            for trail, text in walk_strings(node):
+                low = text.lower()
+                for word in VAGUE:
+                    if word.lower() in low:
+                        spot = f"{where} {label}" + (f".{trail}" if trail else "")
+                        f.error(spot, f"空話「{word}」—— 這裡只收具體的值")
+
+    for trail, text in walk_strings(spec):
+        if PLACEHOLDER.search(text):
+            f.error(trail or "(頂層)", f"殘留佔位符: {text.strip()[:48]}")
+
+
+def main(argv: list[str]) -> int:
+    if not argv:
+        print(__doc__)
+        return 2
+    worst = 0
+    for arg in argv:
+        path = pathlib.Path(arg)
+        if not path.exists():
+            print(f"✘ 找不到 {path}")
+            worst = 1
+            continue
+        print(f"▸ {path}")
+        spec = load_spec(path)
+        f = Findings()
+        check_schema(spec, f)
+        check_completeness(spec, f)
+        check_testability(spec, f)
+        check_vague(spec, f)
+        worst = max(worst, f.report("spec-lint"))
+    return worst
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

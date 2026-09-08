@@ -6,3 +6,10 @@ firebase-debug.log*
 node_modules/
 .idea/
 .vscode/
+
+# pipeline 產生的 worktree
+.worktrees/
+
+# python bytecode
+__pycache__/
+*.pyc

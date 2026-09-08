@@ -8,6 +8,7 @@
 #   1. Checks required tools (claude, codex, git, node)
 #   2. Symlinks skills/workflow-orchestrator/ into ~/.claude/skills/
 #   3. Symlinks commands/workflow.md and commands/workflow/ into ~/.claude/commands/
+#   3b. Symlinks agents/*.md into ~/.claude/agents/  (pipeline 派遣用的精簡 agent)
 #   4. Optionally copies templates/codex-AGENTS.md to ~/.codex/AGENTS.md
 #   5. Prints next steps for project-level AGENTS.md and memory
 
@@ -74,6 +75,25 @@ else
   ln -s "$SKILL_SRC" "$SKILL_DST"
   echo "==> Linked $SKILL_DST -> $SKILL_SRC"
 fi
+echo ""
+
+# 3b. Symlink pipeline agents (spec-grill / spec-reader / spec-oracle / code-adversary)
+#     這些是精簡定義:工具集刻意最小化。實測 general-purpose 每次派遣有 ~31k token 的
+#     開機成本,其中約 23k 純粹是 tool schema;隔離型 agent 更是連讀檔都不該有。
+#     注意:agent 定義要 session 重啟才會載入。
+mkdir -p "$CLAUDE_DIR/agents"
+for agent_src in "$REPO_DIR"/agents/*.md; do
+  [ -e "$agent_src" ] || continue
+  agent_dst="$CLAUDE_DIR/agents/$(basename "$agent_src")"
+  if [ -L "$agent_dst" ] && [ "$(readlink "$agent_dst")" = "$agent_src" ]; then
+    echo "==> Agent already linked: $(basename "$agent_src")"
+  else
+    [ -e "$agent_dst" ] && [ ! -L "$agent_dst" ] && mv "$agent_dst" "$agent_dst.backup.$(date +%s)"
+    ln -sfn "$agent_src" "$agent_dst"
+    echo "==> Linked agent: $(basename "$agent_src")"
+  fi
+done
+echo "    (agent 定義需要重啟 Claude Code session 才會生效)"
 echo ""
 
 # 3. Symlink slash commands (/workflow + /workflow:* sub-commands)

@@ -1,0 +1,208 @@
+#!/usr/bin/env python3
+"""dashboard — S11:你在按推之前唯一要看的東西。
+
+自己跑得動的關卡就跑,讀得到的證據就讀,產出一頁 HTML。
+
+兩個刻意的設計:
+  · **可達性(G8)排在最前面,和嚴重度分開。** 切片教訓:「必須附可執行重現」
+    這條規則會系統性低估「缺席」類的問題 —— 東西根本不存在時寫不出失敗測試,
+    所以「整個功能沒接上導航」只能歸在次要等級,會沉到摺線下面。
+  · **顯示審查活動量,不只顯示結果。** 一張只有綠勾的表會訓練你變成橡皮圖章;
+    「提出 12 → 作廢 9 → 證實 3」才分得出「乾淨」和「沒認真查」。
+
+用法: dashboard <spec.yaml> [--base main] [-o evidence/dashboard.html]
+"""
+
+from __future__ import annotations
+
+import html
+import pathlib
+import re
+import subprocess
+import sys
+
+sys.path.insert(0, str(pathlib.Path(__file__).parent))
+import _config  # noqa: E402
+from _common import evidence_dir, load_spec, read_json, scenario_ids  # noqa: E402
+
+DECL = re.compile(r"^\s*(?:public\s+|internal\s+|final\s+)*(?:struct|class|enum|object|interface)\s+(\w+)", re.M)
+
+
+def git(root: pathlib.Path, *args: str) -> str:
+    try:
+        return subprocess.run(["git", *args], cwd=root, capture_output=True,
+                              text=True, check=True).stdout
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        return ""
+
+
+def check_reachability(root: pathlib.Path, base: str, config: dict) -> list[dict]:
+    """G8:新增的型別有沒有人建構它。缺席類問題唯一的機械防線。"""
+    added = [p for p in git(root, "diff", "--name-only", "--diff-filter=A", f"{base}...HEAD").split("\n") if p]
+    if not added:  # 尚未 commit 的情況
+        added = [p for p in git(root, "diff", "--cached", "--name-only", "--diff-filter=A").split("\n") if p]
+    globs = config["reachability"]["globs"]
+    in_scope = {p for g in globs for p in added if pathlib.Path(root, p).match(g) or p.startswith(g.split("*")[0])}
+
+    # 自己用 Python 搜,不外包給 git grep ——
+    # git grep -E 是 POSIX ERE,不支援 \b 與 \s,pattern 會靜默匹配不到而全部誤報。
+    tracked = [t for t in git(root, "ls-files").split("\n") if t]
+    contents: dict[str, str] = {}
+    for rel in tracked:
+        path = root / rel
+        if path.is_file() and path.stat().st_size < 2_000_000:
+            try:
+                contents[rel] = path.read_text(errors="ignore")
+            except OSError:
+                pass
+
+    results = []
+    for rel in sorted(in_scope):
+        text = contents.get(rel)
+        if text is None:
+            continue
+        names = DECL.findall(text)
+        for name in names[:1]:  # 只看檔案的主型別
+            use = re.compile(rf"\b{re.escape(name)}\s*\(")
+            sites = [other for other, body in contents.items()
+                     if other != rel and use.search(body)]
+            results.append({"file": rel, "symbol": name, "sites": sorted(sites)})
+    return results
+
+
+def run(cmd: list[str], cwd: pathlib.Path) -> tuple[bool, str]:
+    try:
+        proc = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True)
+        return proc.returncode == 0, (proc.stdout + proc.stderr).strip()
+    except FileNotFoundError:
+        return False, "找不到指令"
+
+
+def esc(text) -> str:
+    return html.escape(str(text))
+
+
+def render(context: dict) -> str:
+    gates_rows = "\n".join(
+        f'<div class="g"><span class="gid">{esc(g["id"])}</span><span>{esc(g["what"])}</span>'
+        f'<span class="v {"p" if g["ok"] else "f"}">{"✓" if g["ok"] else "✘"} {esc(g["note"])}</span></div>'
+        for g in context["gates"]
+    )
+    attn_items = "\n".join(
+        f'<div class="a"><span class="pill">{esc(a["tag"])}</span><div><h3>{esc(a["title"])}</h3>'
+        f'<p>{esc(a["body"])}</p></div></div>'
+        for a in context["attention"]
+    ) or '<div class="a"><span class="pill ok">0</span><div><h3>沒有需要你注意的</h3>'\
+         '<p>可達性、規格缺口、人工驗證殘留都是零。</p></div></div>'
+    shots = "\n".join(
+        f'<figure><img src="screenshots/{esc(s)}" alt="{esc(s)}"><figcaption>{esc(s)}</figcaption></figure>'
+        for s in context["screenshots"]
+    )
+    return f"""<!doctype html><meta charset="utf-8">
+<title>{esc(context['name'])} 證據表</title>
+<style>
+:root{{--bg:#F0F2F4;--panel:#fff;--ink:#171B20;--dim:#626D78;--rule:#D3D9DE;--pass:#1F7A4C;--fail:#A32C2C;--attn:#9A6212}}
+@media(prefers-color-scheme:dark){{:root{{--bg:#10141A;--panel:#171D25;--ink:#E4EAF0;--dim:#8C99A6;--rule:#262F3A;--pass:#5FBE8A;--fail:#E08585;--attn:#D9A055}}}}
+*{{box-sizing:border-box}}body{{background:var(--bg);color:var(--ink);font:15px/1.6 -apple-system,"PingFang TC",sans-serif;margin:0}}
+.p{{max-width:46rem;margin:0 auto;padding:2.5rem 1.25rem 4rem;display:flex;flex-direction:column;gap:1.75rem}}
+h1{{font-size:1.7rem;margin:.3rem 0 0}}h2{{font-size:.72rem;font-family:ui-monospace,monospace;letter-spacing:.14em;text-transform:uppercase;color:var(--dim);margin:0 0 .6rem;font-weight:500}}
+h3{{font-size:.95rem;margin:0 0 .2rem}}header{{border-bottom:2px solid var(--ink);padding-bottom:1rem}}
+.k{{font-family:ui-monospace,monospace;font-size:.68rem;letter-spacing:.16em;text-transform:uppercase;color:var(--dim)}}
+.sub{{color:var(--dim);font-size:.95rem}}.panel{{background:var(--panel);border:1px solid var(--rule)}}
+.a{{display:grid;grid-template-columns:auto 1fr;gap:.85rem;padding:.9rem 1rem;border-bottom:1px solid var(--rule);align-items:start}}
+.a:last-child{{border-bottom:none}}.a p{{margin:0;font-size:.88rem;color:var(--dim)}}
+.pill{{font-family:ui-monospace,monospace;font-size:.64rem;padding:.2rem .45rem;border:1px solid var(--attn);color:var(--attn);white-space:nowrap;margin-top:.15rem}}
+.pill.ok{{border-color:var(--pass);color:var(--pass)}}
+.g{{display:grid;grid-template-columns:2.6rem 1fr auto;gap:.8rem;padding:.55rem 1rem;border-bottom:1px solid var(--rule);font-size:.9rem;align-items:baseline}}
+.g:last-child{{border-bottom:none}}.gid{{font-family:ui-monospace,monospace;font-size:.72rem;color:var(--dim)}}
+.v{{font-family:ui-monospace,monospace;font-size:.76rem;text-align:right;color:var(--dim)}}.v.p{{color:var(--pass)}}.v.f{{color:var(--fail)}}
+figure{{margin:0}}figure img{{max-width:min(100%,15rem);border:1px solid var(--rule);display:block}}
+figcaption{{font-family:ui-monospace,monospace;font-size:.7rem;color:var(--dim);margin-top:.3rem}}
+.shots{{display:flex;gap:1rem;flex-wrap:wrap;padding:1rem}}
+</style>
+<div class="p">
+<header><div class="k">{esc(context['branch'])} · 推送前證據表</div><h1>{esc(context['name'])}</h1>
+<div class="sub">{esc(context['scale'])}</div></header>
+<section><h2>需要你注意</h2><div class="panel">{attn_items}</div></section>
+<section><h2>關卡</h2><div class="panel">{gates_rows}</div></section>
+{'<section><h2>畫面證據</h2><div class="panel shots">' + shots + '</div></section>' if shots else ''}
+</div>"""
+
+
+def main(argv: list[str]) -> int:
+    args = [a for a in argv if not a.startswith("-")]
+    if not args:
+        print(__doc__)
+        return 2
+    spec_path = pathlib.Path(args[0])
+    base = argv[argv.index("--base") + 1] if "--base" in argv else "main"
+    root = spec_path.resolve().parents[2]
+    spec = load_spec(spec_path)
+    config = _config.load(root)
+    ev = evidence_dir(spec_path)
+    here = pathlib.Path(__file__).parent
+
+    gates, attention = [], []
+
+    ok, _ = run([str(here / "spec-lint"), str(spec_path)], root)
+    gates.append({"id": "G0", "what": "規格檢查", "ok": ok, "note": "schema/完備性/可測性"})
+
+    ok, _ = run([str(here / "freeze-check"), str(spec_path)], root)
+    gates.append({"id": "G1/2", "what": "規格與測試沒被偷改", "ok": ok, "note": "指紋比對"})
+
+    ok, out = run([str(here / "traceability"), str(spec_path)], root)
+    covered = re.search(r"測試涵蓋 (\d+) 條", out)
+    gates.append({"id": "G6", "what": "規格↔測試雙向", "ok": ok,
+                  "note": f"{len(scenario_ids(spec))} 條 Scenario · 涵蓋 {covered.group(1) if covered else '?'}"})
+
+    red = read_json(ev / "red.json")
+    if red:
+        counts = red.get("counts", {})
+        blocking = {k: v for k, v in counts.items() if k in {"error", "compile", "hang", "passed"}}
+        recon_ok = all(r.get("reconciled") for r in red.get("reconciliation", []))
+        gates.append({"id": "G5", "what": "每條測試都曾真的紅過", "ok": not blocking and recon_ok,
+                      "note": " · ".join(f"{k} {v}" for k, v in counts.items())})
+    else:
+        gates.append({"id": "G5", "what": "每條測試都曾真的紅過", "ok": False, "note": "缺 red.json"})
+
+    reach = check_reachability(root, base, config)
+    unreachable = [r for r in reach if not r["sites"]]
+    gates.append({"id": "G8", "what": "新增的東西到得了", "ok": not unreachable,
+                  "note": f"{len(reach)} 個新型別 · {len(unreachable)} 個沒有建構點"})
+    for item in unreachable:
+        attention.append({
+            "tag": "到不了", "title": f"{item['symbol']} 沒有任何建構點",
+            "body": f"{item['file']} 定義了它,但整個 repo 沒有別的地方呼叫 {item['symbol']}(。"
+                    "合併之後使用者體感會是零 —— 這類問題寫不出失敗測試,所以只有這道關擋得住。",
+        })
+
+    manual = [sc.get("id") for req in (spec.get("requirements") or []) if isinstance(req, dict)
+              for sc in (req.get("scenarios") or []) if isinstance(sc, dict) and sc.get("mode") == "6d"]
+    if manual:
+        attention.append({"tag": "要人工驗", "title": f"{len(manual)} 條只能人工驗證",
+                          "body": "、".join(manual) + " —— 這些沒有自動化證據,你得自己跑一次。"})
+
+    shots = sorted(p.name for p in (ev / "screenshots").glob("*.png")) if (ev / "screenshots").is_dir() else []
+    if not shots:
+        attention.append({"tag": "無畫面證據", "title": "沒有任何截圖",
+                          "body": "如果這次有畫面變更,單元測試驗不到它的呈現。"})
+
+    stat = git(root, "diff", "--cached", "--shortstat").strip() or git(root, "diff", "--shortstat", f"{base}...HEAD").strip()
+    context = {
+        "name": (spec.get("meta") or {}).get("name", spec_path.parent.name),
+        "branch": git(root, "rev-parse", "--abbrev-ref", "HEAD").strip(),
+        "scale": stat or "—",
+        "gates": gates, "attention": attention, "screenshots": shots,
+    }
+    out_path = pathlib.Path(argv[argv.index("-o") + 1]) if "-o" in argv else ev / "dashboard.html"
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path.write_text(render(context))
+
+    for g in gates:
+        print(f"  {'✓' if g['ok'] else '✘'} {g['id']:<6} {g['what']:<22} {g['note']}")
+    print(f"  → {out_path}")
+    return 0 if all(g["ok"] for g in gates) else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))
