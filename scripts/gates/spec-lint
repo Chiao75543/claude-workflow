@@ -34,7 +34,9 @@ VAGUE = [
     "correct", "appropriate", "proper", "reasonable", "properly",
     "as expected", "and so on", "etc.", "fast enough",
 ]
-PLACEHOLDER = re.compile(r"\b(TBD|TODO|FIXME|XXX|待補|待定)\b", re.I)
+# CJK 字元屬於 \w,所以「內容待補」兩側都沒有 word boundary —— \b 對它完全無效。
+# 拉丁字用 \b,CJK 用裸比對。
+PLACEHOLDER = re.compile(r"\b(TBD|TODO|FIXME|XXX)\b|(待補|待定|待確認|暫定)", re.I)
 
 REQUIRED_TOP = ["meta", "why", "what", "impact", "requirements"]
 
@@ -96,8 +98,15 @@ def check_schema(spec: dict, f: Findings) -> None:
             seen_req.add(rid)
         if not str(req.get("statement") or "").strip():
             f.error(where, "缺少 statement")
-        if not req.get("scenarios"):
+        entries = req.get("scenarios")
+        if not entries:
             f.error(where, "至少要有一條 Scenario")
+        elif isinstance(entries, list):
+            # 寫成 [SC-001, SC-002] 這種字串 list 的話,scenarios() 會全部跳過,
+            # 於是「有 Scenario」判定通過、六類全 N/A,一個零內容的 Requirement 就通關了。
+            for entry in entries:
+                if not isinstance(entry, dict):
+                    f.error(where, f"Scenario 必須是 mapping,不能只寫 id: {entry!r}")
 
     for req, sc in scenarios(spec):
         sid = sc.get("id")
@@ -183,8 +192,12 @@ def check_testability(spec: dict, f: Findings) -> None:
                 continue
             if "in" not in example:
                 f.error(spot, "缺少 in")
+            elif example.get("in") is None:
+                f.error(spot, "in 是 null —— examples 就是契約,契約不能是空的")
             if "out" not in example:
                 f.error(spot, "缺少 out")
+            elif not isinstance(example.get("out"), (dict, list)) or not example.get("out"):
+                f.error(spot, "out 必須是非空的具體結果(mapping 或 list)")
 
 
 def check_vague(spec: dict, f: Findings) -> None:

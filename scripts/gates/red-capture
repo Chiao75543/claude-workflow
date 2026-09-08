@@ -79,14 +79,20 @@ PARSERS = {"swift-testing": parse_swift_testing}
 
 # ---------------------------------------------------------------- main
 
-def count_declared(root: pathlib.Path, test_files: list[str], runner: str) -> int:
+def count_declared(root: pathlib.Path, test_files: list[str], runner: str) -> tuple[int, list[str]]:
+    """回傳 (宣告數, 找不到的檔案)。
+
+    找不到的檔案**不能靜默算 0** —— 那會讓對帳的三個數字一起變成 0 而「一致」,
+    等於整個 G5 形同虛設(對抗審查實證)。"""
     marker = {"swift-testing": r"^\s*@Test\b"}.get(runner, r"^\s*(@Test|def test_|func test)")
-    total = 0
+    total, missing_files = 0, []
     for rel in test_files:
         path = root / rel
-        if path.exists():
-            total += len(re.findall(marker, path.read_text(errors="ignore"), re.M))
-    return total
+        if not path.exists():
+            missing_files.append(rel)
+            continue
+        total += len(re.findall(marker, path.read_text(errors="ignore"), re.M))
+    return total, missing_files
 
 
 def main(argv: list[str]) -> int:
@@ -132,7 +138,11 @@ def main(argv: list[str]) -> int:
         raw = out_path.read_text(errors="ignore")
         parsed = parser(raw, marker)
 
-        declared = count_declared(root, entry.get("tests", []), runner)
+        declared, missing_files = count_declared(root, entry.get("tests", []), runner)
+        for rel in missing_files:
+            f.error(layer, f"red-inputs 列的測試檔不存在: {rel} —— 宣告數會被算成 0,對帳形同虛設")
+        if not entry.get("tests"):
+            f.error(layer, "red-inputs 沒有列任何測試檔 —— 對帳沒有可比對的基準")
         started = parsed["started"]
         runner_total = parsed["runner_total"]
 
@@ -194,8 +204,15 @@ def main(argv: list[str]) -> int:
         mark = "OK" if r["reconciled"] else "!!"
         print(f"  {r['layer']:<8} 宣告 {r['declared_in_source']:>3} · runner {r['reported_by_runner']} "
               f"· 啟動 {r['started']:>3}  {mark}")
-    if missing:
-        f.warn("覆蓋", f"規格有這些 Scenario 但這批輸出沒看到: {', '.join(missing)}")
+    # 有測試檔卻沒出現在 RED 證據裡,正是繞過凍結的路徑(RED 之後才加的測試)。
+    # 只能人工驗的(6d)本來就沒有自動化測試,排除。
+    manual = {
+        sc.get("id")
+        for req in (spec.get("requirements") or []) if isinstance(req, dict)
+        for sc in (req.get("scenarios") or []) if isinstance(sc, dict) and sc.get("mode") == "6d"
+    }
+    for sid in sorted(set(missing) - manual):
+        f.error("覆蓋", f"{sid} 沒有出現在任何一層的 RED 證據裡 —— 這條測試沒有紅過的紀錄")
     print(f"  → {ev / 'red.json'}")
     return f.report("red-capture")
 

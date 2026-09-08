@@ -374,9 +374,31 @@ gh pr create --base {INTEGRATION_BRANCH} ...   # 或 glab mr create
 | 缺席類問題只記 WARNING | 那類寫不出失敗測試;靠 G8 可達性擋 |
 | 外包正則給 `git grep -E` | POSIX ERE 不支援 `\b` / `\s`,會靜默匹配不到 |
 | 機械改檔不 assert 錨點命中 | 格式化過的檔案會讓字串比對靜默失敗 |
+| **用一個「會過的案例」去驗一個檢查** | 見下方 —— 這是最一致的失誤模式 |
+| 測試斷言只比對關鍵字 | `"error" in out` 會被統計行 `error 1` 滿足;要指名到具體訊息 |
+| fixture 同時觸發多個錯誤 | 測試會因為別的錯誤而通過,測不到它要測的那件事 |
 | 續跑時用 unanchored grep 找 worktree | 只用精確 ref 比對 |
 | 抽樣式 scope audit | 全 codebase grep,而且 grep 呼叫點不是 import |
 | 代按 merge | 一律人工 |
+
+## 一個反覆出現的失誤模式
+
+同一種錯在這條線的開發過程中出現了**四次**,每次都讓一個檢查看起來有效但其實沒有:
+
+| 當時做的驗證 | 為什麼那不算驗證 |
+|---|---|
+| 用**沒有測試檔**的乾淨 struct 驗可達性 | 真實程式碼都有測試檔,而測試檔當時算建構點 —— 遮住三個缺陷 |
+| 用 `why: TBD` 驗中文佔位符偵測 | `TBD` 剛好是唯一會中的;`待補`因為 CJK 沒有 word boundary 從沒生效過 |
+| 斷言 `"mapping" in out` | fixture 產生不合法 YAML,PyYAML 的錯誤訊息剛好含 `block mapping` |
+| 斷言 `"error" in out` | 統計行 `error 1` 就滿足了,跟要測的行為無關 |
+
+**共同形狀:用一個「本來就會通過」的案例去驗一個檢查。**
+
+兩條可操作的紀律:
+
+1. **驗一個檢查,要先讓它紅。** 拿掉那個檢查、確認測試變紅,才知道測試守的是它。
+   這就是 `scripts/gates/tests/mutate` 在做的事 —— 把它自動化,不要靠自覺。
+2. **fixture 只能有一個變因。** 同時觸發多個錯誤的話,測試會因為別的錯誤而通過。
 
 ## Templates
 

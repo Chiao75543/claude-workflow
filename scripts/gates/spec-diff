@@ -91,6 +91,10 @@ def main(argv: list[str]) -> int:
     for sid in sorted(set(old_sc) & set(new_sc)):
         _, a = old_sc[sid]
         _, b = new_sc[sid]
+        for field in ("given", "when"):
+            if a.get(field) != b.get(field):
+                f.error(f"{sid}.{field}",
+                        f"觸發條件變了 —— 同一個 id 底下換了情境\n      批准時 {a.get(field)}\n      現在   {b.get(field)}")
         if a.get("then") != b.get("then"):
             f.error(f"{sid}.then", "行為契約變了")
         # 批准後新增豁免 = 讓某條測試不必先紅過。那是契約鬆綁,不是事實修正。
@@ -108,6 +112,12 @@ def main(argv: list[str]) -> int:
         compare_examples(sid, a.get("examples"), b.get("examples"), f)
 
     old_cp, new_cp = index_completeness(approved), index_completeness(current)
+    # Requirement 改名的話,只比對交集等於整段 completeness 都不比 ——
+    # 改個 id 就能悄悄把覆蓋改成 N/A(對抗審查實證)。
+    for rid in sorted(set(old_cp) - set(new_cp)):
+        f.error(str(rid), "Requirement 不見了(被移除或改了 id)—— 它的完備性表態無從比對")
+    for rid in sorted(set(new_cp) - set(old_cp)):
+        f.warn(str(rid), "新增的 Requirement(擴大範圍,不擋)")
     for rid in sorted(set(old_cp) & set(new_cp)):
         for category in set(old_cp[rid]) | set(new_cp[rid]):
             a, b = old_cp[rid].get(category), new_cp[rid].get(category)

@@ -78,6 +78,12 @@ tasks:
 """
 
 
+# 只有一條 Scenario —— 給那些測試輸出只含一條測試的案例用。
+# (規格有兩條而輸出只有一條的話,red-capture 會正確地抱怨 SC-002 沒有 RED 證據。)
+ONE_SCENARIO = VALID_SPEC.replace("      error_path: [SC-002]", '      error_path: "N/A — 這個樣本只保留一條 Scenario"')
+ONE_SCENARIO = ONE_SCENARIO[:ONE_SCENARIO.index("      - id: SC-002")] + "tasks:\n  - {done: false, text: \"做事\"}\n"
+
+
 def make_repo(tmp: pathlib.Path, spec: str = VALID_SPEC) -> pathlib.Path:
     root = tmp / "repo"
     (root / "specs" / "demo" / "evidence").mkdir(parents=True)
@@ -184,6 +190,32 @@ def test_spec_lint(tmp: pathlib.Path) -> None:
     code, out = run_gate("spec-lint", "specs/demo/spec.yaml", cwd=root)
     check("Scenario id 重複 → 擋", code == 1 and "重複" in out, out[:160])
 
+    # fixture 必須是**合法** YAML —— 否則測試會被 YAML 錯誤訊息滿足而假綠
+    bad = VALID_SPEC[:VALID_SPEC.index("    scenarios:")] + "    scenarios: [SC-001, SC-002]\n"
+    root = make_repo(tmp / "lint-strlist", bad)
+    code, out = run_gate("spec-lint", "specs/demo/spec.yaml", cwd=root)
+    check("scenarios 寫成字串 list → 擋(否則零內容的 Requirement 會通關)",
+          code == 1 and "不能只寫 id" in out, out[:200])
+
+    bad = VALID_SPEC.replace("          - in: {size: 0}\n            out: {returns: empty_list}",
+                             "          - in: {size: 0}\n            out: ~")
+    root = make_repo(tmp / "lint-nullout", bad)
+    code, out = run_gate("spec-lint", "specs/demo/spec.yaml", cwd=root)
+    check("example 的 out 是 null → 擋(契約不能是空的)",
+          code == 1 and "out 必須是非空" in out, out[:200])
+
+    bad = VALID_SPEC.replace("          - in: {size: 0}\n            out: {returns: empty_list}",
+                             "          - in: ~\n            out: {returns: empty_list}")
+    root = make_repo(tmp / "lint-nullin", bad)
+    code, out = run_gate("spec-lint", "specs/demo/spec.yaml", cwd=root)
+    check("example 的 in 是 null → 擋", code == 1 and "in 是 null" in out, out[:200])
+
+    bad = VALID_SPEC.replace("why: 測試用的規格", "why: 背景內容待補,先佔位")
+    root = make_repo(tmp / "lint-cjk", bad)
+    code, out = run_gate("spec-lint", "specs/demo/spec.yaml", cwd=root)
+    check("中文佔位符「待補」→ 擋(CJK 沒有 word boundary,\\b 對它無效)",
+          code == 1 and "佔位符" in out, out[:160])
+
     bad = VALID_SPEC.replace("why: 測試用的規格", "why: TBD")
     root = make_repo(tmp / "lint-tbd", bad)
     code, out = run_gate("spec-lint", "specs/demo/spec.yaml", cwd=root)
@@ -279,7 +311,7 @@ def test_red_capture(tmp: pathlib.Path) -> None:
     # 實作前就綠:沒有書面豁免 → 擋
     green = '◇ Test "SC-001 綠的" started.\n✔ Test "SC-001 綠的" passed after 0.001 seconds.\nTest run with 1 test in 1 suite passed after 0.001 seconds.\n'
     (tmp / "green.txt").write_text(green)
-    root = setup_red(tmp, "red-green", tmp / "green.txt", 1)
+    root = setup_red(tmp, "red-green", tmp / "green.txt", 1, ONE_SCENARIO)
     code, out = run_gate("red-capture", "specs/demo/spec.yaml", cwd=root)
     check("實作前就綠且無豁免 → 擋", code == 1 and "空測試" in out, out[:160])
 
@@ -289,30 +321,50 @@ def test_red_capture(tmp: pathlib.Path) -> None:
            '✘ Test "SC-001 爆了" failed after 0.001 seconds with 1 issue.\n'
            "Test run with 1 test in 1 suite failed after 0.001 seconds with 1 issue.\n")
     (tmp / "err.txt").write_text(err)
-    root = setup_red(tmp, "red-realerror", tmp / "err.txt", 1)
+    root = setup_red(tmp, "red-realerror", tmp / "err.txt", 1, ONE_SCENARIO)
     code, out = run_gate("red-capture", "specs/demo/spec.yaml", cwd=root)
     check("不帶哨兵標記的錯誤逸出 → 擋(不能算成 stub_sentinel)",
-          code == 1 and "error" in out, out[:200])
+          code == 1 and "failure_class = error" in out, out[:250])
 
     # 三方對帳:原始碼宣告數是唯一不來自輸出檔的那一方,拿掉它就形同虛設
-    root = setup_red(tmp, "red-twoway", tmp / "green.txt", 5)  # 宣告 5、runner 1、啟動 1
+    root = setup_red(tmp, "red-twoway", tmp / "green.txt", 5, ONE_SCENARIO)  # 宣告 5、runner 1、啟動 1
     code, out = run_gate("red-capture", "specs/demo/spec.yaml", cwd=root)
     check("宣告數與實際執行數不符 → 擋(兩方對帳不夠)",
           code == 1 and "對帳不符" in out, out[:200])
 
-    root = setup_red(tmp, "red-nofile", tmp / "does-not-exist.txt", 1)
+    root = setup_red(tmp, "red-nofile", tmp / "does-not-exist.txt", 1, ONE_SCENARIO)
     code, out = run_gate("red-capture", "specs/demo/spec.yaml", cwd=root)
     check("測試輸出檔不存在 → 擋(不能靜默略過)",
           code == 1 and "找不到測試輸出" in out, out[:200])
 
     (tmp / "compile.txt").write_text("F.swift:3:5: error: cannot find 'Foo' in scope\n")
-    root = setup_red(tmp, "red-compile", tmp / "compile.txt", 1)
+    root = setup_red(tmp, "red-compile", tmp / "compile.txt", 1, ONE_SCENARIO)
     code, out = run_gate("red-capture", "specs/demo/spec.yaml", cwd=root)
     check("編譯錯誤 → 擋(編不過的東西沒資格談紅不紅)",
           code == 1 and "編譯錯誤" in out, out[:200])
 
+    # red-inputs 指到不存在的檔:三個數字會一起變成 0 而「一致」,對帳形同虛設
+    root = setup_red(tmp, "red-badpath", tmp / "green.txt", 1, ONE_SCENARIO)
+    ev = root / "specs" / "demo" / "evidence"
+    ev.joinpath("red-inputs.json").write_text(json.dumps(
+        [{"layer": "domain", "output": str(tmp / "green.txt"), "tests": ["tests/DoesNotExist.swift"]}]))
+    code, out = run_gate("red-capture", "specs/demo/spec.yaml", cwd=root)
+    check("red-inputs 列的測試檔不存在 → 擋(不能靜默算 0)",
+          code == 1 and "不存在" in out, out[:200])
+
+    # 有測試但沒出現在 RED 證據裡,正是繞過凍結的路徑
+    one_red = ('◇ Test "SC-001 紅過" started.\n'
+               '✘ Test "SC-001 紅過" recorded an issue at F.swift:1:1: Expectation failed: 1 == 2\n'
+               '✘ Test "SC-001 紅過" failed after 0.001 seconds with 1 issue.\n'
+               "Test run with 1 test in 1 suite failed after 0.001 seconds with 1 issue.\n")
+    (tmp / "one-red.txt").write_text(one_red)
+    root = setup_red(tmp, "red-nocoverage", tmp / "one-red.txt", 1)  # 規格兩條、輸出只涵蓋 SC-001
+    code, out = run_gate("red-capture", "specs/demo/spec.yaml", cwd=root)
+    check("有 Scenario 沒有 RED 證據 → 擋(不是只 warn)",
+          code == 1 and "沒有出現在任何一層的 RED 證據裡" in out, out[:250])
+
     # 有書面豁免 → 過
-    exempt_spec = VALID_SPEC.replace(
+    exempt_spec = ONE_SCENARIO.replace(
         "      - id: SC-001\n        mode: 6a",
         "      - id: SC-001\n        mode: 6a\n        red_exempt_reason: 純值型別,無 repository 縫可 stub")
     root = setup_red(tmp, "red-exempt", tmp / "green.txt", 1, exempt_spec)
@@ -406,6 +458,16 @@ def test_spec_diff(tmp: pathlib.Path) -> None:
             out: {returns: empty_list}""", """        examples: []"""))
     code, out = run_gate("spec-diff", "specs/demo/spec.yaml", cwd=root)
     check("example 被刪光 → 要重新批准", code == 1 and "契約被縮減" in out, out[:200])
+
+    root = build("diff-when", lambda s: s.replace("        when: process\n        then: {returns: empty_list}",
+                                                 "        when: delete_everything\n        then: {returns: empty_list}"))
+    code, out = run_gate("spec-diff", "specs/demo/spec.yaml", cwd=root)
+    check("同一個 id 底下換了觸發條件 → 要重新批准", code == 1 and "觸發條件" in out, out[:200])
+
+    root = build("diff-renamed", lambda s: s.replace("  - id: REQ-001", "  - id: REQ-002").replace(
+        "      error_path: [SC-002]", '      error_path: "N/A — 改名順便放棄覆蓋"'))
+    code, out = run_gate("spec-diff", "specs/demo/spec.yaml", cwd=root)
+    check("Requirement 改名(順便放棄覆蓋)→ 擋", code == 1 and "無從比對" in out, out[:200])
 
     root = build("diff-exempt-added", lambda s: s.replace(
         "      - id: SC-001\n        mode: 6a",
