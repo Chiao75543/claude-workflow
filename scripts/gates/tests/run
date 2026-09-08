@@ -1,0 +1,361 @@
+#!/usr/bin/env python3
+"""關卡腳本的測試。
+
+每一條都對應這輪真實出過的錯,不是為了覆蓋率而寫:
+
+  · 完備性指向別的 Requirement 的 Scenario —— 挑洞者抓到的,linter 當時擋不住
+  · 指紋一致但 YAML 載不進來 —— 切片凍結了一個解析不了的規格
+  · 參數化測試的 issue 行格式 —— 錨點選錯把 4 條正常測試誤判成沒跑
+  · 測試掛住導致後面靜默不執行 —— 只解析結果會誤報成全過
+  · 可達性搜尋 —— git grep -E 不支援 \\b,pattern 靜默匹配不到而全部誤報
+
+用法: scripts/gates/tests/run
+退出碼: 0 全過 / 1 有失敗
+"""
+
+from __future__ import annotations
+
+import json
+import pathlib
+import shutil
+import subprocess
+import sys
+import tempfile
+
+HERE = pathlib.Path(__file__).resolve().parent
+GATES = HERE.parent
+FIXTURES = HERE / "fixtures"
+
+RESULTS: list[tuple[bool, str, str]] = []
+
+
+def check(name: str, ok: bool, detail: str = "") -> None:
+    RESULTS.append((ok, name, detail))
+
+
+def run_gate(script: str, *args: str, cwd: pathlib.Path) -> tuple[int, str]:
+    proc = subprocess.run([str(GATES / script), *args], cwd=cwd,
+                          capture_output=True, text=True)
+    return proc.returncode, proc.stdout + proc.stderr
+
+
+VALID_SPEC = """
+meta: {name: demo, ticket: null, capability: demo, change_type: ADDED}
+why: 測試用的規格
+what: {changes: [做一件事], non_goals: [不做另一件事]}
+impact:
+  files: [src/Thing.ext]
+  call_sites: "無既有呼叫點 —— 全新能力"
+requirements:
+  - id: REQ-001
+    statement: App SHALL 做一件事
+    completeness:
+      empty_boundary: [SC-001]
+      error_path: [SC-002]
+      concurrency: "N/A — 單一 entry point 觸發且有重入鎖"
+      illegal_state: "N/A — 沒有狀態機,不存在非法前置狀態"
+      authorization: "N/A — 不涉及受保護資源"
+      data_migration: "N/A — 不改資料結構也不搬移既有資料"
+    scenarios:
+      - id: SC-001
+        mode: 6a
+        given: {size: 0}
+        when: process
+        then: {returns: empty_list}
+        examples:
+          - in: {size: 0}
+            out: {returns: empty_list}
+      - id: SC-002
+        mode: 6a
+        given: {transport: offline}
+        when: process
+        then: {throws: NetworkError, user_sees_error: true}
+        examples:
+          - in: {transport: offline}
+            out: {throws: NetworkError, user_sees_error: true}
+tasks:
+  - {done: false, text: "做事"}
+"""
+
+
+def make_repo(tmp: pathlib.Path, spec: str = VALID_SPEC) -> pathlib.Path:
+    root = tmp / "repo"
+    (root / "specs" / "demo" / "evidence").mkdir(parents=True)
+    (root / "specs" / "demo" / "spec.yaml").write_text(spec.lstrip())
+    subprocess.run(["git", "init", "-q", "."], cwd=root, check=True)
+    subprocess.run(["git", "config", "user.email", "t@t"], cwd=root, check=True)
+    subprocess.run(["git", "config", "user.name", "t"], cwd=root, check=True)
+    return root
+
+
+def freeze(root: pathlib.Path, tests: list[str] | None = None) -> None:
+    import hashlib
+    spec = root / "specs" / "demo" / "spec.yaml"
+    ev = spec.parent / "evidence"
+    ev.mkdir(exist_ok=True)
+    (ev / "spec.hash").write_text(
+        "sha256:" + hashlib.sha256(spec.read_bytes()).hexdigest() + "  specs/demo/spec.yaml\n")
+    lines = []
+    for rel in tests or []:
+        lines.append("sha256:" + hashlib.sha256((root / rel).read_bytes()).hexdigest() + f"  {rel}\n")
+    (ev / "tests.hash").write_text("".join(lines))
+
+
+# ---------------------------------------------------------------- spec-lint
+
+def test_spec_lint(tmp: pathlib.Path) -> None:
+    root = make_repo(tmp / "lint-ok")
+    code, _ = run_gate("spec-lint", "specs/demo/spec.yaml", cwd=root)
+    check("spec-lint 接受合法規格", code == 0)
+
+    # 挑洞者抓到的真實錯誤:六類全指向別的 Requirement 的 Scenario
+    bad = VALID_SPEC.replace("empty_boundary: [SC-001]", "empty_boundary: [SC-999]")
+    root = make_repo(tmp / "lint-crossref", bad)
+    code, out = run_gate("spec-lint", "specs/demo/spec.yaml", cwd=root)
+    check("完備性指向不存在/別的 Requirement 的 Scenario → 擋",
+          code == 1 and "SC-999" in out, out[:120])
+
+    bad = VALID_SPEC.replace('concurrency: "N/A — 單一 entry point 觸發且有重入鎖"', 'concurrency: "N/A"')
+    root = make_repo(tmp / "lint-na", bad)
+    code, out = run_gate("spec-lint", "specs/demo/spec.yaml", cwd=root)
+    check("N/A 沒寫理由 → 擋", code == 1 and "理由" in out, out[:120])
+
+    bad = VALID_SPEC.replace("then: {returns: empty_list}", 'then: "正確地回傳結果"')
+    root = make_repo(tmp / "lint-prose", bad)
+    code, out = run_gate("spec-lint", "specs/demo/spec.yaml", cwd=root)
+    check("then 寫成散文 → 擋", code == 1 and "mapping" in out, out[:120])
+
+    bad = VALID_SPEC.replace("out: {returns: empty_list}", 'out: {returns: "適當的結果"}')
+    root = make_repo(tmp / "lint-vague", bad)
+    code, out = run_gate("spec-lint", "specs/demo/spec.yaml", cwd=root)
+    check("example 的 out 塞空話 → 擋", code == 1 and "空話" in out, out[:120])
+
+    bad = VALID_SPEC.replace("      - id: SC-001\n        mode: 6a", "      - id: SC-001\n        mode: 6d")
+    root = make_repo(tmp / "lint-6d", bad)
+    code, out = run_gate("spec-lint", "specs/demo/spec.yaml", cwd=root)
+    check("6d 沒寫 manual_reason → 擋", code == 1 and "manual_reason" in out, out[:120])
+
+    bad = VALID_SPEC.replace("why: 測試用的規格", "why: TBD")
+    root = make_repo(tmp / "lint-tbd", bad)
+    code, out = run_gate("spec-lint", "specs/demo/spec.yaml", cwd=root)
+    check("殘留 TBD 佔位符 → 擋", code == 1 and "佔位符" in out, out[:120])
+
+
+# ---------------------------------------------------------------- freeze-check
+
+def test_freeze_check(tmp: pathlib.Path) -> None:
+    def with_test(root: pathlib.Path) -> list[str]:
+        (root / "tests").mkdir(exist_ok=True)
+        (root / "tests" / "T.swift").write_text('@Test("SC-001 a")\n')
+        return ["tests/T.swift"]
+
+    root = make_repo(tmp / "freeze-ok")
+    freeze(root, with_test(root))
+    code, out = run_gate("freeze-check", "specs/demo/spec.yaml", cwd=root)
+    check("指紋一致 → 過", code == 0, out[:160])
+
+    root = make_repo(tmp / "freeze-testchanged")
+    tests = with_test(root)
+    freeze(root, tests)
+    (root / "tests" / "T.swift").write_text('@Test("SC-001 a")\n// 實作階段偷改測試\n')
+    code, out = run_gate("freeze-check", "specs/demo/spec.yaml", cwd=root)
+    check("實作階段動到規格測試 → 擋", code == 1 and "測試檔已被改動" in out, out[:160])
+
+    root = make_repo(tmp / "freeze-changed")
+    freeze(root, with_test(root))
+    spec = root / "specs" / "demo" / "spec.yaml"
+    spec.write_text(spec.read_text().replace("why: 測試用的規格", "why: 被改過了"))
+    code, out = run_gate("freeze-check", "specs/demo/spec.yaml", cwd=root)
+    check("規格被改過 → 擋", code == 1 and "被改動" in out, out[:120])
+
+    # 切片最大的一個漏洞:凍結了一個載不進來的 YAML,指紋當然一致
+    root = make_repo(tmp / "freeze-unparseable")
+    spec = root / "specs" / "demo" / "spec.yaml"
+    spec.write_text(spec.read_text() + "\n  - in: {a: 1}   out: {b: 2}\n")
+    freeze(root, with_test(root))  # 對壞掉的檔案算指紋
+    code, out = run_gate("freeze-check", "specs/demo/spec.yaml", cwd=root)
+    check("指紋一致但 YAML 解析不了 → 仍要擋", code == 1 and "解析" in out, out[:160])
+
+
+# ---------------------------------------------------------------- red-capture
+
+def setup_red(tmp: pathlib.Path, name: str, output: str, declared: int,
+              spec: str = VALID_SPEC) -> pathlib.Path:
+    root = make_repo(tmp / name, spec)
+    (root / "tests").mkdir(exist_ok=True)
+    (root / "tests" / "Stub.swift").write_text(
+        "\n".join(f'    @Test("SC-001 case {i}")' for i in range(declared)) + "\n")
+    ev = root / "specs" / "demo" / "evidence"
+    (ev / "red-inputs.json").write_text(json.dumps(
+        [{"layer": "domain", "output": str(output), "tests": ["tests/Stub.swift"]}]))
+    (root / "specs" / "pipeline.yaml").write_text("runner: swift-testing\n")
+    return root
+
+
+def test_red_capture(tmp: pathlib.Path) -> None:
+    # 真實輸出:39 條宣告、39 條啟動、參數化測試混在裡面
+    root = setup_red(tmp, "red-real", FIXTURES / "red-domain.txt", 39)
+    code, out = run_gate("red-capture", "specs/demo/spec.yaml", cwd=root)
+    red = json.loads((root / "specs/demo/evidence/red.json").read_text())
+    counts = red["counts"]
+    check("真實輸出:三方對帳一致",
+          all(r["reconciled"] for r in red["reconciliation"]), out[:200])
+    check("真實輸出:分類出 assertion 與 stub_sentinel",
+          counts.get("assertion", 0) > 0 and counts.get("stub_sentinel", 0) > 0, str(counts))
+
+    # 曾經誤判的那一類:參數化測試的 issue 行帶「with N argument …」
+    names = {t["test"]: t["failure_class"] for t in red["tests"]}
+    param = [n for n in names if "forwarded verbatim" in n or "blank targetId rejected" in n]
+    check("參數化測試的 issue 行有被正確解析(不是誤判成 passed)",
+          bool(param) and all(names[n] != "passed" for n in param),
+          str({n: names[n] for n in param}))
+
+    # 掛住:少一條 started、無總結行 → 對帳必須失敗
+    root = setup_red(tmp, "red-hang", FIXTURES / "red-hang.txt", 39)
+    code, out = run_gate("red-capture", "specs/demo/spec.yaml", cwd=root)
+    check("有測試沒跑完(對帳不符)→ 擋", code == 1 and "對帳不符" in out, out[:200])
+
+    # 實作前就綠:沒有書面豁免 → 擋
+    green = '◇ Test "SC-001 綠的" started.\n✔ Test "SC-001 綠的" passed after 0.001 seconds.\nTest run with 1 test in 1 suite passed after 0.001 seconds.\n'
+    (tmp / "green.txt").write_text(green)
+    root = setup_red(tmp, "red-green", tmp / "green.txt", 1)
+    code, out = run_gate("red-capture", "specs/demo/spec.yaml", cwd=root)
+    check("實作前就綠且無豁免 → 擋", code == 1 and "空測試" in out, out[:160])
+
+    # 有書面豁免 → 過
+    exempt_spec = VALID_SPEC.replace(
+        "      - id: SC-001\n        mode: 6a",
+        "      - id: SC-001\n        mode: 6a\n        red_exempt_reason: 純值型別,無 repository 縫可 stub")
+    root = setup_red(tmp, "red-exempt", tmp / "green.txt", 1, exempt_spec)
+    code, out = run_gate("red-capture", "specs/demo/spec.yaml", cwd=root)
+    check("實作前就綠但規格寫了豁免理由 → 過", code == 0 and "exempt" in out, out[:160])
+
+
+# ---------------------------------------------------------------- traceability
+
+def test_traceability(tmp: pathlib.Path) -> None:
+    def build(name: str, test_body: str, spec: str = VALID_SPEC) -> pathlib.Path:
+        root = make_repo(tmp / name, spec)
+        (root / "tests").mkdir(exist_ok=True)
+        (root / "tests" / "T.swift").write_text(test_body)
+        (root / "specs" / "pipeline.yaml").write_text(
+            'runner: swift-testing\ntests:\n  globs: ["tests/**/*.swift"]\n'
+            "  scenario_pattern: '(SC-\\d+[a-z]?)'\n")
+        return root
+
+    root = build("trace-ok", '@Test("SC-001 a")\n@Test("SC-002 b")\n')
+    code, out = run_gate("traceability", "specs/demo/spec.yaml", cwd=root)
+    check("雙向齊全 → 過", code == 0, out[:160])
+
+    root = build("trace-missing", '@Test("SC-001 a")\n')
+    code, out = run_gate("traceability", "specs/demo/spec.yaml", cwd=root)
+    check("有 Scenario 沒測試 → 擋", code == 1 and "SC-002" in out, out[:160])
+
+    root = build("trace-orphan", '@Test("SC-001 a")\n@Test("SC-002 b")\n@Test("SC-777 孤兒")\n')
+    code, out = run_gate("traceability", "specs/demo/spec.yaml", cwd=root)
+    check("測試引用不存在的 Scenario → 擋", code == 1 and "SC-777" in out, out[:160])
+
+    manual = VALID_SPEC.replace(
+        "      - id: SC-002\n        mode: 6a",
+        "      - id: SC-002\n        mode: 6d\n        manual_reason: 需要實體裝置")
+    root = build("trace-6d", '@Test("SC-001 a")\n', manual)
+    code, out = run_gate("traceability", "specs/demo/spec.yaml", cwd=root)
+    check("只能人工驗的 Scenario 不要求自動化測試 → 過", code == 0, out[:160])
+
+
+# ---------------------------------------------------------------- spec-diff
+
+def test_spec_diff(tmp: pathlib.Path) -> None:
+    def build(name: str, mutate=None) -> pathlib.Path:
+        root = make_repo(tmp / name)
+        spec = root / "specs" / "demo" / "spec.yaml"
+        shutil.copy(spec, spec.parent / "evidence" / "spec.approved.yaml")
+        if mutate:
+            spec.write_text(mutate(spec.read_text()))
+        return root
+
+    root = build("diff-same")
+    code, _ = run_gate("spec-diff", "specs/demo/spec.yaml", cwd=root)
+    check("規格沒改 → 過", code == 0)
+
+    root = build("diff-factual", lambda s: s.replace("why: 測試用的規格", "why: 補充了背景說明"))
+    code, out = run_gate("spec-diff", "specs/demo/spec.yaml", cwd=root)
+    check("只改 why → 事實修正,不擋", code == 0 and "事實修正" in out, out[:160])
+
+    root = build("diff-out", lambda s: s.replace("out: {returns: empty_list}", "out: {returns: null_value}"))
+    code, out = run_gate("spec-diff", "specs/demo/spec.yaml", cwd=root)
+    check("example 的預期輸出變了 → 要重新批准", code == 1 and "預期結果變了" in out, out[:200])
+
+    root = build("diff-mode", lambda s: s.replace(
+        "      - id: SC-002\n        mode: 6a",
+        "      - id: SC-002\n        mode: 6d\n        manual_reason: 改成人工"))
+    code, out = run_gate("spec-diff", "specs/demo/spec.yaml", cwd=root)
+    check("6a 降級成 6d → 要重新批准", code == 1 and "降級" in out, out[:200])
+
+    root = build("diff-cov", lambda s: s.replace("error_path: [SC-002]", 'error_path: "N/A — 想想覺得不會發生"'))
+    code, out = run_gate("spec-diff", "specs/demo/spec.yaml", cwd=root)
+    check("有覆蓋改成 N/A → 要重新批准", code == 1 and "覆蓋被放棄" in out, out[:200])
+
+    root = build("diff-add", lambda s: s.replace(
+        "          - in: {size: 0}\n            out: {returns: empty_list}",
+        "          - in: {size: 0}\n            out: {returns: empty_list}\n"
+        "          - in: {size: 1}\n            out: {returns: one_item}"))
+    code, out = run_gate("spec-diff", "specs/demo/spec.yaml", cwd=root)
+    check("多加一組 example → 收緊,不擋", code == 0 and "多了" in out, out[:200])
+
+
+# ---------------------------------------------------------------- 可達性
+
+def test_reachability(tmp: pathlib.Path) -> None:
+    """git grep -E 是 POSIX ERE,不支援 \\b 與 \\s ——
+    當初 pattern 靜默匹配不到,把有建構點的型別全部誤報成到不了。"""
+    sys.path.insert(0, str(GATES))
+    import importlib.util
+    spec_mod = importlib.util.spec_from_loader("dash", loader=None)
+    module = importlib.util.module_from_spec(spec_mod)
+    module.__dict__["__file__"] = str(GATES / "dashboard")
+    exec(compile((GATES / "dashboard").read_text(), "dashboard", "exec"), module.__dict__)
+
+    root = make_repo(tmp / "reach")
+    (root / "App").mkdir()
+    (root / "App" / "Thing.swift").write_text("struct Thing {\n    init() {}\n}\n")
+    (root / "App" / "Other.swift").write_text("let x = Thing()\n")
+    (root / "App" / "Lonely.swift").write_text("struct Lonely {\n    init() {}\n}\n")
+    # 只 stage 不 commit:新增的檔案要出現在 --diff-filter=A 的結果裡
+    subprocess.run(["git", "add", "-A"], cwd=root, check=True)
+
+    config = {"reachability": {"globs": ["App/**/*.swift"]}}
+    results = module.check_reachability(root, "HEAD", config)
+    by_symbol = {r["symbol"]: r["sites"] for r in results}
+    check("有建構點的型別:找得到呼叫處",
+          by_symbol.get("Thing"), str(by_symbol))
+    check("沒有建構點的型別:標為到不了",
+          "Lonely" in by_symbol and not by_symbol["Lonely"], str(by_symbol))
+
+
+# ---------------------------------------------------------------- main
+
+def main() -> int:
+    with tempfile.TemporaryDirectory() as td:
+        tmp = pathlib.Path(td)
+        for fn in (test_spec_lint, test_freeze_check, test_red_capture,
+                   test_traceability, test_spec_diff, test_reachability):
+            try:
+                fn(tmp)
+            except Exception as exc:  # noqa: BLE001
+                check(f"{fn.__name__} 執行時爆炸", False, repr(exc)[:200])
+
+    width = max(len(n) for _, n, _ in RESULTS)
+    failed = 0
+    for ok, name, detail in RESULTS:
+        print(f"  {'✓' if ok else '✘'} {name.ljust(width)}")
+        if not ok:
+            failed += 1
+            if detail:
+                print(f"      {detail}")
+    print(f"\n{len(RESULTS) - failed}/{len(RESULTS)} 通過")
+    return 1 if failed else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
