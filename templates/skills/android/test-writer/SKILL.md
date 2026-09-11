@@ -66,6 +66,15 @@ app/src/test/java/{PACKAGE_PATH}/
 
 ---
 
+## 審過才凍結(pipeline S7½ 要求)
+
+凍結錯的測試比沒凍結更糟。上鎖前 `scripts/gates/test-review` 會機械擋三件事,test-reviewer 會看語意:
+
+- 每條測試至少一個斷言;斷言要讓「實作回錯的值」會紅(`!= nil`、`count > 0` 不算)
+- 每條測試至少引用它那條 Scenario 某組 example 的 `out` 具體值;每組 example 至少被一條測試引用
+- 一條測試只證一組 example;case 名稱讀得出 given / when / then(`SC-003 未登入時加入收藏 → notSignedIn`)
+- 註解只寫「為什麼這樣測」
+
 ## RED 證據的紀律(pipeline S7 要求)
 
 這一節不是 stack 特有的,但它決定了測試能不能當作證據。

@@ -9,7 +9,8 @@
 「幾條測試」不是驗收標準,**變異存活率**才是。
 對抗審查第一次跑這份清單時:29 個變異、28 個存活。
 
-用法: scripts/gates/tests/mutate [--max-survivors N]
+用法: scripts/gates/tests/mutate [--max-survivors N] [--only <script> ...]
+  --only  只跑指定腳本的變異(改了一支腳本時省時間;交付前還是要全跑)
 退出碼: 0 存活數在容忍範圍內 / 1 超過
 """
 
@@ -199,8 +200,79 @@ MUTATIONS: list[tuple[str, str, str, str]] = [
      '        gates.append({"id": "G3", "what": "lint(變更的檔案)", "ok": False,\n'
      '                      "note": "specs/pipeline.yaml 沒設 lint"})',
      '        gates.append({"id": "G3", "what": "lint(變更的檔案)", "ok": True, "note": "略過"})'),
+    # ---- S7½ test-review ----
+    ("test-review", "零斷言不擋",
+     '                f.error(where, "沒有任何斷言 —— 空測試")',
+     "                pass"),
+    ("test-review", "沒引用 example 值不擋",
+     '                f.error(where, f"沒有引用 {sid} 任何一組 example 的具體值(例如 {\', \'.join(wanted)})")',
+     "                pass"),
+    ("test-review", "example 沒人測不擋",
+     '                f.error(f"{sid} example #{i}", "沒有任何測試引用這組 example 的值 —— 批准的例子沒人測")',
+     "                pass"),
+    ("test-review", "語意審查沒跑也放行",
+     '            f.error("語意審查", "缺 evidence/test-review.agent.json —— test-reviewer 還沒派,或它沒寫結果")',
+     "            pass"),
+    ("test-review", "語意審查的 blocking finding 只 warn",
+     '                (f.error if item.get("blocking") else f.warn)(spot, str(item["problem"]))',
+     '                f.warn(spot, str(item["problem"]))'),
+    ("test-review", "沒指名測試的 finding 也算數",
+     '                if not item.get("test") or not item.get("problem"):',
+     '                if False:'),
+    # ---- loop ----
+    ("loop", "修幾次都可以",
+     '        if item["fixes"] >= MAX_FIXES:',
+     '        if False:'),
+    ("loop", "解過又出現不停",
+     '        item["status"] = "flipflop"',
+     '        item["status"] = "open"'),
+    ("loop", "G10 重派沒上限",
+     '        if n > limit:',
+     '        if False:'),
+    # ---- findings ----
+    ("findings", "沒重現的 must_fix 也收",
+     '        if cls in NEEDS_REPRO and not (repro or "").strip():',
+     '        if False:'),
+    ("findings", "ask_user 不用問句",
+     '        if cls == "ask_user" and not (question or "").strip():',
+     '        if False:'),
+    ("findings", "ask_user 可以直接 fixed",
+     '        if item["class"] == "ask_user" and status == "fixed":',
+     '        if False:'),
+    ("findings", "check 不看必修未處理",
+     '        return 1 if pending or asking else 0',
+     '        return 1 if asking else 0'),
+    # ---- smoke ----
+    ("smoke", "沒設 smoke 也算過",
+     '        print("✘ specs/pipeline.yaml 沒設 smoke —— 「沒有人跑過」和「跑過了」是兩件事")\n        return 1',
+     '        cmd = "true"'),
+    ("smoke", "超時算過",
+     '    ok = code == 0 and not timed_out',
+     '    ok = code in (0, -1)'),
+    ("smoke", "退出碼永遠 0",
+     '    return 0 if ok else 1\n\n\nif __name__',
+     '    return 0\n\n\nif __name__'),
+    # ---- dashboard(S7 以後)----
+    ("dashboard", "smoke 證據過期也算數",
+     '    elif smoke.get("tree") != tree_fingerprint(root):',
+     '    elif False:'),
+    ("dashboard", "沒跑 smoke 照樣派 G9/10",
+     '    if not (scripts_green and smoke_ok):',
+     '    if False:'),
+    ("dashboard", "審過的和凍結的不是同一批檔也放行",
+     '    elif frozen_files and review.get("files") != frozen_files:',
+     '    elif False:'),
+    ("dashboard", "parked 的 finding 不擋 G9/10",
+     '"ok": not pending and not halted,',
+     '"ok": not pending,'),
+    ("dashboard", "有待決事項也自動推",
+     '    context["auto_push_ok"] = all_green and not decisions and bool(config.get("auto_push", True))',
+     '    context["auto_push_ok"] = all_green and bool(config.get("auto_push", True))'),
+    ("dashboard", "auto_push: false 被無視",
+     '    context["auto_push_ok"] = all_green and not decisions and bool(config.get("auto_push", True))',
+     '    context["auto_push_ok"] = all_green and not decisions'),
     ("dashboard", "退出碼永遠 0",
-     '    return 0 if all(g["ok"] for g in gates) else 1',
+     "    return 0 if all_green else 1",
      "    return 0"),
 ]
 
@@ -232,6 +304,8 @@ def main(argv: list[str]) -> int:
     max_survivors = 0
     if "--max-survivors" in argv:
         max_survivors = int(argv[argv.index("--max-survivors") + 1])
+    only = {argv[i + 1] for i, a in enumerate(argv) if a == "--only" and i + 1 < len(argv)}
+    mutations = [m for m in MUTATIONS if not only or m[0] in only]
 
     leftovers = restore_leftovers()
     if leftovers:
@@ -242,7 +316,7 @@ def main(argv: list[str]) -> int:
         return 2
 
     survived, killed, skipped = [], [], []  # skipped: (script, label, reason)
-    for script, label, find, replace in MUTATIONS:
+    for script, label, find, replace in mutations:
         path = GATES / script
         original = path.read_text()
         occurrences = original.count(find)

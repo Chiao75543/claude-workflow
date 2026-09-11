@@ -26,7 +26,7 @@
 
 ---
 
-## 人類只出現三次
+## 人類固定出現兩次,第三次只在有事時
 
 ```
 S1  識別              scan-siblings:誰在飛、會不會撞到
@@ -35,38 +35,44 @@ S3  起草              全 codebase scope audit + spec-grill(fable)
 S4  歧義偵測          spec-reader ×2(fable,隔離,只看規格)
 S5  ⏸ 你批准說明頁     白話 + 分歧選擇題 + N/A 主張 + 碰撞警告
 S6  定稿凍結          spec-lint + 反向回譯 + 指紋
-S7  測試 RED          stub-first → 格式化 → red-capture → 凍結測試
-S8  實作 GREEN
-S9  十二道關卡        八道腳本全綠,才啟動四道付費
+S7  測試 RED          stub-first → 格式化 → red-capture
+S7½ 審測試            test-review + test-reviewer(opus)→ 才凍結
+S8  實作 GREEN        green-writer(opus):只做 examples 涵蓋的事
+S9a 腳本關卡 G0–G7
+S9b smoke             真的入口跑一次;沒過不派審查
+S9c 付費審查 G9/G10   四類分流,loop 腳本數次數
 S10 commit
-S11 ⏸ 你看證據表按推   可達性排最前面,和嚴重度分開
-S12 push + MR
+S11 自動推 + 開 PR    證據表貼成留言;有「需要你決定」才叫你
+S12 CI 獨立重跑       ci: none 就跳過
 S13 ⏸ 你按 merge
 ```
 
-**沒有一次需要你讀程式碼。** 你判斷的是**意圖**(S5)和**證據**(S11)。
+**沒有一次需要你讀程式碼。** 你判斷的是**意圖**(S5)和 PR 上的**選擇題**(有的話)。
+第一次在一個專案用,先跑 `/workflow:init` 問卷(S0)。
 
 ---
 
-## 十二道關卡:順序就是花錢的順序
+## 關卡:順序就是花錢的順序
 
 ```
-腳本判定 · 幾乎不花錢 · 全綠才啟動下半
+腳本判定 · 幾乎不花錢 · 全綠才往下
   G0  spec-lint        schema + 完備性六類 + 可測性
   G1  freeze-check     規格指紋 + 可解析性
   G2  freeze-check     規格測試指紋
+  G2b test-review      測試在凍結前審過,審的和凍結的是同一批檔
   G3  lint             只看變更的檔案
-  G4  測試 + 專案自有的靜態檢查
+  G4  測試             沒設指令 = 失敗,不是跳過
   G5  red-capture      六類 failure_class + 三方對帳
   G6  traceability     Scenario ↔ 測試雙向
-  G7  examples 覆蓋
-  G8  可達性           新增的型別有沒有人建構它
+  G7  可達性           新增的型別有沒有人建構它
+────────────────────────────────────────────
+  S   smoke            用真的入口跑一次;沒過下面全部不跑
 ────────────────────────────────────────────
 付費判定
-  G9   變異測試        有工具才跑
-  G10  spec-oracle     隔離的第二讀者,只憑規格寫驗收測試
-  G11  code-adversary  每條主張附可執行的重現
-  G12  UI 截圖         有畫面變更才跑
+  G8   變異測試        有工具才跑
+  G9   spec-oracle     隔離的第二讀者,只憑規格寫驗收測試
+  G10  code-adversary  每條主張附可執行的重現;must_fix / ask_user / overbuilt / style
+  G11  UI 截圖         smoke 順便截
 ```
 
 **絕不花錢請 AI 去審一個腳本本來就會擋掉的東西。**
@@ -84,7 +90,7 @@ git clone https://github.com/<you>/claude-workflow.git ~/code/claude-workflow
 ~/code/claude-workflow/scripts/setup.sh
 ```
 
-`setup.sh` 會 symlink skill、slash commands、以及 `agents/` 底下的四個精簡 agent。
+`setup.sh` 會 symlink skill、slash commands、以及 `agents/` 底下的七個精簡 agent。
 **agent 定義要重啟 Claude Code session 才會載入。**
 
 ### 每個專案
@@ -111,7 +117,8 @@ cp ~/code/claude-workflow/templates/project-AGENTS.md.template <repo>/AGENTS.md
 | `/workflow:spec` | 只寫規格,停在 S6 |
 | `/workflow:test` | 寫測試並擷取 RED 證據 |
 | `/workflow:implement` | 實作到全綠 |
-| `/workflow:verify` | 跑十二道關卡 |
+| `/workflow:init` | 第一次用:問卷 → `specs/pipeline.yaml` |
+| `/workflow:verify` | 跑 S9:腳本 → smoke → 付費審查 |
 | `/workflow:dashboard` | 產出證據表 |
 | `/workflow:runs` | 跨 worktree 看誰卡在哪、誰在等你 |
 | `scripts/gates/runs --yield` | 哪道關擋過東西、擋了幾次;跑過 ≥5 次從沒擋過的會被點名 |
@@ -154,7 +161,7 @@ claude-workflow/
 │   ├── red-writer.md               opus  · S7 寫測試並擷取 RED 證據
 │   └── green-writer.md             opus  · S8 實作;「衝突就停」寫死在定義裡
 ├── scripts/
-│   ├── gates/                       十二道關卡的實作
+│   ├── gates/                       關卡的實作(+ smoke / test-review / findings / loop / pr-comment)
 │   ├── setup.sh
 │   └── init-project.sh
 ├── commands/                        slash commands
@@ -217,7 +224,7 @@ scripts/gates/tests/mutate     # 測試自己有沒有牙齒
 ## 這條線本身是怎麼驗證的
 
 設計不是推理出來的。它在一個真實的 iOS 專案上跑完一個完整功能
-(規格 → 59 條測試 → 實作 → 十二道關卡 → 證據表 → commit),
+(規格 → 59 條測試 → 實作 → 關卡 → 證據表 → commit),
 過程中撞出**九個設計缺陷**並全部修正,包括:
 
 - 「實作前就綠 = 假測試」會誤判純值型別 → 改成書面豁免 + 機械條件

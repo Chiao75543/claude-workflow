@@ -1,0 +1,117 @@
+#!/usr/bin/env python3
+"""loop — 審查迴圈的計數器。有人在數,才不會在同一個地方打轉。
+
+規則(寫在這裡,不靠自律):
+  · 同一條 finding 修 2 次還沒解 → parked,停
+  · 同一條 finding 解了又出現       → flipflop,立即停
+  · G10 對抗審查最多重派 1 次
+
+狀態在 evidence/loop.json。停下來不是叫人看程式碼,是在 PR 上列一行「需要你決定」。
+
+用法:
+  loop <spec.yaml> fix <finding-id>         要開始修這條了(第 3 次會被拒)
+  loop <spec.yaml> resolved <finding-id>    重現跑不出來了,這條解了
+  loop <spec.yaml> reappear <finding-id>    解過的又冒出來 → flipflop
+  loop <spec.yaml> redispatch <gate>        重派某道付費關卡(G10 上限 1)
+  loop <spec.yaml> check                    有沒有任何一條停住
+退出碼: 0 可以繼續 / 1 停,交給人
+"""
+
+from __future__ import annotations
+
+import datetime
+import pathlib
+import sys
+
+sys.path.insert(0, str(pathlib.Path(__file__).parent))
+from _common import evidence_dir, read_json, write_json  # noqa: E402
+
+MAX_FIXES = 2
+MAX_REDISPATCH = {"G10": 1, "G9": 1}
+
+
+def now() -> str:
+    return datetime.datetime.now().astimezone().isoformat(timespec="seconds")
+
+
+def load(ev: pathlib.Path) -> dict:
+    return read_json(ev / "loop.json") or {"findings": {}, "redispatch": {}}
+
+
+def stopped(state: dict) -> list[tuple[str, str]]:
+    return [(fid, item["status"]) for fid, item in state["findings"].items()
+            if item.get("status") in ("parked", "flipflop")]
+
+
+def main(argv: list[str]) -> int:
+    if len(argv) < 2:
+        print(__doc__)
+        return 2
+    ev = evidence_dir(pathlib.Path(argv[0]).resolve())
+    verb = argv[1]
+    state = load(ev)
+    findings = state["findings"]
+
+    if verb == "check":
+        halted = stopped(state)
+        for fid, status in halted:
+            print(f"  ✘ {fid}  {status}")
+        over = {g: n for g, n in state["redispatch"].items() if n > MAX_REDISPATCH.get(g, 1)}
+        for g, n in over.items():
+            print(f"  ✘ {g}  重派 {n} 次,上限 {MAX_REDISPATCH.get(g, 1)}")
+        print(f"loop: {'STOP' if halted or over else 'OK'}")
+        return 1 if halted or over else 0
+
+    if verb == "redispatch":
+        gate = argv[2] if len(argv) > 2 else "G10"
+        n = state["redispatch"].get(gate, 0) + 1
+        state["redispatch"][gate] = n
+        write_json(ev / "loop.json", state)
+        limit = MAX_REDISPATCH.get(gate, 1)
+        if n > limit:
+            print(f"✘ {gate} 已重派 {n} 次,上限 {limit} —— 停,交給人")
+            return 1
+        print(f"{gate} 第 {n} 次重派(上限 {limit})")
+        return 0
+
+    if len(argv) < 3:
+        print(__doc__)
+        return 2
+    fid = argv[2]
+    item = findings.setdefault(fid, {"fixes": 0, "status": "open", "history": []})
+    item["history"].append({"at": now(), "event": verb})
+
+    if verb == "fix":
+        if item["status"] in ("parked", "flipflop"):
+            write_json(ev / "loop.json", state)
+            print(f"✘ {fid} 已經 {item['status']},不准再修 —— 這是人的決定")
+            return 1
+        if item["fixes"] >= MAX_FIXES:
+            item["status"] = "parked"
+            write_json(ev / "loop.json", state)
+            print(f"✘ {fid} 修了 {MAX_FIXES} 次還沒解 → parked。停,交給人")
+            return 1
+        item["fixes"] += 1
+        item["status"] = "fixing"
+        write_json(ev / "loop.json", state)
+        print(f"{fid} 第 {item['fixes']} 次修復(上限 {MAX_FIXES})")
+        return 0
+
+    if verb == "resolved":
+        item["status"] = "resolved"
+        write_json(ev / "loop.json", state)
+        print(f"{fid} 已解")
+        return 0
+
+    if verb == "reappear":
+        item["status"] = "flipflop"
+        write_json(ev / "loop.json", state)
+        print(f"✘ {fid} 解過又出現 → flipflop。立即停,交給人")
+        return 1
+
+    print(__doc__)
+    return 2
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

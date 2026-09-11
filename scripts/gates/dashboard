@@ -10,6 +10,10 @@
   · **顯示審查活動量,不只顯示結果。** 一張只有綠勾的表會訓練你變成橡皮圖章;
     「提出 12 → 作廢 9 → 證實 3」才分得出「乾淨」和「沒認真查」。
 
+順序就是花錢的順序:G0–G7 腳本 → smoke → 才輪到 G9/G10。smoke 沒過,付費關卡標「未跑」。
+另外寫一份 evidence/dashboard.json 給 pr-comment 用,並在最後一行說「能不能自動推」——
+全綠、smoke 過、零待決事項才能;不然就是 PR 上要有「需要你決定」。
+
 用法: dashboard <spec.yaml> [--base main] [-o evidence/dashboard.html]
 """
 
@@ -25,7 +29,8 @@ import sys
 
 sys.path.insert(0, str(pathlib.Path(__file__).parent))
 import _config  # noqa: E402
-from _common import evidence_dir, load_spec, read_json, scenario_ids  # noqa: E402
+from _common import evidence_dir, load_spec, read_json, scenario_ids, write_json  # noqa: E402
+from _state import tree_fingerprint  # noqa: E402
 
 # 型別宣告。要吃得下常見寫法,否則最該檢查的東西反而隱形:
 #   @MainActor final class XViewModel / actor XService / data class / sealed class / object
@@ -37,6 +42,10 @@ DECL = re.compile(rf"^\s*{ATTRS}{MODS}(?:struct|class|enum|actor|protocol|interf
 FUNC_DECL = re.compile(rf"^\s*{ATTRS}{MODS}fun\s+([A-Z]\w*)\s*\(", re.M)
 # file-local 的型別本來就不該對外可達,不是 G8 要問的問題
 PRIVATE = re.compile(rf"^\s*{ATTRS}(?:private|fileprivate)\s", re.M)
+
+
+# 這幾個標籤是「要人做決定」,其他的只是讓人知道。自動推只被前者擋。
+DECISION_TAGS = {"需要你決定", "要重新批准", "要人工驗", "無法驗證"}
 
 
 def git(root: pathlib.Path, *args: str) -> str:
@@ -52,7 +61,7 @@ def in_reach_scope(root: pathlib.Path, rel: str, globs: list[str]) -> bool:
 
 
 def check_reachability(root: pathlib.Path, base: str, config: dict) -> list[dict]:
-    """G8:新增的型別有沒有人建構它。缺席類問題唯一的機械防線。"""
+    """G7:新增的型別有沒有人建構它。缺席類問題唯一的機械防線。"""
     added = [p for p in git(root, "diff", "--name-only", "--diff-filter=A", f"{base}...HEAD").split("\n") if p]
     if not added:  # 尚未 commit 的情況
         added = [p for p in git(root, "diff", "--cached", "--name-only", "--diff-filter=A").split("\n") if p]
@@ -63,7 +72,7 @@ def check_reachability(root: pathlib.Path, base: str, config: dict) -> list[dict
     # git grep -E 是 POSIX ERE,不支援 \b 與 \s,pattern 會靜默匹配不到而全部誤報。
     #
     # **建構點只能在產品程式碼裡。** 測試檔、markdown、註解都不算 ——
-    # 每個型別都有規格測試會 Name(),把測試算進來的話 G8 幾乎必然通過,
+    # 每個型別都有規格測試會 Name(),把測試算進來的話 G7 幾乎必然通過,
     # 那它就完全失去存在意義(對抗審查實證)。
     tracked = [t for t in git(root, "ls-files").split("\n") if t]
     production = {t for t in tracked if in_reach_scope(root, t, globs)}
@@ -85,7 +94,7 @@ def check_reachability(root: pathlib.Path, base: str, config: dict) -> list[dict
         # 常見寫法是一個檔案放 View + ViewModel,只看第一個等於主型別沒被檢查。
         names = list(dict.fromkeys(DECL.findall(text) + FUNC_DECL.findall(text)))
         for name in names:
-            # file-local 的型別不是 G8 要問的問題(它本來就不該對外可達)
+            # file-local 的型別不是 G7 要問的問題(它本來就不該對外可達)
             decl_line = next((ln for ln in text.splitlines() if re.search(rf"\b{re.escape(name)}\b", ln)
                               and (DECL.match(ln + "\n") or FUNC_DECL.match(ln + "\n"))), "")
             if PRIVATE.match(decl_line + "\n"):
@@ -217,6 +226,24 @@ def main(argv: list[str]) -> int:
                     "沒有它,任何後續改動都分不出是事實修正還是行為改變。",
         })
 
+    # G2b 測試審過才凍結 —— 審過的檔案指紋要和凍結的一模一樣,否則審的是別的版本。
+    review = read_json(ev / "test-review.json")
+    frozen_files = {}
+    for line in (ev / "tests.hash").read_text().splitlines() if (ev / "tests.hash").exists() else []:
+        digest, _, rel = line.partition("  ")
+        if rel:
+            frozen_files[rel.strip()] = digest.strip()
+    if not review:
+        gates.append({"id": "G2b", "what": "測試在凍結前審過", "ok": False, "note": "缺 test-review.json"})
+    elif not review.get("ok"):
+        gates.append({"id": "G2b", "what": "測試在凍結前審過", "ok": False,
+                      "note": f"{len(review.get('errors') or [])} 條問題"})
+    elif frozen_files and review.get("files") != frozen_files:
+        gates.append({"id": "G2b", "what": "測試在凍結前審過", "ok": False, "note": "審過的和凍結的不是同一批檔"})
+    else:
+        gates.append({"id": "G2b", "what": "測試在凍結前審過", "ok": True,
+                      "note": f"{review.get('tests', 0)} 條測試 · 機械 + 語意"})
+
     ok, out = run([str(here / "traceability"), str(spec_path)], root)
     covered = re.search(r"測試涵蓋 (\d+) 條", out)
     gates.append({"id": "G6", "what": "規格↔測試雙向", "ok": ok,
@@ -274,13 +301,59 @@ def main(argv: list[str]) -> int:
 
     reach = check_reachability(root, base, config)
     unreachable = [r for r in reach if not r["sites"]]
-    gates.append({"id": "G8", "what": "新增的東西到得了", "ok": not unreachable,
+    gates.append({"id": "G7", "what": "新增的東西到得了", "ok": not unreachable,
                   "note": f"{len(reach)} 個新型別 · {len(unreachable)} 個沒有建構點"})
     for item in unreachable:
         attention.append({
             "tag": "到不了", "title": f"{item['symbol']} 沒有任何建構點",
             "body": f"{item['file']} 定義了它,但整個 repo 沒有別的地方呼叫 {item['symbol']}(。"
                     "合併之後使用者體感會是零 —— 這類問題寫不出失敗測試,所以只有這道關擋得住。",
+        })
+
+    # smoke —— 功能不對其他免談。證據要新鮮:工作樹指紋對不上就是過期。
+    smoke = read_json(ev / "smoke.json")
+    scripts_green = all(g["ok"] for g in gates)
+    if not smoke:
+        smoke_ok = False
+        gates.append({"id": "S", "what": "smoke:真的入口跑一次", "ok": False, "note": "缺 smoke.json"})
+    elif smoke.get("tree") != tree_fingerprint(root):
+        smoke_ok = False
+        gates.append({"id": "S", "what": "smoke:真的入口跑一次", "ok": False, "note": "證據過期(工作樹變了)"})
+    else:
+        smoke_ok = bool(smoke.get("ok"))
+        gates.append({"id": "S", "what": "smoke:真的入口跑一次", "ok": smoke_ok,
+                      "note": f"{smoke.get('duration_s')}s · 截圖 {len(smoke.get('screenshots') or [])} 張"
+                              if smoke_ok else ("超時" if smoke.get("timed_out") else f"exit {smoke.get('exit_code')}")})
+
+    # G9/G10 —— 付費審查。smoke 或腳本沒過就不該派;派了也只看 findings 有沒有處理完。
+    findings = read_json(ev / "findings.json") or {}
+    loop = read_json(ev / "loop.json") or {}
+    items = findings.get("items") or []
+    pending = [i for i in items if i.get("class") in ("must_fix", "overbuilt")
+               and i.get("status") not in ("void", "fixed", "accepted_risk", "added_example")]
+    asking = [i for i in items if i.get("class") == "ask_user" and i.get("status") == "confirmed"]
+    halted = {fid: it for fid, it in (loop.get("findings") or {}).items()
+              if it.get("status") in ("parked", "flipflop")}
+    reviewed = bool(findings.get("summary"))
+    if not (scripts_green and smoke_ok):
+        gates.append({"id": "G9/10", "what": "獨立讀者 + 對抗審查", "ok": False,
+                      "note": "未跑 —— 腳本或 smoke 沒過,不花這個錢"})
+    elif not reviewed:
+        gates.append({"id": "G9/10", "what": "獨立讀者 + 對抗審查", "ok": False, "note": "缺 findings.json"})
+    else:
+        s = findings["summary"]
+        gates.append({"id": "G9/10", "what": "獨立讀者 + 對抗審查", "ok": not pending and not halted,
+                      "note": f"提出 {s.get('proposed', 0)} → 作廢 {s.get('void', 0)} → 證實 {s.get('confirmed', 0)}"
+                              + (f" · {len(pending)} 條必修未處理" if pending else "")})
+    for fid, it in halted.items():
+        attention.append({
+            "tag": "需要你決定", "title": f"{fid} {'修 2 次未果' if it['status'] == 'parked' else '解過又出現'}",
+            "body": "這是決策,不是 code review:照樣出貨 / 分支停在這 / 回頭改規格。",
+        })
+    for i in asking:
+        attention.append({
+            "tag": "需要你決定", "title": f"{i['id']}:{i.get('title')}",
+            "body": f"{i.get('question')} 重現:{i.get('repro')}。要防 → 加一組 example;不用 → 記成已接受風險。",
         })
 
     manual = [sc.get("id") for req in (spec.get("requirements") or []) if isinstance(req, dict)
@@ -304,13 +377,12 @@ def main(argv: list[str]) -> int:
     }
     # 命中率紀錄:哪道關擋過東西、擋了幾次,才有數據決定哪道關值得留。
     # append-only,跨功能累積。舊版有 disposition 標記做同一件事,重寫時被誤刪,這裡補回。
-    findings = read_json(ev / "findings.json") or {}
     yield_line = {
         "at": datetime.datetime.now().astimezone().isoformat(timespec="seconds"),
         "name": context_name,
         "gates": {g["id"]: g["ok"] for g in gates},
         "attention": [a["tag"] for a in attention],
-        "review": findings,
+        "review": findings.get("summary") or {},
     }
     with (root / "specs" / "_yield.jsonl").open("a") as fh:
         fh.write(json.dumps(yield_line, ensure_ascii=False) + "\n")
@@ -319,10 +391,29 @@ def main(argv: list[str]) -> int:
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(render(context))
 
+    # 全綠、零待決事項才自動推;不然 PR 上必須有「需要你決定」。
+    all_green = all(g["ok"] for g in gates)
+    for a in attention:
+        a["decision"] = a["tag"] in DECISION_TAGS
+    decisions = [a for a in attention if a["decision"]]
+    context["auto_push_ok"] = all_green and not decisions and bool(config.get("auto_push", True))
+    write_json(ev / "dashboard.json", context)
+
     for g in gates:
         print(f"  {'✓' if g['ok'] else '✘'} {g['id']:<6} {g['what']:<22} {g['note']}")
     print(f"  → {out_path}")
-    return 0 if all(g["ok"] for g in gates) else 1
+    if context["auto_push_ok"]:
+        verdict = "可以"
+    elif not all_green:
+        verdict = "不行(有關卡沒過)"
+    elif decisions:
+        verdict = "不行(有待決事項)"
+    else:
+        verdict = "不行(auto_push: false)"
+    print(f"  自動推:{verdict}")
+    for a in decisions:
+        print(f"  ⏸ {a['title']}")
+    return 0 if all_green else 1
 
 
 if __name__ == "__main__":

@@ -1,11 +1,12 @@
 ---
 name: workflow-orchestrator
-description: 從一句需求到可推送的分支 —— 規格撰寫(挑洞 + 隔離讀者偵測歧義 + 說明頁批准)、TDD 測試、實作、十二道驗證關卡、證據表、commit、推送。人類只出現三次,而且沒有一次需要讀程式碼。Triggers on "/workflow", "跑 pipeline", "全流程", "從頭開始", "自動化流程".
+description: 從一句需求到開好的 PR —— 規格撰寫(挑洞 + 隔離讀者偵測歧義 + 說明頁批准)、TDD 測試(審過才凍結)、實作、腳本關卡、smoke、付費審查(四類分流)、自動推 + PR 留言、CI。人類批准說明頁、按 merge;中間只在 PR 上有「需要你決定」時才出現,而且沒有一次需要讀程式碼。Triggers on "/workflow", "跑 pipeline", "全流程", "從頭開始", "自動化流程".
 ---
 
 # workflow
 
-端到端 pipeline。**你只出現三次:批准說明頁、看證據表按推、按 merge。沒有一次需要讀程式碼。**
+端到端 pipeline。**你固定出現兩次:批准說明頁、按 merge。中間只在 PR 上有「需要你決定」時才叫你。
+沒有一次需要讀程式碼。**
 
 ## 五條核心規則
 
@@ -28,8 +29,9 @@ description: 從一句需求到可推送的分支 —— 規格撰寫(挑洞 + �
 而凍結規則存在的全部理由就是拿掉那個裁量權。人類批准的是**那些具體例子** ——
 例子變了就給他看一眼,五秒鐘的事,比一個自我認證的判斷可靠得多。
 
-**3. 成本規則。** 七道腳本關卡全綠,才啟動四道付費關卡。
-絕不花錢請 AI 去審一個腳本本來就會擋掉的東西。
+**3. 成本規則。** 腳本關卡全綠、**smoke 過**,才啟動付費關卡。
+絕不花錢請 AI 去審一個腳本本來就會擋掉的東西;**功能不對,其他免談** ——
+smoke 沒過就連審都不審。
 
 **4. 隔離規則。** 獨立讀者看不到程式碼 —— 這是它存在的**全部理由**。
 程式和測試是同一個模型從同一份規格產生的,兩邊很可能一起誤讀;
@@ -43,7 +45,14 @@ description: 從一句需求到可推送的分支 —— 規格撰寫(挑洞 + �
 > 要確認就實際派一次、叫它讀一個檔案。
 
 **5. 缺席規則。** 「必須附重現」會系統性低估**缺席類**問題(沒接進導航、沒有呼叫點)——
-東西不存在時寫不出失敗測試。所以可達性(G8)是獨立的機械關卡,和嚴重度分開排。
+東西不存在時寫不出失敗測試。所以可達性(G7)是獨立的機械關卡,和嚴重度分開排。
+
+**6. 夠了規則。** 做到哪算夠 = **你批准的那些 examples,一個字不多。**
+例子外的實作叫多做:多出來的公開介面 / 抽象層會被擋(`overbuilt`),內部囉嗦只提醒(`style`)。
+例子外的**問題**不是 fix,是**問題** —— 審查者發現例子沒涵蓋的 bug 或極端 edge case,
+不准自己修,變成 PR 上一則「要不要防?」問你(`ask_user`)。你說要 → 加一組 example
+(收緊,不用重新批准);你說不用 → 記成已接受風險。
+這條也是迴圈會收斂的原因:審查者不能一直加新要求,只能問。
 
 ## Skip rule
 
@@ -53,17 +62,26 @@ description: 從一句需求到可推送的分支 —— 規格撰寫(挑洞 + �
 
 兩層設定:
 
-**`<repo>/specs/pipeline.yaml`** —— 機器可讀,給關卡腳本用:
+**`<repo>/specs/pipeline.yaml`** —— 機器可讀,給關卡腳本用。**第一次在一個專案跑,先走 S0 問卷把它填齊:**
 
 ```yaml
 runner: swift-testing            # red-capture 的輸出解析器
 tests:
   globs: ["Packages/*/Tests/**/*.swift", "MindEYTests/**/*.swift"]
-  scenario_pattern: '(SC-\d+[a-z]?)'
+  scenario_pattern: '@Test\(\s*"(SC-\d+[a-z]?)'
 reachability:
-  globs: ["App/**/*.swift"]      # G8 在哪裡找建構點
-lint: "swiftlint lint --quiet"
+  globs: ["App/**/*.swift"]      # G7 在哪裡找建構點
+lint: "swiftlint lint --quiet"   # 會接變更檔的路徑
+test: "./scripts/verify.sh"      # 沒設 = G4 失敗
+smoke: "./scripts/smoke.sh"      # 用真的入口跑一次;沒設 = S 失敗
+integration_branch: main
+auto_push: true                  # 全綠零待決 → 自動推功能分支 + 開 PR
+ci: github                       # none | github | gitlab;none 就沒有 S12
+rules_files: [AGENTS.md]         # 資安基準與架構鐵則;派給 green-writer / code-adversary
+models: {draft: fable, review: fable, build: opus}
 ```
+
+`scripts/gates/config-check` 會列出還沒填的鍵。沒填的鍵讓對應關卡**失敗**,不是跳過。
 
 **`<repo>/AGENTS.md`** —— 給 AI 讀的散文:`{TEST_COMMAND}`、`{BUILD_COMMAND}`、
 `{LAYERING_CONVENTION}`、`{INTEGRATION_BRANCH}`、`{TICKET_PREFIX}`、Security Baseline、專案鐵則。
@@ -80,33 +98,59 @@ lint: "swiftlint lint --quiet"
 
 ```dot
 digraph workflow {
+  s0 [shape=box, label="S0 第一次:問卷 → pipeline.yaml"];
   s1 [shape=box, label="S1 識別\n(scan-siblings 看在飛的)"];
   s2 [shape=box, label="S2 worktree"];
   s3 [shape=box, label="S3 起草\nscope audit + spec-grill(fable)"];
   s4 [shape=box, label="S4 歧義偵測\nspec-reader ×2(fable, 隔離)"];
   s5 [shape=diamond, label="⏸ S5 你批准說明頁"];
   s6 [shape=box, label="S6 定稿凍結\nspec-lint + hash"];
-  s7 [shape=box, label="S7 測試 RED\nstub-first → red-capture → 凍結"];
-  s8 [shape=box, label="S8 實作 GREEN"];
-  s9 [shape=box, label="S9 十二道關卡"];
+  s7 [shape=box, label="S7 測試 RED\nstub-first → red-capture"];
+  s7b [shape=box, label="S7½ 審測試\ntest-review + test-reviewer(opus) → 凍結"];
+  s8 [shape=box, label="S8 實作 GREEN\ngreen-writer(opus)"];
+  s9a [shape=box, label="S9a 腳本關卡 G0–G7"];
+  s9b [shape=box, label="S9b smoke\n真的入口跑一次"];
+  s9c [shape=box, label="S9c 付費審查 G9/G10\n四類分流 · loop 計數"];
   s10 [shape=box, label="S10 commit"];
-  s11 [shape=diamond, label="⏸ S11 你看證據表按推"];
-  s12 [shape=box, label="S12 push + MR"];
+  s11 [shape=box, label="S11 自動推 + 開 PR\n證據表貼成留言"];
+  s12 [shape=box, label="S12 CI 獨立重跑\n(ci: none 就跳過)"];
+  s13a [shape=diamond, label="⏸ PR 上有「需要你決定」\n才叫你"];
   s13 [shape=diamond, label="⏸ S13 你按 merge"];
   done [shape=doublecircle, label="end"];
 
-  s1 -> s2 -> s3 -> s4 -> s5;
+  s0 -> s1 -> s2 -> s3 -> s4 -> s5;
   s5 -> s3 [label="要改"];
   s5 -> s6 [label="批准"];
-  s6 -> s7 -> s8 -> s9;
-  s9 -> s8 [label="有證實的問題"];
-  s9 -> s10 [label="全綠"];
-  s10 -> s11 -> s12 -> s13 -> done;
-  s11 -> done [label="先不推"];
+  s6 -> s7 -> s7b -> s8 -> s9a -> s9b -> s9c;
+  s7b -> s7 [label="測試有問題"];
+  s9a -> s8 [label="沒過"];
+  s9b -> s8 [label="沒過(不派審查)"];
+  s9c -> s8 [label="must_fix / overbuilt(loop 數)"];
+  s9c -> s10 [label="乾淨或只剩 ask_user"];
+  s10 -> s11 -> s12 -> s13a -> s13 -> done;
+  s12 -> s8 [label="CI 紅:自己拉 log 修"];
 }
 ```
 
 ## Stages
+
+### S0 第一次用這個專案:問卷
+
+`specs/pipeline.yaml` 不存在(或 `config-check` 說有缺)→ **先問,再開始。** 用 `AskUserQuestion`,
+一次一組,不知道怎麼答的給預設值和例子;答案寫進 `specs/pipeline.yaml`,之後不再問。
+
+| 組 | 問什麼 | 寫到 |
+|---|---|---|
+| 技術棧 | 測試框架(決定 `runner` 解析器)、測試檔在哪、測試怎麼標 SC-id | `runner` `tests.globs` `tests.scenario_pattern` |
+| 指令 | 跑測試、lint(接檔案路徑)、**smoke**(起 app 截圖 / 打端點 / 跑 CLI) | `test` `lint` `smoke` `smoke_timeout` |
+| 版本 | 整合分支叫什麼、能不能自動推功能分支、有沒有 CI(github / gitlab / 沒有) | `integration_branch` `auto_push` `ci` |
+| 邊界 | G7 去哪些目錄找建構點、資安基準與架構鐵則在哪個檔 | `reachability.globs` `rules_files` |
+| 模型 | 預設 fable 起草與審查、opus 寫測試與實作;要不要覆寫 | `models` |
+
+smoke 沒有的專案要在這裡**一起寫出來**(通常是一支 `scripts/smoke.sh`),
+因為沒有 smoke 這條線跑不到付費審查。`ci: none` 是合法答案 —— 那就沒有 S12,證據只靠本機 + git。
+
+跑完 `scripts/gates/config-check` 必須 PASS。詳見 `commands/workflow/init.md`。
 
 ### S1 識別
 
@@ -211,6 +255,19 @@ wt="$(git worktree list --porcelain \
 
 `scripts/gates/red-capture` 需要 `evidence/red-inputs.json` 列出各層的輸出檔與測試檔。
 
+### S7½ 審測試,再凍結
+
+**凍結錯的測試比沒凍結更糟** —— 實作者只能一直「衝突就停」。所以上鎖前:
+
+1. `scripts/gates/test-review specs/{name}/spec.yaml --mechanical-only` —— 零斷言、
+   沒引用 example 具體值、example 沒人測,三種都擋
+2. **派遣 `test-reviewer`**(opus,只有 Read/Grep/Glob)—— 看機械抓不到的:斷在對不對的地方、
+   一條測試一件事、case 名稱讀得出 given/when/then。它寫 `evidence/test-review.agent.json`
+3. 再跑一次 `test-review`(不帶 `--mechanical-only`)→ PASS 才 hash 凍結測試檔
+4. 有問題 → 退回 S7 改測試,**重新擷取 RED**(改過的測試沒有 RED 證據)
+
+`test-review.json` 會記下每個測試檔的指紋;dashboard 的 G2b 確認「審過的」和「凍結的」是同一批檔。
+
 ### S8 實作 GREEN
 
 **派遣 `green-writer`**(opus)。派遣訊息給它:凍結測試的路徑、專案 `rd-implementer` skill 的路徑、
@@ -222,6 +279,9 @@ wt="$(git worktree list --porcelain \
 
 **能動**:產品程式碼、`impl/` 命名空間的測試。
 **不能動**:`spec/` 命名空間的測試、`spec.yaml`。兩個都靠 hash 在 S9 擋。
+
+**做到哪算夠**寫在它的定義裡:只做 examples 涵蓋的事、不加例子外的公開介面、註解只寫為什麼。
+它回報的「例子外的觀察」**不要叫它做** —— 留到 S9c 變成 `ask_user`。
 
 **遇到「規格與現實衝突」時停下來回報,不要自己解決。**
 
@@ -235,9 +295,27 @@ wt="$(git worktree list --porcelain \
 **外派給 subagent 時這條要寫進派遣訊息。** 第 2、3 條會在 subagent 內部發生,
 然後被回報成「已完成」—— 因為 hash 是它改完之後才算的。
 
-### S9 十二道關卡
+### S9 關卡:腳本 → smoke → 付費
 
-見下一節。
+**S9a 腳本關卡 G0–G7**(見下一節)。沒過 → 退回 S8。
+
+**S9b smoke**:`scripts/gates/smoke specs/{name}/spec.yaml`。用真的入口跑一次、拿到真的結果 ——
+UI 專案開 app 導航到目標畫面截圖(放進 `$SMOKE_SCREENSHOTS`)、API 打一次端點、CLI 跑一次指令。
+**沒過就停在這裡,G9/G10 不派** —— 功能不對,審它幹嘛。退回 S8。
+
+**S9c 付費審查 G9/G10**:派 `spec-oracle` 與 `code-adversary`(fable)。每條 finding 用
+`scripts/gates/findings add` 收進來 —— 沒重現的 `must_fix` / `ask_user` / `overbuilt` **收不進去**。
+實跑重現:紅 → `set confirmed`;不紅 → `set void`。然後分流:
+
+| class | 然後 |
+|---|---|
+| `must_fix` | `loop fix F-n` → 修 → 重跑 G0–G7 + 那條重現 → 不紅了 `loop resolved` + `findings set fixed` |
+| `overbuilt` | 同上,修 = 拿掉 |
+| `ask_user` | **不修。** 留給 S11 的 PR 留言問人 |
+| `style` | 記下,不動 |
+
+`loop` 會在第 3 次 `fix` 拒絕(parked)、解過又出現時拒絕(flipflop)—— 那時停下來,
+不是換個方式再修。`findings check` 乾淨(或只剩 `ask_user`)才進 S10。
 
 ### S10 Commit
 
@@ -251,33 +329,56 @@ Scenarios: SC-001, SC-002, ...
 AI-assisted: claude
 ```
 
-### S11 ⏸ 你看證據表按推
-
-`scripts/gates/dashboard specs/{name}/spec.yaml` 產出 HTML。
-
-**可達性排在最前面,和嚴重度分開。** 另外顯示**審查活動量**(提出 N → 作廢 M → 證實 K)——
-一張只有綠勾的表會訓練你變成橡皮圖章;活動量才分得出「乾淨」和「沒認真查」。
-
-### S12 Push + MR
+### S11 自動推 + 開 PR + 證據表貼成留言
 
 ```bash
-git push origin "feat/${branch_name}"    # 絕不直推整合分支
-gh pr create --base {INTEGRATION_BRANCH} ...   # 或 glab mr create
+scripts/gates/dashboard specs/{name}/spec.yaml     # 最後一行:自動推:可以 / 不行(原因)
+git push -u origin "feat/${branch_name}"           # 只推功能分支;整合分支永遠不直推
+gh pr create --base {INTEGRATION_BRANCH} --body-file <(scripts/gates/pr-comment specs/{name}/spec.yaml)
+# 或 glab mr create --description "$(scripts/gates/pr-comment …)"
 ```
+
+- `自動推:可以`(全綠、smoke 過、零待決事項、`auto_push: true`)→ 直接推、直接開 PR,**不叫人**
+- `不行(有待決事項)`→ 一樣推、一樣開 PR,但留言頂端是「⏸ 需要你決定」+ 條列。人只看這一則
+- `不行(有關卡沒過)`→ 不推,退回 S8
+- `auto_push: false` → 停在這裡,把 `pr-comment` 的內容印給人,人說推才推
+
+留言裡的每一項「需要你決定」都是**選擇題**,不是 code review:parked 的 finding(照樣出貨 / 停在這 / 改規格)、
+`ask_user`(要防 → 加 example;不用 → 已接受風險)、規格改了要重新批准。
+
+**整合分支受保護,永遠不直推。** 這條不因為「全綠」而例外。
+
+### S12 CI 獨立重跑(`ci: none` 就跳過)
+
+CI 是唯一**不在 AI 手裡**的執行環境 —— `evidence/` 全是 AI 在你機器上寫的,這一步讓它們得到外部確認。
+`templates/ci/` 有 GitHub / GitLab 的範本,只跑腳本關卡 + `pr-comment`;要不要裝進專案是人的決定(改 CI 要人確認)。
+
+**CI 紅了,orchestrator 自己去抓原因,不丟給人:**
+
+```bash
+gh run list --branch "feat/${branch_name}" --limit 1     # 或 glab ci list
+gh run view <id> --log-failed                            # 拉失敗的 log
+```
+
+分兩種:**環境差異**(CI 上缺工具、路徑不同、權限)→ 修 CI 設定或 pipeline.yaml,重推;
+**本機綠 CI 紅的關卡** → 那是本機證據不可信,退回 S8 當 `must_fix` 處理,走 `loop`。
+兩輪還紅 → parked,PR 留言加一行「需要你決定」。整合分支動了 CI 會自動重跑,不用記得 rebase 後重驗。
 
 ### S13 ⏸ 你按 merge
 
-**orchestrator 一律不代按 merge。**
+PR 留言頂端是「✅ 全乾淨」→ 直接按。是「⏸ 需要你決定」→ 回答那幾題(在 PR 留言回,或直接跟 orchestrator 講),
+orchestrator 處理完重新留言。**orchestrator 一律不代按 merge。**
 
-## 十一道關卡
+## 關卡:順序就是花錢的順序
 
 ```
-腳本判定 · 幾乎不花錢 · 全綠才啟動下半
+腳本判定 · 幾乎不花錢 · 全綠才往下
   G0  spec-lint        schema + 完備性六類 + 可測性
   G1  freeze-check     規格指紋 + **可解析性**(凍結一個載不進來的檔毫無意義)
                        指紋不符時跑 spec-diff 分類:行為改變 → 退回 S5;
                        事實修正 → 記錄後重新凍結
   G2  freeze-check     規格測試指紋
+  G2b test-review      測試在凍結前審過,而且審的和凍結的是同一批檔
   G3  lint             **只看變更的檔案**。真實 repo 都有歷史債,要求整包乾淨
                        等於這關從第一天就失效。**既有債的基準線推給 lint 工具自己處理**
                        (例如 swiftlint 的 --baseline)—— 關卡不重造這個輪子
@@ -289,16 +390,18 @@ gh pr create --base {INTEGRATION_BRANCH} ...   # 或 glab mr create
   G6  traceability     Scenario ↔ 測試雙向
   G7  可達性           新增的型別有沒有人建構它
 ────────────────────────────────────────────
+  S   smoke            用真的入口跑一次、拿到真的結果。證據要新鮮(工作樹指紋對得上)。
+                       **沒過,下面全部不跑**
+────────────────────────────────────────────
 付費判定
   G8   變異測試        有工具才跑;沒有就對關鍵斷言做定向變異
   G9   spec-oracle     fable,隔離,只憑規格寫驗收測試
-  G10  code-adversary  fable,每條主張附可執行的重現
-  G11  UI 截圖         有畫面變更才跑,導航到目標畫面截圖
+  G10  code-adversary  fable,每條主張附可執行的重現,分四類
+  G11  UI 截圖         smoke 順便截;有畫面變更才要求
 
-**「每個 example 都有測試覆蓋」沒有獨立的關卡。** 舊版列過,但那需要測試逐一標記
-它覆蓋哪一組 example,或者測試直接參數化讀規格 —— 那是專案層級的選擇,不是通用機制。
-現在由 spec-lint(每條 Scenario 必須有 examples)+ traceability(每條 Scenario 必須有測試)
-兩邊夾住。**列一個不存在的關卡比少列一個更糟,所以拿掉。**
+**「每個 example 都有測試覆蓋」沒有獨立的關卡。** 由 spec-lint(每條 Scenario 必須有 examples)
++ traceability(每條 Scenario 必須有測試)+ test-review(每組 example 至少被一條測試引用值)
+三邊夾住。**列一個不存在的關卡比少列一個更糟。**
 ```
 
 ### G5 的六類
@@ -326,26 +429,43 @@ gh pr create --base {INTEGRATION_BRANCH} ...   # 或 glab mr create
 |---|---|
 | 與某條 example **矛盾** | oracle 錯,自動作廢 |
 | 與某條 example **一致**但實作沒過 | 實作有 bug → **擋** |
-| 落在所有 example **之外**且紅了 | **規格缺口** → 記錄 + 在證據表具名,**不擋** |
+| 落在所有 example **之外**且紅了 | **`ask_user`** → 附問句上 PR 留言問人,**不擋、不修** |
 
 第三列是設計**明確接受殘留風險**的地方:擋的話 oracle 可以無中生有任意需求,
-迴圈永遠不收斂。代價是真有可能出貨一個 bug,所以它必須在你按推之前具名出現。
+迴圈永遠不收斂。代價是真有可能出貨一個 bug,所以它必須以問題的形式在 PR 上具名出現,
+而你的答案(要防 / 不用)會被記下來。
 
-### G10 的重現形式
+### G10 的四類與重現形式
 
-| finding 類別 | 重現 | 判定 |
-|---|---|---|
-| 程式碼 / 行為正確性 | 一條會紅的測試 | 跑得紅 → 真的;跑得綠 → 作廢 |
-| 測試正確性(假綠) | 一個存活的變異 | 實際注入該變異跑一次 |
-| 資安 | 一條會命中的指令 | 實際跑 |
+| class | 主張 | 重現 | 判定 |
+|---|---|---|---|
+| `must_fix` | 違反某組 example | 一條會紅的測試 | 跑得紅 → 修;跑得綠 → 作廢 |
+| `must_fix` | 資安 / 架構違規(rules_files 的鐵則) | 一條會命中的指令 | 實際跑 |
+| `must_fix` | 測試假綠 | 一個存活的變異 | 實際注入跑一次 |
+| `ask_user` | example 沒涵蓋的 bug、極端 edge case | 一條會紅的測試 + 問句 | 紅 → 問人;綠 → 作廢 |
+| `overbuilt` | 例子外的公開介面 / 抽象層 | 指名哪個介面沒有任何 example 用到 | 擋,拿掉 |
+| `style` | 內部囉嗦、命名 | 不需要 | 提醒 |
 
-成立的 finding,**那條重現測試直接進 `regression/` 命名空間** —— 白賺一條回歸測試。
+成立的 `must_fix`,**那條重現測試直接進 `regression/` 命名空間** —— 白賺一條回歸測試。
+`ask_user` 人說要防的,那條測試變成新 example 的規格測試(走 S7 重新擷取 RED)。
 
-## 迴圈與收斂
+## 迴圈與收斂:由 `loop` 腳本數,不靠自律
 
-- 修完之後**重跑 G0–G7**(腳本,幾乎免費)+ 該條重現測試
-- **不重派 G9/G10**,除非 fix diff 跨超過一個檔或超過行數門檻
-- G10 最多重派 **1 次**(它是最貴的一次派遣)
+```
+loop <spec> fix F-n          第 3 次會被拒(parked)
+loop <spec> resolved F-n     重現不紅了
+loop <spec> reappear F-n     解過又出現 → flipflop,立即停
+loop <spec> redispatch G10   第 2 次會被拒
+loop <spec> check            有沒有任何一條停住(dashboard 也讀)
+```
+
+- 修完之後**重跑 G0–G7**(腳本,幾乎免費)+ 那條重現測試;smoke 只在 diff 碰到入口 / 導航時重跑
+- **不重派 G9/G10**,除非 fix diff 跨超過一個檔或超過行數門檻;G10 最多重派 **1 次**
+- 停下來不是叫你看程式碼,是 PR 留言上多一行「需要你決定」:
+  「F-3 修 2 次未果 —— 照樣出貨 / 分支停在這 / 回頭改規格?」**這是決策,不是 code review。**
+
+為什麼這樣就收斂:「這算不算問題」不能吵(跑得出來才算數);例子外的東西不能逼修(只能問);
+修復次數有人在數(不會在同一個地方打轉)。
 
 實測的派遣開機費(單次、零工作量):`general-purpose` 31,554 · `spec-grill`(3 工具)5,587 ·
 `spec-reader`(零工具)3,137。**tool schema 佔了 general-purpose 開機費的九成** ——
@@ -400,6 +520,12 @@ gh pr create --base {INTEGRATION_BRANCH} ...   # 或 glab mr create
 | 續跑時用 unanchored grep 找 worktree | 只用精確 ref 比對 |
 | 抽樣式 scope audit | 全 codebase grep,而且 grep 呼叫點不是 import |
 | 代按 merge | 一律人工 |
+| 審查者發現例子外的 bug 就直接修 | 那是 `ask_user`:問人。自己修等於審查者在改契約 |
+| 「順便」加一個以後會用到的介面 | `overbuilt`,擋。做到哪算夠 = 批准的 examples |
+| 凍結沒審過的測試 | 凍結錯的測試比沒凍結更糟;S7½ 審過才上鎖 |
+| smoke 沒過就派 G9/G10 | 功能不對其他免談;而且那是白花的錢 |
+| CI 紅了丟給人看 | orchestrator 自己拉 log 分「環境差異 / 本機證據不可信」;人只看 parked |
+| 用 smoke 之前的截圖當畫面證據 | 證據要新鮮:工作樹指紋對不上就是過期 |
 
 ## 一個反覆出現的失誤模式
 
@@ -427,8 +553,10 @@ gh pr create --base {INTEGRATION_BRANCH} ...   # 或 glab mr create
 
 ## Related
 
-- `scripts/gates/*` —— 十二道關卡的實作
-- `agents/*` —— spec-grill / spec-reader / spec-oracle / code-adversary(fable)+ red-writer / green-writer(opus)
+- `scripts/gates/*` —— 關卡的實作;S7 以後新增 `test-review` `smoke` `findings` `loop` `pr-comment` `config-check`
+- `agents/*` —— spec-grill / spec-reader / spec-oracle / code-adversary(fable)+ red-writer / test-reviewer / green-writer(opus)
+- `templates/ci/*` —— S12 的 CI 範本(要裝進專案是人的決定)
+- `commands/workflow/init.md` —— S0 問卷
 - `scripts/gates/runs --yield` —— 哪道關擋過東西、擋了幾次;跑過 ≥5 次從沒擋過的會被點名
 - `eli5` skill —— S5 的說明頁
 - `test-writer` / `rd-implementer` —— **專案自備**的兩個 skill

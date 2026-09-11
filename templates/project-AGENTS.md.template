@@ -85,7 +85,7 @@ Commands above; upper- and lower-case spellings refer to the same binding.)
 ## Development Workflow
 
 ```
-規格 → 說明頁批准 → 凍結 → 測試(RED)→ 實作(GREEN)→ 十二道關卡 → 證據表 → commit
+規格 → 說明頁批准 → 凍結 → 測試(RED)→ 審過才凍結 → 實作(GREEN)→ 腳本關卡 → smoke → 付費審查 → 自動推 + PR 留言
 ```
 
 - 規格是**結構化 YAML**,放在 `specs/{name}/spec.yaml`,只給 AI 讀;
@@ -104,10 +104,16 @@ AGENTS.md 是寫給 AI 讀的散文;驗證關卡的腳本需要真正的設定�
 runner: {test_output_format}       # red-capture 的輸出解析器
 tests:
   globs: ["{test_glob}"]
-  scenario_pattern: '(SC-\d+[a-z]?)'
+  scenario_pattern: '@Test\(\s*"(SC-\d+[a-z]?)'
 reachability:
-  globs: ["{app_source_glob}"]     # G8 在哪裡找建構點
+  globs: ["{app_source_glob}"]     # G7 在哪裡找建構點
 lint: "{lint_command}"
+test: "{test_command}"
+smoke: "{smoke_command}"           # 用真的入口跑一次、拿到真的結果
+integration_branch: {integration_branch}
+auto_push: true
+ci: none                           # none | github | gitlab
+rules_files: [AGENTS.md]
 ```
 
 ## Pre-commit 驗證

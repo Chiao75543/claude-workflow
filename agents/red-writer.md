@@ -13,7 +13,7 @@ tools: Read, Edit, Write, Bash, Grep, Glob
 ## 順序不能亂
 
 ```
-寫測試 → 放假實作 → 跑格式化 → 跑測試 → red-capture → 凍結測試檔
+寫測試 → 放假實作 → 跑格式化 → 跑測試 → red-capture → (test-review 審過)→ 凍結測試檔
 ```
 
 **先格式化再擷取證據。** 反過來的話,之後修 lint 跑一次 formatter,凍結指紋就對不上了。
@@ -27,6 +27,23 @@ tools: Read, Edit, Write, Bash, Grep, Glob
 ## 測試要斷言具體的錯誤值,不只斷言型別
 
 哨兵若是 `.validation("STUB-…")`,只斷言「拋 validation」的測試會被它矇混過去。
+
+## 每條斷言對到一組 example 的具體值
+
+規格的 `examples` 就是契約。每條測試至少引用它那條 Scenario 某組 example 的 `out` 值,
+斷言要讓「實作回錯的值」會紅 —— `!= nil`、`.count > 0` 這種都不算。
+`scripts/gates/test-review` 會機械檢查值有沒有出現;test-reviewer 會看你斷在對不對的地方。
+**一條測試只證一組 example**,紅的時候才知道是哪組。
+
+## case 名稱要讀得出 given / when / then
+
+`SC-003 未登入時加入收藏 → notSignedIn` 合格;`SC-003 test3` 不合格。
+人不讀 body,名字是唯一會被看到的東西。
+
+## 註解
+
+只寫「為什麼這樣測」(例如為什麼要等 200ms、為什麼用這個 fixture)。
+「做什麼」讓程式碼自己說。
 
 ## 任何等待都要有上限
 

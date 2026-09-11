@@ -92,21 +92,31 @@ else
   cat > "$PIPELINE_CFG" <<'CFG'
 # 機器可讀的技術棧綁定,給 scripts/gates/* 用。
 # AGENTS.md 是寫給 AI 讀的散文;這份是給腳本讀的。
-# 每個 {PLACEHOLDER} 都要手動填。
+# 每個 {PLACEHOLDER} 都要填 —— 在專案裡跑 /workflow:init 會用問卷幫你填;
+# 沒填的鍵會讓對應的關卡**失敗**(不是跳過)。scripts/gates/config-check 會列出還缺什麼。
 
 runner: {TEST_OUTPUT_FORMAT}        # red-capture 的輸出解析器,例如 swift-testing
 
 tests:
   globs:
     - "{TEST_GLOB}"                 # 例如 "Packages/*/Tests/**/*.swift"
-  # 慣例:測試描述以 Scenario 編號開頭
-  scenario_pattern: '(SC-\d+[a-z]?)'
+  # 慣例:測試描述以 Scenario 編號開頭(預設錨在 Swift Testing 的 @Test 宣告上)
+  scenario_pattern: '@Test\(\s*"(SC-\d+[a-z]?)'
 
 reachability:
   globs:
-    - "{APP_SOURCE_GLOB}"           # G8 在哪裡找建構點,例如 "App/**/*.swift"
+    - "{APP_SOURCE_GLOB}"           # G7 在哪裡找建構點,例如 "App/**/*.swift"
 
-lint: "{LINT_COMMAND}"
+lint: "{LINT_COMMAND}"              # 會把變更檔的路徑接在後面
+test: "{TEST_COMMAND}"              # 跑全部測試
+smoke: "{SMOKE_COMMAND}"            # 用真的入口跑一次、拿到真的結果;截圖放 $SMOKE_SCREENSHOTS
+smoke_timeout: 600
+
+integration_branch: {INTEGRATION_BRANCH}
+auto_push: true                     # 全綠零待決 → 自動推功能分支 + 開 PR(整合分支永遠不直推)
+ci: none                            # none | github | gitlab;有才有 S12
+rules_files: [AGENTS.md]            # 資安基準與架構鐵則
+models: {draft: fable, review: fable, build: opus}
 CFG
   echo "    [write]  $PIPELINE_CFG"
 fi
@@ -137,6 +147,9 @@ if [ -n "$remaining" ]; then
   echo "  {TEST_GLOB}           — where the tests live"
   echo "  {APP_SOURCE_GLOB}     — where G8 looks for construction sites"
   echo "  {LINT_COMMAND}        — lint command (checked on changed files only)"
+echo "  {SMOKE_COMMAND}       — call the real entry point once (see /workflow:init)"
+echo ""
+echo "Or run /workflow:init inside the project — it asks these as a questionnaire."
 else
   echo "No unresolved placeholders detected."
 fi

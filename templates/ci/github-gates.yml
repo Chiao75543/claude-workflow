@@ -1,0 +1,54 @@
+# S12:在 PR 上獨立重跑腳本關卡。這是唯一不在 AI 手裡的執行環境。
+#
+# 複製到 <repo>/.github/workflows/gates.yml。**裝進專案是人的決定** —— pipeline 不會自動做。
+# 只跑不需要 toolchain 的關卡(spec-lint / freeze-check / spec-diff / traceability / test-review 機械部分);
+# G3/G4/smoke 需要專案的 toolchain,要跑的話在下面 `# 選配` 段補上專案自己的步驟。
+name: gates
+on:
+  pull_request:
+    branches: ["main"]          # 改成 integration_branch
+jobs:
+  gates:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: pip install pyyaml
+      - name: fetch gate scripts
+        run: git clone --depth 1 https://github.com/Chiao75543/claude-workflow.git /tmp/cw
+      - name: run script gates on every in-flight spec
+        id: gates
+        shell: bash
+        run: |
+          set -o pipefail
+          status=0
+          for spec in specs/*/spec.yaml; do
+            [ -f "$spec" ] || continue
+            echo "## $spec"
+            /tmp/cw/scripts/gates/spec-lint "$spec"        || status=1
+            /tmp/cw/scripts/gates/freeze-check "$spec"     || status=1
+            /tmp/cw/scripts/gates/spec-diff "$spec"        || status=1
+            /tmp/cw/scripts/gates/traceability "$spec"     || status=1
+            /tmp/cw/scripts/gates/test-review "$spec" --mechanical-only || status=1
+          done | tee gates.log
+          exit $status
+      # 選配:專案自己的 toolchain 才跑得動的關卡
+      # - run: <test command>
+      # - run: <smoke command>
+      - name: comment
+        if: always()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const log = fs.existsSync('gates.log') ? fs.readFileSync('gates.log', 'utf8') : '(no log)';
+            const ok = '${{ steps.gates.outcome }}' === 'success';
+            await github.rest.issues.createComment({
+              ...context.repo, issue_number: context.issue.number,
+              body: `## ${ok ? '✅' : '✘'} CI 獨立重跑腳本關卡\n\n<details><summary>log</summary>\n\n\`\`\`\n${log.slice(0, 60000)}\n\`\`\`\n</details>`,
+            });

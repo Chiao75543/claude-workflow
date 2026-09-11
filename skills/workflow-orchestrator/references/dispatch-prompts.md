@@ -53,7 +53,7 @@ SC-001:
 
 ---
 
-## G10 · spec-oracle
+## G9 · spec-oracle
 
 ```
 Agent(subagent_type="spec-oracle", prompt=...)
@@ -70,11 +70,11 @@ Agent(subagent_type="spec-oracle", prompt=...)
 明確告訴它裁判規則,它才知道斷言要能對回規格:
 
 > 你的斷言會被這樣裁判:與規格例子矛盾 → 判你錯自動作廢;
-> 與例子一致但實作沒過 → 實作有 bug;落在例子之外 → 記成規格缺口。
+> 與例子一致但實作沒過 → 實作有 bug;落在例子之外 → 變成問人的問題(附一句問句)。
 
 ---
 
-## G11 · code-adversary
+## G10 · code-adversary
 
 ```
 Agent(subagent_type="code-adversary", prompt=...)
@@ -85,15 +85,19 @@ Agent(subagent_type="code-adversary", prompt=...)
 - 工作目錄與 base 分支(它自己跑 `git diff`)
 - 規格路徑
 - **測試指令**(它要實跑重現與變異)
-- 專案鐵則與 Security Baseline
+- 專案鐵則與 Security Baseline(`pipeline.yaml` 的 `rules_files`)
 - **已知並已接受的取捨清單** —— 不列的話它會重提你已經決定接受的事
+- **已經 `accepted_risk` 的 ask_user** —— 同理
 
 最後一段一定要保留:
 
-> 找不到就誠實寫「CRITICAL:無」,並詳列你檢查過哪些面向。
+> 找不到就誠實寫「must_fix:無」,並詳列你檢查過哪些面向。
 > 那是有價值的資訊,不是失敗。不要為了交差硬湊。
 
 沒有這句,它會為了交差生出低品質的 finding。
+
+收 finding:每條用 `scripts/gates/findings add --id --gate G10 --class --title --repro [--sc] [--question]`。
+沒重現的會被拒收 —— 那就是作廢,不用再問它。
 
 ---
 
@@ -112,14 +116,32 @@ Agent(subagent_type="red-writer", prompt=...)
 
 ---
 
+## S7½ · test-reviewer(opus)
+
+```
+Agent(subagent_type="test-reviewer", prompt=...)
+```
+
+素材:規格路徑(它要對 examples)、測試檔路徑、輸出檔路徑 `evidence/test-review.agent.json`。
+**不給實作** —— 它審的是「這批測試值得被凍結嗎」,實作根本還沒寫。
+
+先跑過 `scripts/gates/test-review --mechanical-only`,把機械擋得住的先清掉再派 —— 省它的力氣。
+
+驗收:json 裡每條 finding 都指名測試 + example + 缺什麼;沒指名的 `test-review` 會作廢。
+
+---
+
 ## S8 · green-writer(opus)
 
 ```
 Agent(subagent_type="green-writer", prompt=...)
 ```
 
-素材:凍結測試的路徑、專案 `rd-implementer` skill 的路徑、測試指令、
+素材:凍結測試的路徑、專案 `rd-implementer` skill 的路徑、測試指令、`rules_files` 的路徑、
 **已知並已接受的取捨**(不列的話它會重提)。
+
+**不要叫它處理例子外的情況** —— 它定義裡寫了只做 examples 涵蓋的事;
+派遣訊息若說「順便也防一下 X」,等於 orchestrator 自己在改契約。
 
 驗收:報告必須含測試結果原文,以及「規格與現實的衝突」一節(沒有就明寫沒有)。
 收到衝突回報 → orchestrator 走 `spec-diff` 流程,**不要叫它自己解**。

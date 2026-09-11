@@ -14,12 +14,21 @@ AGENTS.md 是寫給 AI 讀的散文;腳本需要真正的設定檔。
       globs: ["App/**/*.swift"]    # G8 在哪裡找建構點
     lint: "swiftlint lint --quiet"     # 會把變更的檔案路徑接在後面
     test: "./scripts/verify.sh"        # 沒設定的話 G4 直接算失敗
+    smoke: "./scripts/smoke.sh"        # 用真的入口跑一次、拿到真的結果;沒設定 = 失敗
+    smoke_timeout: 600                 # 秒;超時算 hang
     integration_branch: main           # scan-siblings / runs 判斷「已落地」的基準
+    auto_push: true                    # 全綠且零待決事項 → 自動推功能分支 + 開 PR
+    ci: none                           # none | github | gitlab;有 CI 才有 S12
+    rules_files: [AGENTS.md]           # 資安基準與架構鐵則在哪;派給 code-adversary
+    models: {draft: fable, review: fable, build: opus}
+
+以上每個鍵都可以用 /workflow:init 問卷一次填好。
 """
 
 from __future__ import annotations
 
 import pathlib
+import re
 
 DEFAULTS = {
     "runner": "swift-testing",
@@ -35,8 +44,34 @@ DEFAULTS = {
     # 「沒有人檢查」和「檢查通過」是兩件完全不同的事。
     "lint": None,
     "test": None,
+    "smoke": None,
+    "smoke_timeout": 600,
     "integration_branch": "main",
+    "auto_push": True,
+    "ci": "none",
+    "rules_files": ["AGENTS.md"],
+    "models": {"draft": "fable", "review": "fable", "build": "opus"},
+    # 測試裡「這一行是斷言」長什麼樣。test-review 用它抓空測試(零斷言)。
+    "assert_pattern": r"#expect\(|#require\(|XCTAssert|assert(?:Equals|True|False|That|Throws)?\(|expect\(",
 }
+
+# 沒填就跑不了 pipeline 的鍵。/workflow:init 問卷與 config-check 都看這份。
+REQUIRED = ["runner", "lint", "test", "smoke"]
+PLACEHOLDER = re.compile(r"\{[A-Z_]+\}")
+
+
+def missing(config: dict) -> list[str]:
+    """哪些必填鍵還是空的或還是佔位符。"""
+    out = []
+    for key in REQUIRED:
+        value = config.get(key)
+        if value in (None, "") or (isinstance(value, str) and PLACEHOLDER.search(value)):
+            out.append(key)
+    for key in ("globs",):
+        for section in ("tests", "reachability"):
+            if any(PLACEHOLDER.search(str(g)) for g in (config.get(section) or {}).get(key, [])):
+                out.append(f"{section}.{key}")
+    return out
 
 
 def load(root: pathlib.Path) -> dict:

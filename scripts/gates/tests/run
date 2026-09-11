@@ -595,7 +595,7 @@ def test_dashboard_requires_verification(tmp: pathlib.Path) -> None:
         'runner: swift-testing\nreachability:\n  globs: ["App/**/*.swift"]\n')
     subprocess.run(["git", "add", "-A"], cwd=root, check=True)
     code, out = run_gate("dashboard", "specs/demo/spec.yaml", cwd=root)
-    check("到不了的型別 → G8 判失敗且反映在退出碼",
+    check("到不了的型別 → G7 判失敗且反映在退出碼",
           "1 個沒有建構點" in out and code == 1, out[:250])
 
 
@@ -671,6 +671,232 @@ def test_reachability_hardening(tmp: pathlib.Path) -> None:
           by.get("FeatureRow") == ["App/Uses.swift"], str(by.get("FeatureRow")))
 
 
+# ---------------------------------------------------------------- S7½ test-review
+
+def test_test_review(tmp: pathlib.Path) -> None:
+    """凍結錯的測試比沒凍結更糟。機械檢查:零斷言、沒引用 example 的值、example 沒人測。"""
+    def repo(name: str, test_src: str, agent: str | None = '{"findings": []}') -> pathlib.Path:
+        root = make_repo(tmp / name)
+        (root / "Tests").mkdir()
+        (root / "Tests" / "DemoTests.swift").write_text(test_src)
+        (root / "specs" / "pipeline.yaml").write_text('runner: swift-testing\ntests:\n  globs: ["Tests/**/*.swift"]\n')
+        if agent is not None:
+            (root / "specs/demo/evidence/test-review.agent.json").write_text(agent)
+        return root
+
+    good = ('@Test("SC-001 空輸入回空清單") func a() { #expect(process(0) == .emptyList) }\n'
+            '@Test("SC-002 離線就報 NetworkError") func b() { #expect(throws: NetworkError.self) { try process() } }\n')
+    root = repo("tr-good", good)
+    code, out = run_gate("test-review", "specs/demo/spec.yaml", cwd=root)
+    check("斷言引用了 example 的值(snake_case 對 camelCase 也算)→ PASS", code == 0, out[:300])
+    review = json.loads((root / "specs/demo/evidence/test-review.json").read_text())
+    check("test-review.json 記下每個測試檔的指紋",
+          "Tests/DemoTests.swift" in review.get("files", {}) and review["files"]["Tests/DemoTests.swift"].startswith("sha256:"),
+          str(review.get("files")))
+
+    root = repo("tr-noassert", good.replace("{ #expect(process(0) == .emptyList) }", "{ _ = process(0) // emptyList }"))
+    code, out = run_gate("test-review", "specs/demo/spec.yaml", cwd=root)
+    check("零斷言的測試 → 擋", code == 1 and "沒有任何斷言" in out, out[:300])
+
+    root = repo("tr-noanchor", good.replace("== .emptyList", ".isEmpty"))
+    code, out = run_gate("test-review", "specs/demo/spec.yaml", cwd=root)
+    check("斷言沒引用 SC 任何 example 的具體值 → 擋", code == 1 and "沒有引用 SC-001" in out, out[:300])
+    check("example 沒被任何測試引用也點名", "沒有任何測試引用這組 example" in out, out[:300])
+
+    root = repo("tr-noagent", good, agent=None)
+    code, out = run_gate("test-review", "specs/demo/spec.yaml", cwd=root)
+    check("語意審查沒跑(缺 agent json)→ 擋", code == 1 and "test-review.agent.json" in out, out[:300])
+    code, out = run_gate("test-review", "specs/demo/spec.yaml", "--mechanical-only", cwd=root)
+    check("--mechanical-only 才能略過語意審查", code == 0, out[:300])
+
+    root = repo("tr-agentblock", good,
+                agent='{"findings": [{"test": "a", "sc": "SC-001", "problem": "斷在 count 不是 isEmpty", "blocking": true}]}')
+    code, out = run_gate("test-review", "specs/demo/spec.yaml", cwd=root)
+    check("語意審查的 blocking finding → 擋", code == 1 and "斷在 count" in out, out[:300])
+
+    root = repo("tr-agentvague", good, agent='{"findings": [{"problem": "感覺不太對", "blocking": true}]}')
+    code, out = run_gate("test-review", "specs/demo/spec.yaml", cwd=root)
+    check("沒指名測試的 finding 依證據規則作廢(只 warn)", code == 0 and "作廢" in out, out[:300])
+
+
+# ---------------------------------------------------------------- loop / findings / smoke / pr-comment
+
+def test_loop(tmp: pathlib.Path) -> None:
+    """迴圈計數由腳本記,不靠自律。"""
+    root = make_repo(tmp / "loop")
+    spec = "specs/demo/spec.yaml"
+    c1, _ = run_gate("loop", spec, "fix", "F-1", cwd=root)
+    c2, _ = run_gate("loop", spec, "fix", "F-1", cwd=root)
+    c3, out = run_gate("loop", spec, "fix", "F-1", cwd=root)
+    check("同一條修第 3 次 → parked,退出碼 1", (c1, c2, c3) == (0, 0, 1) and "parked" in out, f"{(c1, c2, c3)} {out[:120]}")
+    code, out = run_gate("loop", spec, "check", cwd=root)
+    check("check 看得到 parked", code == 1 and "F-1" in out and "parked" in out, out[:200])
+    run_gate("loop", spec, "resolved", "F-2", cwd=root)
+    code, out = run_gate("loop", spec, "reappear", "F-2", cwd=root)
+    check("解過又出現 → flipflop,立即停", code == 1 and "flipflop" in out, out[:200])
+    code, out = run_gate("loop", spec, "check", cwd=root)
+    check("flipflop 的狀態有記下來(check 看得到 F-2)", code == 1 and "F-2  flipflop" in out, out[:200])
+    code, out = run_gate("loop", spec, "fix", "F-2", cwd=root)
+    check("flipflop 之後不准再修", code == 1 and "不准再修" in out, out[:200])
+    c1, _ = run_gate("loop", spec, "redispatch", "G10", cwd=root)
+    c2, out = run_gate("loop", spec, "redispatch", "G10", cwd=root)
+    check("G10 重派第 2 次 → 擋", (c1, c2) == (0, 1) and "上限 1" in out, f"{(c1, c2)} {out[:120]}")
+
+
+def test_findings(tmp: pathlib.Path) -> None:
+    """四類分流:沒重現的不收、ask_user 要有問句、ask_user 不能直接 fixed。"""
+    root = make_repo(tmp / "findings")
+    spec = "specs/demo/spec.yaml"
+    code, out = run_gate("findings", spec, "add", "--id", "F-1", "--gate", "G10", "--class", "must_fix",
+                         "--title", "空清單回錯", cwd=root)
+    check("must_fix 沒附重現 → 不收", code == 1 and "必須附重現" in out, out[:200])
+    code, out = run_gate("findings", spec, "add", "--id", "F-1", "--gate", "G10", "--class", "must_fix",
+                         "--title", "空清單回錯", "--repro", "Tests/Regress.swift", cwd=root)
+    check("must_fix 附重現 → 收", code == 0, out[:200])
+    code, out = run_gate("findings", spec, "add", "--id", "F-2", "--gate", "G9", "--class", "ask_user",
+                         "--title", "同時按兩次", "--repro", "Tests/Twice.swift", cwd=root)
+    check("ask_user 沒問句 → 不收", code == 1 and "必須附問句" in out, out[:200])
+    run_gate("findings", spec, "add", "--id", "F-2", "--gate", "G9", "--class", "ask_user",
+             "--title", "同時按兩次", "--repro", "Tests/Twice.swift", "--question", "要防嗎?", cwd=root)
+    run_gate("findings", spec, "set", "F-2", "confirmed", cwd=root)
+    code, out = run_gate("findings", spec, "set", "F-2", "fixed", cwd=root)
+    check("ask_user 不能直接 fixed(那是人的決定)", code == 1 and "不能直接 fixed" in out, out[:200])
+    code, out = run_gate("findings", spec, "check", cwd=root)
+    check("check:必修未處理 + 等人決定 → PENDING", code == 1 and "1 條必修沒處理" in out and "1 條等你決定" in out, out[:300])
+    run_gate("findings", spec, "set", "F-2", "accepted_risk", cwd=root)
+    code, out = run_gate("findings", spec, "check", cwd=root)
+    check("只剩必修未處理(沒有待決)→ 仍然 PENDING", code == 1 and "1 條必修沒處理" in out and "等你決定" not in out, out[:300])
+    run_gate("findings", spec, "set", "F-1", "fixed", cwd=root)
+    code, out = run_gate("findings", spec, "check", cwd=root)
+    check("全處理完 → OK", code == 0 and "findings: OK" in out, out[:300])
+    state = json.loads((root / "specs/demo/evidence/findings.json").read_text())
+    check("summary 是提出→作廢→證實", state.get("summary") == {"proposed": 2, "void": 0, "confirmed": 2}, str(state.get("summary")))
+
+
+def test_smoke(tmp: pathlib.Path) -> None:
+    """smoke:沒設 = 失敗;失敗與超時都留紀錄;截圖收進證據。"""
+    root = make_repo(tmp / "smoke")
+    spec = "specs/demo/spec.yaml"
+    (root / "specs" / "pipeline.yaml").write_text("runner: swift-testing\n")
+    code, out = run_gate("smoke", spec, cwd=root)
+    check("沒設 smoke 指令 → 失敗(不是跳過)", code == 1 and "沒設 smoke" in out, out[:200])
+    (root / "specs" / "pipeline.yaml").write_text(
+        'runner: swift-testing\nsmoke: "touch $SMOKE_SCREENSHOTS/home.png && echo reached"\n')
+    code, out = run_gate("smoke", spec, cwd=root)
+    smoke = json.loads((root / "specs/demo/evidence/smoke.json").read_text())
+    check("指令成功 → PASS,截圖被記進 smoke.json",
+          code == 0 and smoke["ok"] and smoke["screenshots"] == ["home.png"], f"{code} {smoke}")
+    check("smoke.json 帶工作樹指紋(證據要能判斷新不新鮮)", smoke.get("tree", "").startswith("sha256:"), str(smoke.get("tree")))
+    (root / "specs" / "pipeline.yaml").write_text('runner: swift-testing\nsmoke: "echo boom; exit 3"\n')
+    code, out = run_gate("smoke", spec, cwd=root)
+    smoke = json.loads((root / "specs/demo/evidence/smoke.json").read_text())
+    check("指令失敗 → FAIL 且 exit code 留在 smoke.json", code == 1 and smoke["exit_code"] == 3, f"{code} {smoke}")
+    check("輸出留在 smoke.log", "boom" in (root / "specs/demo/evidence/smoke.log").read_text())
+    (root / "specs" / "pipeline.yaml").write_text('runner: swift-testing\nsmoke: "sleep 5"\nsmoke_timeout: 1\n')
+    code, out = run_gate("smoke", spec, cwd=root)
+    smoke = json.loads((root / "specs/demo/evidence/smoke.json").read_text())
+    check("超時 → FAIL 且 timed_out", code == 1 and smoke["timed_out"] is True, f"{code} {smoke}")
+
+
+def test_dashboard_gating_order(tmp: pathlib.Path) -> None:
+    """順序就是花錢的順序:smoke 沒過,G9/10 標未跑;全綠零待決才准自動推;pr-comment 只在有事時標人。"""
+    def repo(name: str) -> pathlib.Path:
+        root = make_repo(tmp / name)
+        freeze(root)
+        shutil.copy(root / "specs/demo/spec.yaml", root / "specs/demo/evidence/spec.approved.yaml")
+        (root / "Tests").mkdir()
+        (root / "Tests" / "DemoTests.swift").write_text(
+            '@Test("SC-001 a") func a() { #expect(x == .emptyList) }\n'
+            '@Test("SC-002 b") func b() { #expect(e == NetworkError.offline) }\n')
+        (root / "specs/demo/evidence/red.json").write_text(json.dumps({
+            "counts": {"assertion": 2}, "reconciliation": [{"reconciled": True}], "tests": []}))
+        (root / "specs/demo/evidence/test-review.agent.json").write_text('{"findings": []}')
+        (root / "specs" / "pipeline.yaml").write_text(
+            'runner: swift-testing\ntests:\n  globs: ["Tests/**/*.swift"]\nlint: "true"\ntest: "true"\nsmoke: "true"\n')
+        subprocess.run(["git", "add", "-A"], cwd=root, check=True)
+        subprocess.run(["git", "commit", "-qm", "base"], cwd=root, check=True)
+        return root
+
+    spec = "specs/demo/spec.yaml"
+    root = repo("order-nosmoke")
+    run_gate("test-review", spec, cwd=root)
+    freeze(root, ["Tests/DemoTests.swift"])
+    code, out = run_gate("dashboard", spec, cwd=root)
+    check("沒跑 smoke → S 擋,G9/10 標「未跑」", "缺 smoke.json" in out and "未跑" in out and code == 1, out[:400])
+
+    run_gate("smoke", spec, cwd=root)
+    code, out = run_gate("dashboard", spec, cwd=root)
+    check("smoke 過但沒 findings.json → G9/10 擋", "缺 findings.json" in out and code == 1, out[:400])
+
+    run_gate("findings", spec, "add", "--id", "F-1", "--gate", "G10", "--class", "style", "--title", "命名", cwd=root)
+    run_gate("findings", spec, "set", "F-1", "void", cwd=root)
+    code, out = run_gate("dashboard", spec, cwd=root)
+    check("全綠零待決 → 自動推:可以", code == 0 and "自動推:可以" in out, out[:500])
+    check("寫出 dashboard.json", (root / "specs/demo/evidence/dashboard.json").exists())
+    code, out = run_gate("pr-comment", spec, cwd=root)
+    check("pr-comment 全乾淨 → 標題是「全乾淨」", code == 0 and "全乾淨" in out and "需要你決定" not in out, out[:300])
+    code, _ = run_gate("pr-comment", spec, "--check", cwd=root)
+    check("pr-comment --check 全乾淨 → 0", code == 0)
+
+    (root / "Tests" / "DemoTests.swift").write_text((root / "Tests" / "DemoTests.swift").read_text() + "// touched\n")
+    code, out = run_gate("dashboard", spec, cwd=root)
+    check("工作樹變了 → smoke 證據過期", "證據過期" in out and code == 1, out[:400])
+
+    root = repo("order-review-stale")
+    run_gate("test-review", spec, cwd=root)
+    (root / "Tests" / "DemoTests.swift").write_text((root / "Tests" / "DemoTests.swift").read_text() + "// after review\n")
+    freeze(root, ["Tests/DemoTests.swift"])
+    run_gate("smoke", spec, cwd=root)
+    code, out = run_gate("dashboard", spec, cwd=root)
+    check("審過的測試檔和凍結的不是同一批 → G2b 擋", "不是同一批檔" in out and code == 1, out[:400])
+
+    root = repo("order-ask")
+    run_gate("test-review", spec, cwd=root)
+    freeze(root, ["Tests/DemoTests.swift"])
+    run_gate("smoke", spec, cwd=root)
+    run_gate("findings", spec, "add", "--id", "F-9", "--gate", "G9", "--class", "ask_user", "--title", "連點兩下",
+             "--repro", "Tests/Twice.swift", "--question", "要防嗎?", cwd=root)
+    run_gate("findings", spec, "set", "F-9", "confirmed", cwd=root)
+    code, out = run_gate("dashboard", spec, cwd=root)
+    check("有 ask_user 等人 → 關卡綠但自動推:不行(有待決事項)",
+          code == 0 and "有待決事項" in out, out[:500])
+    code, out = run_gate("pr-comment", spec, cwd=root)
+    check("pr-comment 列出「需要你決定」與問句", "需要你決定" in out and "要防嗎?" in out, out[:400])
+    code, _ = run_gate("pr-comment", spec, "--check", cwd=root)
+    check("pr-comment --check 有事 → 1", code == 1)
+    run_gate("loop", spec, "fix", "F-9", cwd=root); run_gate("loop", spec, "fix", "F-9", cwd=root); run_gate("loop", spec, "fix", "F-9", cwd=root)
+    code, out = run_gate("dashboard", spec, cwd=root)
+    check("parked 的 finding → G9/10 擋", "修 2 次未果" in out and code == 1, out[:500])
+
+    # auto_push: false 要在「本來可以推」的狀態下驗,否則測的是別的理由
+    root = repo("order-nopush")
+    (root / "specs" / "pipeline.yaml").write_text((root / "specs" / "pipeline.yaml").read_text() + "auto_push: false\n")
+    run_gate("test-review", spec, cwd=root)
+    freeze(root, ["Tests/DemoTests.swift"])
+    run_gate("smoke", spec, cwd=root)          # 設定改完才跑 smoke,否則證據會被判過期
+    run_gate("findings", spec, "add", "--id", "F-1", "--gate", "G10", "--class", "style", "--title", "命名", cwd=root)
+    run_gate("findings", spec, "set", "F-1", "void", cwd=root)
+    code, out = run_gate("dashboard", spec, cwd=root)
+    dash = json.loads((root / "specs/demo/evidence/dashboard.json").read_text())
+    check("全綠零待決但 auto_push: false → dashboard.json 的 auto_push_ok 是 False",
+          code == 0 and dash.get("auto_push_ok") is False and "不行(auto_push: false)" in out, out[:500])
+
+
+def test_config_check(tmp: pathlib.Path) -> None:
+    root = make_repo(tmp / "cfg")
+    code, out = run_gate("config-check", str(root), cwd=root)
+    check("沒有 pipeline.yaml → 指去跑 /workflow:init", code == 1 and "/workflow:init" in out, out[:200])
+    (root / "specs" / "pipeline.yaml").write_text('runner: swift-testing\nlint: "x"\ntest: "{TEST_COMMAND}"\n')
+    code, out = run_gate("config-check", str(root), cwd=root)
+    check("佔位符和沒設的鍵都算缺", code == 1 and "test" in out.split("缺")[-1] and "smoke" in out.split("缺")[-1], out[-120:])
+    (root / "specs" / "pipeline.yaml").write_text('runner: swift-testing\nlint: "x"\ntest: "y"\nsmoke: "z"\nci: travis\n')
+    code, out = run_gate("config-check", str(root), cwd=root)
+    check("ci 只能是 none/github/gitlab", code == 1 and "ci(" in out, out[-120:])
+    (root / "specs" / "pipeline.yaml").write_text('runner: swift-testing\nlint: "x"\ntest: "y"\nsmoke: "z"\n')
+    code, out = run_gate("config-check", str(root), cwd=root)
+    check("填齊 → PASS", code == 0, out[-120:])
+
+
 # ---------------------------------------------------------------- main
 
 def main() -> int:
@@ -679,7 +905,9 @@ def main() -> int:
         for fn in (test_spec_lint, test_freeze_check, test_red_capture,
                    test_traceability, test_spec_diff,
                    test_dashboard_requires_verification, test_landed_compares_content,
-                   test_reachability, test_reachability_hardening):
+                   test_reachability, test_reachability_hardening,
+                   test_test_review, test_loop, test_findings, test_smoke,
+                   test_dashboard_gating_order, test_config_check):
             try:
                 fn(tmp)
             except Exception as exc:  # noqa: BLE001

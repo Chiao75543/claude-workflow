@@ -1,0 +1,85 @@
+#!/usr/bin/env python3
+"""smoke — 功能真的能跑嗎。腳本關卡全綠之後、付費審查之前。
+
+定義:**用真的入口呼叫一次、拿到真的結果。** 起得來、到得了、不崩、有結果。
+UI 專案是開 app 導航到目標畫面截圖;API 是打一次端點;CLI 是跑一次指令。
+指令由專案在 specs/pipeline.yaml 的 `smoke` 綁定,**沒設定 = 失敗**。
+
+功能不對,其他免談:smoke 沒過,G9/G10 一律不派。
+
+指令拿得到兩個環境變數:
+  SMOKE_SCREENSHOTS  截圖要放的目錄(evidence/screenshots),放進去就會上證據表
+  SMOKE_SPEC         規格路徑
+
+用法: smoke <spec.yaml>
+退出碼: 0 通過 / 1 失敗或超時
+"""
+
+from __future__ import annotations
+
+import datetime
+import os
+import pathlib
+import subprocess
+import sys
+import time
+
+sys.path.insert(0, str(pathlib.Path(__file__).parent))
+import _config  # noqa: E402
+from _common import evidence_dir, write_json  # noqa: E402
+from _state import tree_fingerprint  # noqa: E402
+
+
+def main(argv: list[str]) -> int:
+    if not argv:
+        print(__doc__)
+        return 2
+    spec_path = pathlib.Path(argv[0]).resolve()
+    root = spec_path.parents[2]
+    ev = evidence_dir(spec_path)
+    config = _config.load(root)
+    cmd = config.get("smoke")
+    if not cmd:
+        print("✘ specs/pipeline.yaml 沒設 smoke —— 「沒有人跑過」和「跑過了」是兩件事")
+        return 1
+
+    shots_dir = ev / "screenshots"
+    shots_dir.mkdir(parents=True, exist_ok=True)
+    before = {p.name for p in shots_dir.glob("*.png")}
+    env = {**os.environ, "SMOKE_SCREENSHOTS": str(shots_dir), "SMOKE_SPEC": str(spec_path)}
+    timeout = int(config.get("smoke_timeout") or 600)
+
+    started = time.monotonic()
+    timed_out = False
+    try:
+        proc = subprocess.run(cmd, shell=True, cwd=root, env=env, capture_output=True,
+                              text=True, timeout=timeout)
+        code, output = proc.returncode, proc.stdout + proc.stderr
+    except subprocess.TimeoutExpired as exc:
+        timed_out = True
+        code = -1
+        output = ((exc.stdout or b"").decode(errors="ignore") if isinstance(exc.stdout, bytes) else (exc.stdout or "")) \
+            + f"\n[smoke] 超過 {timeout} 秒沒跑完 —— 視同 hang\n"
+    duration = round(time.monotonic() - started, 1)
+
+    (ev / "smoke.log").write_text(output)
+    new_shots = sorted({p.name for p in shots_dir.glob("*.png")} - before)
+    ok = code == 0 and not timed_out
+    write_json(ev / "smoke.json", {
+        "ok": ok,
+        "exit_code": code,
+        "timed_out": timed_out,
+        "command": cmd,
+        "duration_s": duration,
+        "screenshots": new_shots,
+        "at": datetime.datetime.now().astimezone().isoformat(timespec="seconds"),
+        "tree": tree_fingerprint(root),
+    })
+    tail = output.strip().splitlines()[-1][:80] if output.strip() else ""
+    print(f"  {'✓' if ok else '✘'} smoke  {duration}s · 截圖 {len(new_shots)} 張" + (f" · {tail}" if not ok else ""))
+    print(f"smoke: {'PASS' if ok else 'FAIL'}")
+    return 0 if ok else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))
