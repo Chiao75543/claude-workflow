@@ -215,7 +215,7 @@ MUTATIONS: list[tuple[str, str, str, str]] = [
      '                f.error(where, "沒有任何斷言 —— 空測試")',
      "                pass"),
     ("test-review", "沒引用 example 值不擋",
-     '                f.error(where, f"沒有引用 {sid} 任何一組 example 的具體值(例如 {\', \'.join(wanted)})")',
+     '                f.error(where, f"沒有引用 {sid} 任何一組 example 的具體輸出(例如 {\', \'.join(wanted)})")',
      "                pass"),
     ("test-review", "example 沒人測不擋",
      '                f.error(f"{sid} example #{i}", "沒有任何測試引用這組 example 的值 —— 批准的例子沒人測")',
