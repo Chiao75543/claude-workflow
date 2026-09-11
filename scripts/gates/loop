@@ -13,8 +13,12 @@
   loop <spec.yaml> resolved <finding-id>    重現跑不出來了,這條解了
   loop <spec.yaml> reappear <finding-id>    解過的又冒出來 → flipflop
   loop <spec.yaml> redispatch <gate>        重派某道付費關卡(G10 上限 1)
+  loop <spec.yaml> decided <finding-id> ship|hold|respec   人決定了(唯一能解除 parked/flipflop 的動詞)
   loop <spec.yaml> check                    有沒有任何一條停住
 退出碼: 0 可以繼續 / 1 停,交給人
+
+finding-id 必須存在於 evidence/findings.json —— 幽靈 id 不收,換 id 重修同一條也不行。
+parked / flipflop 之後 AI 不能自己 `resolved` 解除;只有 `decided` 能,而那是人的決定。
 """
 
 from __future__ import annotations
@@ -25,6 +29,8 @@ import sys
 
 sys.path.insert(0, str(pathlib.Path(__file__).parent))
 from _common import evidence_dir, read_json, write_json  # noqa: E402
+
+DECISIONS = {"ship", "hold", "respec"}
 
 MAX_FIXES = 2
 MAX_REDISPATCH = {"G10": 1, "G9": 1}
@@ -78,14 +84,29 @@ def main(argv: list[str]) -> int:
         print(__doc__)
         return 2
     fid = argv[2]
+    known = {i.get("id") for i in (read_json(ev / "findings.json") or {}).get("items") or []}
+    if fid not in known:
+        print(f"✘ {fid} 不在 evidence/findings.json 裡 —— 先用 findings add 收進來,不要對幽靈 id 計數")
+        return 1
     item = findings.setdefault(fid, {"fixes": 0, "status": "open", "history": []})
     item["history"].append({"at": now(), "event": verb})
 
+    if verb == "decided":
+        choice = argv[3] if len(argv) > 3 else ""
+        if choice not in DECISIONS:
+            print(f"✘ 決定只能是 {', '.join(sorted(DECISIONS))}")
+            return 2
+        item["status"] = f"decided:{choice}"
+        write_json(ev / "loop.json", state)
+        print(f"{fid} 人決定:{choice}")
+        return 0
+
+    if item["status"] in ("parked", "flipflop") and verb != "decided":
+        write_json(ev / "loop.json", state)
+        print(f"✘ {fid} 已經 {item['status']},不准再修也不准自己解除 —— 這是人的決定(loop decided)")
+        return 1
+
     if verb == "fix":
-        if item["status"] in ("parked", "flipflop"):
-            write_json(ev / "loop.json", state)
-            print(f"✘ {fid} 已經 {item['status']},不准再修 —— 這是人的決定")
-            return 1
         if item["fixes"] >= MAX_FIXES:
             item["status"] = "parked"
             write_json(ev / "loop.json", state)

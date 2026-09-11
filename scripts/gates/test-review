@@ -33,6 +33,13 @@ from _common import Findings, evidence_dir, load_spec, read_json, scenarios, sha
 from _state import tree_fingerprint  # noqa: E402
 
 SKIP_TOKENS = {"true", "false", "null", "none", "nil", "yes", "no"}
+# 註解裡的東西不算:`// #expect(...) 之後補` 不是斷言,`// emptyList` 不是引用。
+# `#` 開頭只在後面接空白時當註解(Python / shell),否則會把 Swift 的 #expect 剝掉。
+COMMENT = re.compile(r"/\*.*?\*/|//[^\n]*|^\s*#\s[^\n]*", re.S | re.M)
+
+
+def strip_comments(text: str) -> str:
+    return COMMENT.sub("", text)
 
 
 def camel(token: str) -> str:
@@ -82,11 +89,16 @@ def collect_tests(root: pathlib.Path, config: dict) -> list[dict]:
             for i, m in enumerate(matches):
                 end = matches[i + 1].start() if i + 1 < len(matches) else len(text)
                 line_end = text.find("\n", m.start())
+                line_end = line_end if line_end > 0 else end
+                # 描述字串不算 body:命名慣例會把 example 的值寫進名字,那不是斷言。
+                # 只剝到字串收尾的引號,單行測試的斷言還在。
+                quote = text.find('"', m.end())
+                body_start = quote + 1 if 0 <= quote < line_end else line_end
                 tests.append({
                     "file": str(path.relative_to(root)),
                     "sc": m.group(1),
-                    "name": text[m.start():line_end if line_end > 0 else m.end()].strip()[:80],
-                    "body": text[m.start():end],
+                    "name": text[m.start():line_end].strip()[:80],
+                    "body": strip_comments(text[body_start:end]),
                 })
     return tests
 
@@ -154,6 +166,7 @@ def main(argv: list[str]) -> int:
     code = f.report("test-review")
     write_json(ev / "test-review.json", {
         "ok": code == 0,
+        "mechanical_only": "--mechanical-only" in argv,
         "at": datetime.datetime.now().astimezone().isoformat(timespec="seconds"),
         "tests": len(tests),
         "files": {rel: sha256(root / rel) for rel in files},

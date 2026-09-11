@@ -5,11 +5,16 @@
 gates:
   stage: test
   image: python:3.12
+  variables:
+    CW_SHA: "f6bee77"
   rules:
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
   script:
     - pip install pyyaml
-    - git clone --depth 1 https://github.com/Chiao75543/claude-workflow.git /tmp/cw
+    # pin 到 commit(理由見 github-gates.yml);要升級就改 CW_SHA
+    - git clone -q https://github.com/Chiao75543/claude-workflow.git /tmp/cw
+    - git -C /tmp/cw checkout -q "$CW_SHA"
+    - '[ "$(git -C /tmp/cw rev-parse --short HEAD)" = "$CW_SHA" ] || { echo "pin mismatch"; exit 1; }'
     - |
       status=0
       for spec in specs/*/spec.yaml; do

@@ -29,7 +29,9 @@ import sys
 
 sys.path.insert(0, str(pathlib.Path(__file__).parent))
 import _config  # noqa: E402
-from _common import evidence_dir, load_spec, read_json, scenario_ids, write_json  # noqa: E402
+from _common import (  # noqa: E402
+    evidence_dir, integration_branch, load_spec, read_json, scenario_ids, triage_findings, write_json,
+)
 from _state import tree_fingerprint  # noqa: E402
 
 # 型別宣告。要吃得下常見寫法,否則最該檢查的東西反而隱形:
@@ -45,7 +47,7 @@ PRIVATE = re.compile(rf"^\s*{ATTRS}(?:private|fileprivate)\s", re.M)
 
 
 # 這幾個標籤是「要人做決定」,其他的只是讓人知道。自動推只被前者擋。
-DECISION_TAGS = {"需要你決定", "要重新批准", "要人工驗", "無法驗證"}
+DECISION_TAGS = {"需要你決定", "要重新批准", "要人工驗", "無法驗證", "無外部錨定"}
 
 
 def git(root: pathlib.Path, *args: str) -> str:
@@ -65,7 +67,7 @@ def check_reachability(root: pathlib.Path, base: str, config: dict) -> list[dict
     added = [p for p in git(root, "diff", "--name-only", "--diff-filter=A", f"{base}...HEAD").split("\n") if p]
     if not added:  # 尚未 commit 的情況
         added = [p for p in git(root, "diff", "--cached", "--name-only", "--diff-filter=A").split("\n") if p]
-    globs = config["reachability"]["globs"]
+    globs = config["reachability"]["globs"] or []
     in_scope = {p for p in added if in_reach_scope(root, p, globs)}
 
     # 自己用 Python 搜,不外包給 git grep ——
@@ -171,10 +173,14 @@ def main(argv: list[str]) -> int:
         print(__doc__)
         return 2
     spec_path = pathlib.Path(args[0])
-    base = argv[argv.index("--base") + 1] if "--base" in argv else "main"
     root = spec_path.resolve().parents[2]
     spec = load_spec(spec_path)
     config = _config.load(root)
+    # base 預設跟 pipeline.yaml 的 integration_branch;寫死 main 的話,整合分支叫 develop 的專案
+    # `git diff main...HEAD` 出錯回空 → G3「沒有變更的檔案」G7「0 個新型別」靜默變綠(對抗審查實證)。
+    base = argv[argv.index("--base") + 1] if "--base" in argv else integration_branch(root)
+    base_ok = subprocess.run(["git", "rev-parse", "--verify", "-q", f"{base}^{{commit}}"], cwd=root,
+                             capture_output=True).returncode == 0
     ev = evidence_dir(spec_path)
     here = pathlib.Path(__file__).parent
 
@@ -238,6 +244,9 @@ def main(argv: list[str]) -> int:
     elif not review.get("ok"):
         gates.append({"id": "G2b", "what": "測試在凍結前審過", "ok": False,
                       "note": f"{len(review.get('errors') or [])} 條問題"})
+    elif review.get("mechanical_only") or review.get("agent") is None:
+        gates.append({"id": "G2b", "what": "測試在凍結前審過", "ok": False,
+                      "note": "只跑過機械檢查,語意審查(test-reviewer)沒跑"})
     elif frozen_files and review.get("files") != frozen_files:
         gates.append({"id": "G2b", "what": "測試在凍結前審過", "ok": False, "note": "審過的和凍結的不是同一批檔"})
     else:
@@ -258,6 +267,8 @@ def main(argv: list[str]) -> int:
     if not lint_cmd:
         gates.append({"id": "G3", "what": "lint(變更的檔案)", "ok": False,
                       "note": "specs/pipeline.yaml 沒設 lint"})
+    elif not base_ok:
+        gates.append({"id": "G3", "what": "lint(變更的檔案)", "ok": False, "note": f"找不到整合分支 {base}"})
     elif not changed:
         gates.append({"id": "G3", "what": "lint(變更的檔案)", "ok": True, "note": "沒有變更的檔案"})
     else:
@@ -299,10 +310,18 @@ def main(argv: list[str]) -> int:
     else:
         gates.append({"id": "G5", "what": "每條測試都曾真的紅過", "ok": False, "note": "缺 red.json"})
 
-    reach = check_reachability(root, base, config)
-    unreachable = [r for r in reach if not r["sites"]]
-    gates.append({"id": "G7", "what": "新增的東西到得了", "ok": not unreachable,
-                  "note": f"{len(reach)} 個新型別 · {len(unreachable)} 個沒有建構點"})
+    if not config["reachability"]["globs"]:
+        reach, unreachable = [], []
+        gates.append({"id": "G7", "what": "新增的東西到得了", "ok": False,
+                      "note": "specs/pipeline.yaml 沒設 reachability.globs"})
+    elif not base_ok:
+        reach, unreachable = [], []
+        gates.append({"id": "G7", "what": "新增的東西到得了", "ok": False, "note": f"找不到整合分支 {base}"})
+    else:
+        reach = check_reachability(root, base, config)
+        unreachable = [r for r in reach if not r["sites"]]
+        gates.append({"id": "G7", "what": "新增的東西到得了", "ok": not unreachable,
+                      "note": f"{len(reach)} 個新型別 · {len(unreachable)} 個沒有建構點"})
     for item in unreachable:
         attention.append({
             "tag": "到不了", "title": f"{item['symbol']} 沒有任何建構點",
@@ -329,22 +348,23 @@ def main(argv: list[str]) -> int:
     findings = read_json(ev / "findings.json") or {}
     loop = read_json(ev / "loop.json") or {}
     items = findings.get("items") or []
-    pending = [i for i in items if i.get("class") in ("must_fix", "overbuilt")
-               and i.get("status") not in ("void", "fixed", "accepted_risk", "added_example")]
-    asking = [i for i in items if i.get("class") == "ask_user" and i.get("status") == "confirmed"]
+    pending, asking = triage_findings(items)
     halted = {fid: it for fid, it in (loop.get("findings") or {}).items()
               if it.get("status") in ("parked", "flipflop")}
-    reviewed = bool(findings.get("summary"))
+    # 「派過了」要有紀錄:零 finding 的乾淨審查和「根本沒派」在證據上必須分得出來
+    dispatched = findings.get("dispatched") or {}
+    reviewed = "G9" in dispatched and "G10" in dispatched
     if not (scripts_green and smoke_ok):
         gates.append({"id": "G9/10", "what": "獨立讀者 + 對抗審查", "ok": False,
                       "note": "未跑 —— 腳本或 smoke 沒過,不花這個錢"})
     elif not reviewed:
-        gates.append({"id": "G9/10", "what": "獨立讀者 + 對抗審查", "ok": False, "note": "缺 findings.json"})
+        gates.append({"id": "G9/10", "what": "獨立讀者 + 對抗審查", "ok": False,
+                      "note": "沒有派過的紀錄(findings dispatched --gate G9/G10)"})
     else:
-        s = findings["summary"]
+        s = findings.get("summary") or {}
         gates.append({"id": "G9/10", "what": "獨立讀者 + 對抗審查", "ok": not pending and not halted,
                       "note": f"提出 {s.get('proposed', 0)} → 作廢 {s.get('void', 0)} → 證實 {s.get('confirmed', 0)}"
-                              + (f" · {len(pending)} 條必修未處理" if pending else "")})
+                              + (f" · {len(pending)} 條沒處理完" if pending else "")})
     for fid, it in halted.items():
         attention.append({
             "tag": "需要你決定", "title": f"{fid} {'修 2 次未果' if it['status'] == 'parked' else '解過又出現'}",
@@ -362,7 +382,8 @@ def main(argv: list[str]) -> int:
         attention.append({"tag": "要人工驗", "title": f"{len(manual)} 條只能人工驗證",
                           "body": "、".join(manual) + " —— 這些沒有自動化證據,你得自己跑一次。"})
 
-    shots = sorted(p.name for p in (ev / "screenshots").glob("*.png")) if (ev / "screenshots").is_dir() else []
+    # 畫面證據只認這一輪 smoke 記下的截圖;目錄裡的舊圖不算(smoke 開跑會清,但這裡不信目錄)
+    shots = sorted(smoke.get("screenshots") or []) if smoke and smoke_ok else []
     if not shots:
         attention.append({"tag": "無畫面證據", "title": "沒有任何截圖",
                           "body": "如果這次有畫面變更,單元測試驗不到它的呈現。"})

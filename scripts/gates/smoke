@@ -20,6 +20,7 @@ from __future__ import annotations
 import datetime
 import os
 import pathlib
+import signal
 import subprocess
 import sys
 import time
@@ -45,21 +46,35 @@ def main(argv: list[str]) -> int:
 
     shots_dir = ev / "screenshots"
     shots_dir.mkdir(parents=True, exist_ok=True)
-    before = {p.name for p in shots_dir.glob("*.png")}
+    # 上一輪的截圖不是這一輪的證據。舊圖在 git 歷史裡,這裡直接清。
+    for old in shots_dir.glob("*.png"):
+        old.unlink()
+    before: set[str] = set()
     env = {**os.environ, "SMOKE_SCREENSHOTS": str(shots_dir), "SMOKE_SPEC": str(spec_path)}
     timeout = int(config.get("smoke_timeout") or 600)
 
     started = time.monotonic()
     timed_out = False
+    # 自己開一個 process group:超時要殺的是整棵樹(app、simulator),不是只殺 sh。
+    proc = subprocess.Popen(cmd, shell=True, cwd=root, env=env, stdout=subprocess.PIPE,
+                            stderr=subprocess.STDOUT, text=True, start_new_session=True)
     try:
-        proc = subprocess.run(cmd, shell=True, cwd=root, env=env, capture_output=True,
-                              text=True, timeout=timeout)
-        code, output = proc.returncode, proc.stdout + proc.stderr
-    except subprocess.TimeoutExpired as exc:
+        output, _ = proc.communicate(timeout=timeout)
+        code = proc.returncode
+    except subprocess.TimeoutExpired:
         timed_out = True
         code = -1
-        output = ((exc.stdout or b"").decode(errors="ignore") if isinstance(exc.stdout, bytes) else (exc.stdout or "")) \
-            + f"\n[smoke] 超過 {timeout} 秒沒跑完 —— 視同 hang\n"
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        try:
+            # 殺完還讀不到 EOF = 有孫行程自己 setsid 逃出 group 還握著 stdout;不等它,證據照樣是 hang
+            output, _ = proc.communicate(timeout=5)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            output = ""
+        output = (output or "") + f"\n[smoke] 超過 {timeout} 秒沒跑完 —— 視同 hang,整個 process group 已殺\n"
     duration = round(time.monotonic() - started, 1)
 
     (ev / "smoke.log").write_text(output)

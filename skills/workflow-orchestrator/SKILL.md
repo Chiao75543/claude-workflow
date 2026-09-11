@@ -303,9 +303,11 @@ wt="$(git worktree list --porcelain \
 UI 專案開 app 導航到目標畫面截圖(放進 `$SMOKE_SCREENSHOTS`)、API 打一次端點、CLI 跑一次指令。
 **沒過就停在這裡,G9/G10 不派** —— 功能不對,審它幹嘛。退回 S8。
 
-**S9c 付費審查 G9/G10**:派 `spec-oracle` 與 `code-adversary`(fable)。每條 finding 用
-`scripts/gates/findings add` 收進來 —— 沒重現的 `must_fix` / `ask_user` / `overbuilt` **收不進去**。
-實跑重現:紅 → `set confirmed`;不紅 → `set void`。然後分流:
+**S9c 付費審查 G9/G10**:派 `spec-oracle` 與 `code-adversary`(fable),**派完立刻
+`scripts/gates/findings dispatched --gate G9`(G10 同)** —— 零 finding 的乾淨審查也要留下派過的紀錄,
+否則「沒派」和「派了沒事」在證據上分不出來。每條 finding 用 `findings add` 收進來 ——
+沒重現的 `must_fix` / `ask_user` / `overbuilt` **收不進去**;同一個重現換 id 重 add 也**收不進去**(計數會歸零)。
+實跑重現:紅 → `set confirmed`;不紅 → `set void`。**停在 proposed 的 finding 算沒處理完**,擋 G9/10。然後分流:
 
 | class | 然後 |
 |---|---|
@@ -452,12 +454,16 @@ orchestrator 處理完重新留言。**orchestrator 一律不代按 merge。**
 ## 迴圈與收斂:由 `loop` 腳本數,不靠自律
 
 ```
-loop <spec> fix F-n          第 3 次會被拒(parked)
-loop <spec> resolved F-n     重現不紅了
+loop <spec> fix F-n          第 3 次會被拒(parked);F-n 必須存在於 findings.json
+loop <spec> resolved F-n     重現不紅了;parked / flipflop 之後**不能**用它自己解除
 loop <spec> reappear F-n     解過又出現 → flipflop,立即停
 loop <spec> redispatch G10   第 2 次會被拒
+loop <spec> decided F-n ship|hold|respec   人在 PR 上決定了 —— 唯一能解除 parked / flipflop 的動詞
 loop <spec> check            有沒有任何一條停住(dashboard 也讀)
 ```
+
+人回答之後 orchestrator 做的事:`decided ship` → `findings set F-n accepted_risk`,重跑 dashboard,PR 留言變乾淨;
+`decided respec` → 退回 S5 走規格改動;`decided hold` → 分支停在這,`runs --set` 標 blocked。
 
 - 修完之後**重跑 G0–G7**(腳本,幾乎免費)+ 那條重現測試;smoke 只在 diff 碰到入口 / 導航時重跑
 - **不重派 G9/G10**,除非 fix diff 跨超過一個檔或超過行數門檻;G10 最多重派 **1 次**
@@ -525,7 +531,10 @@ loop <spec> check            有沒有任何一條停住(dashboard 也讀)
 | 凍結沒審過的測試 | 凍結錯的測試比沒凍結更糟;S7½ 審過才上鎖 |
 | smoke 沒過就派 G9/G10 | 功能不對其他免談;而且那是白花的錢 |
 | CI 紅了丟給人看 | orchestrator 自己拉 log 分「環境差異 / 本機證據不可信」;人只看 parked |
-| 用 smoke 之前的截圖當畫面證據 | 證據要新鮮:工作樹指紋對不上就是過期 |
+| 用 smoke 之前的截圖當畫面證據 | 證據要新鮮:工作樹指紋對不上就是過期;畫面證據只認 smoke.json 記的截圖 |
+| 零 finding 就不記 `findings dispatched` | 「沒派」和「派了沒事」在證據上必須分得出來 |
+| parked 之後 `loop resolved` 解除 | 只有 `loop decided`(人的決定)能解除 |
+| 同一條 finding 換 id 重修 | `findings add` 同 repro 拒收;`loop` 拒收幽靈 id |
 
 ## 一個反覆出現的失誤模式
 

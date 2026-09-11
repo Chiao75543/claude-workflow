@@ -13,8 +13,11 @@
   findings <spec.yaml> add --id F-001 --gate G10 --class must_fix --title "…" --repro "指令或測試路徑"
                            [--sc SC-003] [--question "要不要防這個?"]
   findings <spec.yaml> set F-001 confirmed|void|fixed|accepted_risk|added_example
+  findings <spec.yaml> dispatched --gate G9|G10   記「派過了」—— 零 finding 的乾淨審查也要留下派過的紀錄
   findings <spec.yaml> list
-  findings <spec.yaml> check     還有沒有沒處理完的 must_fix/overbuilt,或等人回答的 ask_user
+  findings <spec.yaml> check     還有沒有沒處理完的(proposed 也算)、或等人回答的 ask_user
+
+同一個重現(repro)只能有一個 id:換 id 重 add 會被拒 —— 否則 loop 的計數會歸零。
 退出碼(check): 0 乾淨 / 1 還有待處理或待決
 """
 
@@ -25,12 +28,12 @@ import pathlib
 import sys
 
 sys.path.insert(0, str(pathlib.Path(__file__).parent))
-from _common import evidence_dir, read_json, write_json  # noqa: E402
+from _common import evidence_dir, read_json, triage_findings, write_json  # noqa: E402
+from _state import tree_fingerprint  # noqa: E402
 
 CLASSES = {"must_fix", "ask_user", "overbuilt", "style"}
 NEEDS_REPRO = {"must_fix", "ask_user", "overbuilt"}
 STATUSES = {"proposed", "confirmed", "void", "fixed", "accepted_risk", "added_example"}
-DONE = {"void", "fixed", "accepted_risk", "added_example"}
 
 
 def flag(argv: list[str], name: str) -> str | None:
@@ -38,7 +41,7 @@ def flag(argv: list[str], name: str) -> str | None:
 
 
 def load(ev: pathlib.Path) -> dict:
-    return read_json(ev / "findings.json") or {"items": []}
+    return read_json(ev / "findings.json") or {"items": [], "dispatched": {}}
 
 
 def summary(state: dict) -> dict:
@@ -71,6 +74,10 @@ def main(argv: list[str]) -> int:
         if any(i["id"] == fid for i in items):
             print(f"✘ {fid} 已存在")
             return 2
+        twin = next((i for i in items if repro and i.get("repro") == repro and i["status"] != "void"), None)
+        if twin:
+            print(f"✘ 同一個重現已經是 {twin['id']} —— 用原 id 繼續,換 id 等於把修復次數歸零")
+            return 1
         if cls in NEEDS_REPRO and not (repro or "").strip():
             print(f"✘ {cls} 必須附重現(--repro)—— 跑不出來的主張不收")
             return 1
@@ -85,6 +92,20 @@ def main(argv: list[str]) -> int:
         state["summary"] = summary(state)
         write_json(ev / "findings.json", state)
         print(f"{fid} [{cls}] {title}")
+        return 0
+
+    if verb == "dispatched":
+        gate = flag(argv, "--gate")
+        if gate not in ("G9", "G10"):
+            print("✘ --gate 只能是 G9 或 G10")
+            return 2
+        state.setdefault("dispatched", {})[gate] = {
+            "at": datetime.datetime.now().astimezone().isoformat(timespec="seconds"),
+            "tree": tree_fingerprint(ev.parents[1]),
+        }
+        state["summary"] = summary(state)
+        write_json(ev / "findings.json", state)
+        print(f"{gate} 派過了")
         return 0
 
     if verb == "set":
@@ -103,8 +124,7 @@ def main(argv: list[str]) -> int:
         return 0
 
     if verb in ("list", "check"):
-        pending = [i for i in items if i["class"] in ("must_fix", "overbuilt") and i["status"] not in DONE]
-        asking = [i for i in items if i["class"] == "ask_user" and i["status"] == "confirmed"]
+        pending, asking = triage_findings(items)
         for i in items:
             mark = "✘" if i in pending else ("?" if i in asking else " ")
             print(f"  {mark} {i['id']:<7} {i['class']:<10} {i['status']:<14} {i['title'][:60]}")

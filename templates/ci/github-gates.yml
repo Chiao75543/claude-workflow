@@ -19,8 +19,14 @@ jobs:
       - uses: actions/setup-python@v5
         with: { python-version: "3.12" }
       - run: pip install pyyaml
-      - name: fetch gate scripts
-        run: git clone --depth 1 https://github.com/Chiao75543/claude-workflow.git /tmp/cw
+      - name: fetch gate scripts (pinned)
+        # pin 到 commit:誰能推 claude-workflow 的 main 就能改所有消費專案 CI 跑的程式,
+        # 而且同一個 PR 今天綠明天紅。要升級就改這個 SHA(看 claude-workflow 的 git log)。
+        env: { CW_SHA: "f6bee77" }
+        run: |
+          git clone -q https://github.com/Chiao75543/claude-workflow.git /tmp/cw
+          git -C /tmp/cw checkout -q "$CW_SHA"
+          [ "$(git -C /tmp/cw rev-parse --short HEAD)" = "$CW_SHA" ] || { echo "pin mismatch"; exit 1; }
       - name: run script gates on every in-flight spec
         id: gates
         shell: bash

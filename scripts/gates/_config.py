@@ -39,7 +39,8 @@ DEFAULTS = {
         # 也當成測試(對抗審查實證),所以預設必須錨在測試宣告上,其他 stack 要自己設。
         "scenario_pattern": r'@Test\(\s*"(SC-\d+[a-z]?)',
     },
-    "reachability": {"globs": ["**/*"]},
+    # 沒設 = G7 失敗。預設 **/* 會把測試檔算成建構點,G7 就成了劇場(對抗審查實證,兩次)。
+    "reachability": {"globs": None},
     # 兩個都預設 None。**沒設定 = 無法驗證 = 失敗**,不是「跳過」——
     # 「沒有人檢查」和「檢查通過」是兩件完全不同的事。
     "lint": None,
@@ -67,10 +68,10 @@ def missing(config: dict) -> list[str]:
         value = config.get(key)
         if value in (None, "") or (isinstance(value, str) and PLACEHOLDER.search(value)):
             out.append(key)
-    for key in ("globs",):
-        for section in ("tests", "reachability"):
-            if any(PLACEHOLDER.search(str(g)) for g in (config.get(section) or {}).get(key, [])):
-                out.append(f"{section}.{key}")
+    for section in ("tests", "reachability"):
+        globs = (config.get(section) or {}).get("globs")
+        if not globs or any(PLACEHOLDER.search(str(g)) for g in globs):
+            out.append(f"{section}.globs")
     return out
 
 

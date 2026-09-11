@@ -156,6 +156,27 @@ def find_specs(root: pathlib.Path) -> list[pathlib.Path]:
     return sorted((root / "specs").glob("*/spec.yaml")) if (root / "specs").is_dir() else []
 
 
+FINDING_DONE = {"void", "fixed", "accepted_risk", "added_example"}
+
+
+def triage_findings(items: list) -> tuple[list, list]:
+    """(還沒處理完的, 等人回答的)。findings check 與 dashboard 用同一份規則,才不會一邊算過一邊算沒過。
+
+    「proposed」是還沒實跑重現 —— 不管哪一類(style 除外)都算沒處理完;
+    對抗審查實證:ask_user 停在 proposed 時既不算 pending 也不算 asking,就這樣隱形了。"""
+    pending, asking = [], []
+    for i in items:
+        if not isinstance(i, dict) or i.get("class") == "style":
+            continue
+        if i.get("status") == "proposed":
+            pending.append(i)
+        elif i.get("class") == "ask_user" and i.get("status") == "confirmed":
+            asking.append(i)
+        elif i.get("class") in ("must_fix", "overbuilt") and i.get("status") not in FINDING_DONE:
+            pending.append(i)
+    return pending, asking
+
+
 def evidence_dir(spec_path: pathlib.Path) -> pathlib.Path:
     return spec_path.parent / "evidence"
 
