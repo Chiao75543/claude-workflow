@@ -1,0 +1,241 @@
+#!/usr/bin/env python3
+"""red-capture — G5:每條測試都曾經真的紅過。
+
+核心規則:**實作還沒寫就已經是綠的測試,不能當作實作正確的證據。**
+
+六類判定(切片實測定案):
+  assertion       斷言評估過、值不對          ← 最強
+  stub_sentinel   假實作的哨兵錯誤逸出,斷言沒跑到  ← 可接受但較弱
+  error           其他錯誤逸出                ← 擋
+  compile         編譯不過                    ← 擋
+  hang            測試沒跑完(整個程序被拖死)    ← 擋,而且最惡劣
+  passed          實作前就綠                  ← 擋,除非有書面豁免
+
+三個切片教訓已編進來:
+  · 對帳錨在「started」行 —— 參數化測試不發單一最終結果行
+  · 宣告數 / runner 回報數 / started 數三者必須一致,否則有測試沒跑
+  · issue 行要容忍參數化測試的「with N argument …」段
+
+輸入清單放在 evidence/red-inputs.json:
+  [{"layer": "domain", "output": "/tmp/domain.txt", "tests": ["path/a.swift"]}]
+
+用法: red-capture <spec.yaml> [--marker STUB-NOT-IMPLEMENTED]
+退出碼: 0 證據齊全 / 1 有問題
+"""
+
+from __future__ import annotations
+
+import datetime
+import pathlib
+import re
+import sys
+
+sys.path.insert(0, str(pathlib.Path(__file__).parent))
+import _config  # noqa: E402
+from _common import (  # noqa: E402
+    Findings, evidence_dir, load_spec, read_json, scenario_ids, sha256, write_json,
+)
+
+DEFAULT_MARKER = "STUB-NOT-IMPLEMENTED"
+
+BLOCKING = {"error", "compile", "hang", "passed"}
+
+
+# ---------------------------------------------------------------- parsers
+
+def parse_swift_testing(raw: str, marker: str) -> dict:
+    """Swift Testing(@Test / #expect)的輸出。切片實測驗證過。"""
+    started = set(re.findall(r'^◇ Test "(.+?)" started', raw, re.M))
+    # 參數化測試的 issue 行會多一段「with N argument … 」才接「at 檔案:行:欄:」
+    issues: dict[str, str] = {}
+    for m in re.finditer(
+        r'^✘ Test "(.+?)" recorded an issue(?: with .+?)? at \S+?:\d+:\d+: (.+)$', raw, re.M
+    ):
+        issues.setdefault(m.group(1), m.group(2))
+    summary = re.search(r"Test run with (\d+) tests?", raw)
+    compile_error = bool(re.search(r"^.*: error: ", raw, re.M)) and not started
+
+    def classify(name: str) -> str:
+        message = issues.get(name)
+        if message is None:
+            return "passed"
+        if message.startswith(("Expectation failed", "Issue recorded")):
+            return "assertion"
+        if message.startswith("Caught error"):
+            return "stub_sentinel" if marker in message else "error"
+        return "error"
+
+    return {
+        "started": started,
+        "issues": issues,
+        "runner_total": int(summary.group(1)) if summary else None,
+        "compile_error": compile_error,
+        "classify": classify,
+    }
+
+
+PARSERS = {"swift-testing": parse_swift_testing}
+
+
+# ---------------------------------------------------------------- main
+
+# 從原始碼把每條測試的**名字**也抓出來,才能指名哪一條沒跑完(hang),
+# 而不是只知道「少了 N 條」。
+DESC = {"swift-testing": re.compile(r'@Test\(\s*"((?:[^"\\]|\\.)*)"')}
+
+
+def count_declared(root: pathlib.Path, test_files: list[str], runner: str) -> tuple[int, list[str], list[str]]:
+    """回傳 (宣告數, 宣告的測試名稱, 找不到的檔案)。
+
+    找不到的檔案**不能靜默算 0** —— 那會讓對帳的三個數字一起變成 0 而「一致」,
+    等於整個 G5 形同虛設(對抗審查實證)。"""
+    marker = {"swift-testing": r"^\s*@Test\b"}.get(runner, r"^\s*(@Test|def test_|func test)")
+    desc = DESC.get(runner)
+    total, names, missing_files = 0, [], []
+    for rel in test_files:
+        path = root / rel
+        if not path.exists():
+            missing_files.append(rel)
+            continue
+        text = path.read_text(errors="ignore")
+        total += len(re.findall(marker, text, re.M))
+        if desc:
+            names += [m.replace('\\"', '"') for m in desc.findall(text)]
+    return total, names, missing_files
+
+
+def main(argv: list[str]) -> int:
+    args = [a for a in argv if not a.startswith("--")]
+    marker = DEFAULT_MARKER
+    for i, a in enumerate(argv):
+        if a == "--marker" and i + 1 < len(argv):
+            marker = argv[i + 1]
+    if len(args) != 1:
+        print(__doc__)
+        return 2
+
+    spec_path = pathlib.Path(args[0])
+    root = spec_path.resolve().parents[2]
+    spec = load_spec(spec_path)
+    config = _config.load(root)
+    runner = config["runner"]
+    parser = PARSERS.get(runner)
+    if parser is None:
+        sys.exit(f"✘ 沒有 {runner!r} 的輸出解析器。已支援: {', '.join(sorted(PARSERS))}")
+
+    ev = evidence_dir(spec_path)
+    inputs = read_json(ev / "red-inputs.json")
+    if not inputs:
+        sys.exit(f"✘ 缺少 {ev / 'red-inputs.json'} —— 需要各層的測試輸出清單")
+
+    # 書面豁免:純值型別之類沒有縫可以 stub 的測試
+    exemptions = {
+        sc.get("id"): sc.get("red_exempt_reason")
+        for req in (spec.get("requirements") or []) if isinstance(req, dict)
+        for sc in (req.get("scenarios") or []) if isinstance(sc, dict) and sc.get("red_exempt_reason")
+    }
+
+    f = Findings()
+    tests, recon = [], []
+
+    for entry in inputs:
+        layer = entry.get("layer", "?")
+        out_path = pathlib.Path(entry["output"])
+        if not out_path.exists():
+            f.error(layer, f"找不到測試輸出 {out_path}")
+            continue
+        raw = out_path.read_text(errors="ignore")
+        parsed = parser(raw, marker)
+
+        declared, declared_names, missing_files = count_declared(root, entry.get("tests", []), runner)
+        for rel in missing_files:
+            f.error(layer, f"red-inputs 列的測試檔不存在: {rel} —— 宣告數會被算成 0,對帳形同虛設")
+        if not entry.get("tests"):
+            f.error(layer, "red-inputs 沒有列任何測試檔 —— 對帳沒有可比對的基準")
+        started = parsed["started"]
+        runner_total = parsed["runner_total"]
+
+        if parsed["compile_error"]:
+            f.error(layer, "編譯錯誤 —— 編不過的東西沒有資格談紅不紅")
+            # 文件宣稱六類,下游就要讀得到六類。compile 沒有測試名,用整層記一筆。
+            tests.append({"layer": layer, "scenario": None, "test": "(整層編譯失敗)",
+                          "failure_class": "compile", "message": None})
+        # 對帳:三個數字必須一致。不一致 = 有測試沒跑(掛住/程序被砍),證據不完整。
+        reconciled = declared == runner_total == len(started)
+        if not reconciled:
+            f.error(
+                layer,
+                f"對帳不符 —— 原始碼宣告 {declared} · runner 回報 {runner_total} · 實際啟動 {len(started)}\n"
+                f"      代表有測試沒跑完(可能掛住),後面的測試會靜默不執行",
+            )
+        recon.append({
+            "layer": layer, "declared_in_source": declared,
+            "reported_by_runner": runner_total, "started": len(started),
+            "reconciled": reconciled,
+        })
+        # 對帳不符時,能指名就指名:原始碼有宣告、輸出裡沒有 started 的,就是掛住或被拖死的那些。
+        # 只有名稱數與宣告數對得上才敢用名稱比對(有些測試沒寫描述字串)。
+        if not reconciled and declared_names and len(declared_names) == declared:
+            for name in sorted(set(declared_names) - started):
+                sid_match = re.match(r"(SC-\d+[a-z]?)", name)
+                tests.append({"layer": layer, "scenario": sid_match.group(1) if sid_match else None,
+                              "test": name, "failure_class": "hang",
+                              "message": "原始碼有宣告,輸出裡沒有 started —— 沒跑完或被前面掛住的測試拖死"})
+
+        for name in sorted(started):
+            klass = parsed["classify"](name)
+            sid_match = re.match(r"(SC-\d+[a-z]?)", name)
+            sid = sid_match.group(1) if sid_match else None
+            if klass == "passed":
+                if sid and sid in exemptions:
+                    klass = "exempt"
+                    # 豁免不是靜靜通過:它必須被看見,才有被挑戰的機會
+                    f.warn(f"{layer} / {sid}",
+                           f"實作前就綠,靠書面豁免通過:{str(exemptions[sid])[:60]}")
+                else:
+                    f.error(f"{layer} / {sid or name[:32]}",
+                            "實作前就是綠的 —— 空測試。真有理由請在規格該條寫 red_exempt_reason")
+            elif klass in BLOCKING:
+                f.error(f"{layer} / {sid or name[:32]}", f"failure_class = {klass}")
+            tests.append({
+                "layer": layer, "scenario": sid, "test": name,
+                "failure_class": klass,
+                "message": (parsed["issues"].get(name) or "")[:160] or None,
+            })
+
+    from collections import Counter
+    counts = Counter(t["failure_class"] for t in tests)
+    covered = {t["scenario"] for t in tests if t["scenario"]}
+    missing = sorted(scenario_ids(spec) - covered)
+
+    write_json(ev / "red.json", {
+        "spec_hash": sha256(spec_path),
+        "captured_at": datetime.datetime.now().astimezone().isoformat(timespec="seconds"),
+        "runner": runner,
+        "marker": marker,
+        "exemptions": exemptions,
+        "reconciliation": recon,
+        "counts": dict(counts),
+        "tests": tests,
+    })
+
+    print("  " + " · ".join(f"{k} {v}" for k, v in counts.most_common()))
+    for r in recon:
+        mark = "OK" if r["reconciled"] else "!!"
+        print(f"  {r['layer']:<8} 宣告 {r['declared_in_source']:>3} · runner {r['reported_by_runner']} "
+              f"· 啟動 {r['started']:>3}  {mark}")
+    # 有測試檔卻沒出現在 RED 證據裡,正是繞過凍結的路徑(RED 之後才加的測試)。
+    # 只能人工驗的(6d)本來就沒有自動化測試,排除。
+    manual = {
+        sc.get("id")
+        for req in (spec.get("requirements") or []) if isinstance(req, dict)
+        for sc in (req.get("scenarios") or []) if isinstance(sc, dict) and sc.get("mode") == "6d"
+    }
+    for sid in sorted(set(missing) - manual):
+        f.error("覆蓋", f"{sid} 沒有出現在任何一層的 RED 證據裡 —— 這條測試沒有紅過的紀錄")
+    print(f"  → {ev / 'red.json'}")
+    return f.report("red-capture")
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

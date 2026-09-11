@@ -1,266 +1,242 @@
 # claude-workflow
 
-A spec-driven development pipeline for AI-assisted coding. Designed for [Claude Code](https://claude.com/claude-code) + [Codex CLI](https://github.com/openai/codex).
+一條 spec-driven 的開發流水線,給 [Claude Code](https://claude.com/claude-code) 用。
 
-**Architecture:** the orchestrator is **stack-agnostic** — it owns the pipeline structure, multi-reviewer dispatch, and verification gates, but delegates *how* to write tests / implement code / review MRs to **project-local skills** under each project's `<repo>/.claude/skills/`. Stack-specific skill bundles (Android and iOS shipped; add your own) live in `templates/skills/<stack>/` and scaffold into a project via `scripts/init-project.sh`.
-
-This repo packages:
-
-- The **workflow-orchestrator skill** — a 12-stage pipeline from ticket to archived spec, with mandatory verification gates and per-comment user checkpoints in PR review fixes. Stack-agnostic; references project-local skills by convention name (see *Project bindings* in `SKILL.md`).
-- **Slash commands** — `/workflow` (full pipeline) plus 7 namespaced sub-commands (`/workflow:spec`, `/workflow:test`, `/workflow:implement`, `/workflow:verify`, `/workflow:fix`, `/workflow:review-mr`, `/workflow:report`) for invoking each stage individually.
-- **Stack-specific skill templates** — `templates/skills/android/` ships a working Android Clean Architecture skill set and `templates/skills/ios/` its iOS (SwiftUI + SPM) counterpart, each with the same 6 pipeline skills (test-writer, rd-implementer, code-reviewer, reporter, mr-reviewer, review-fixer); other stacks add their own folder.
-- **`init-project.sh`** — scaffolds a stack's skill set into a target repo's `.claude/skills/`, auto-substituting `{PROJECT_ROOT}` and listing remaining placeholders.
-- **AGENTS.md templates** — global Codex preferences + project-level rules that Codex needs (Codex does not load Claude Code skills).
-- A **setup script** to install on a new machine.
-
-For the full pipeline reference, read [`skills/workflow-orchestrator/PIPELINE.md`](skills/workflow-orchestrator/PIPELINE.md) — the published mirror of `SKILL.md`, which is canonical.
+**目標:你不再讀程式碼,但你知道它是對的 —— 因為每一句「這是對的」都得跑得出來。**
 
 ---
 
-## What's in here
+## 為什麼
 
-```
-claude-workflow/
-├── skills/
-│   └── workflow-orchestrator/
-│       ├── SKILL.md              # the skill itself (Claude Code reads this)
-│       ├── PIPELINE.md           # standalone pipeline reference (GitHub-friendly)
-│       └── references/
-│           ├── single-spec-template.md
-│           ├── file-mapping.md
-│           ├── reviewer-prompts.md
-│           └── codex-prompt-template.md
-├── commands/
-│   ├── workflow.md               # /workflow — full end-to-end pipeline
-│   └── workflow/                 # /workflow:* — per-stage entry points
-│       ├── spec.md               # /workflow:spec
-│       ├── test.md               # /workflow:test
-│       ├── implement.md          # /workflow:implement
-│       ├── verify.md             # /workflow:verify
-│       ├── fix.md                # /workflow:fix
-│       ├── review-mr.md          # /workflow:review-mr
-│       └── report.md             # /workflow:report
-├── templates/
-│   ├── codex-AGENTS.md           # global ~/.codex/AGENTS.md
-│   ├── project-AGENTS.md.template # per-repo AGENTS.md (customize)
-│   └── skills/                   # stack-specific skill bundles
-│       ├── android/              # Android Clean Architecture defaults
-│       │   ├── test-writer/SKILL.md
-│       │   ├── rd-implementer/SKILL.md
-│       │   ├── code-reviewer/SKILL.md
-│       │   ├── reporter/SKILL.md
-│       │   ├── mr-reviewer/SKILL.md
-│       │   └── review-fixer/SKILL.md
-│       └── ios/                  # iOS SwiftUI + SPM defaults (same 6 skills)
-├── scripts/
-│   ├── setup.sh                  # install on new machine (per-user)
-│   └── init-project.sh           # scaffold skill bundle into a target repo
-└── README.md
-```
+程式和測試是**同一個模型、從同一份規格、用同一種理解**產生的。
+所以「測試綠了」只證明它跟自己一致,不證明它是對的。
+
+目前唯一站在這個圈外面的檢查,就是人去讀程式碼。
+
+這條 pipeline 把每一個「AI 說 OK」換成「機器跑得出來」,讓人可以安全地從圈外走開。
+
+### 四個洞與補法
+
+| 洞 | 為什麼測試抓不到 | 補法 |
+|---|---|---|
+| **測試根本沒在測東西** | 斷言有回傳值就好、只把 mock 測了一遍 | 實作前先跑一次;**那時就綠的測試是假的** |
+| **測試是照著程式改出來的** | 紅了改不過就把測試放寬 | 紅過就上鎖;要改是明確事件,退回重來 |
+| **程式和測試一起誤讀規格** | 兩邊都以為是 A,規格講的是 B。全綠 | 第二個讀者,**只給規格不給程式碼** |
+| **AI 說有 bug 但沒人能驗** | 只好丟給人判 | 要它把 bug **演出來**;演不出來自動作廢 |
 
 ---
 
-## Quick install (new machine)
+## 人類固定出現兩次,第三次只在有事時
+
+```
+S1  識別              scan-siblings:誰在飛、會不會撞到
+S2  worktree
+S3  起草              全 codebase scope audit + spec-grill(fable)
+S4  歧義偵測          spec-reader ×2(fable,隔離,只看規格)
+S5  ⏸ 你批准說明頁     白話 + 分歧選擇題 + N/A 主張 + 碰撞警告
+S6  定稿凍結          spec-lint + 反向回譯 + 指紋
+S7  測試 RED          stub-first → 格式化 → red-capture
+S7½ 審測試            test-review + test-reviewer(opus)→ 才凍結
+S8  實作 GREEN        green-writer(opus):只做 examples 涵蓋的事
+S9a 腳本關卡 G0–G7
+S9b smoke             真的入口跑一次;沒過不派審查
+S9c 付費審查 G9/G10   四類分流,loop 腳本數次數
+S10 commit
+S11 自動推 + 開 PR    證據表貼成留言;有「需要你決定」才叫你
+S12 CI 獨立重跑       ci: none 就跳過
+S13 ⏸ 你按 merge
+```
+
+**沒有一次需要你讀程式碼。** 你判斷的是**意圖**(S5)和 PR 上的**選擇題**(有的話)。
+第一次在一個專案用,先跑 `/workflow:init` 問卷(S0)。
+
+---
+
+## 關卡:順序就是花錢的順序
+
+```
+腳本判定 · 幾乎不花錢 · 全綠才往下
+  G0  spec-lint        schema + 完備性六類 + 可測性
+  G1  freeze-check     規格指紋 + 可解析性
+  G2  freeze-check     規格測試指紋
+  G2b test-review      測試在凍結前審過,審的和凍結的是同一批檔
+  G3  lint             只看變更的檔案
+  G4  測試             沒設指令 = 失敗,不是跳過
+  G5  red-capture      六類 failure_class + 三方對帳
+  G6  traceability     Scenario ↔ 測試雙向
+  G7  可達性           新增的型別有沒有人建構它
+────────────────────────────────────────────
+  S   smoke            用真的入口跑一次;沒過下面全部不跑
+────────────────────────────────────────────
+付費判定
+  G8   變異測試        有工具才跑
+  G9   spec-oracle     隔離的第二讀者,只憑規格寫驗收測試
+  G10  code-adversary  每條主張附可執行的重現;must_fix / ask_user / overbuilt / style
+  G11  UI 截圖         smoke 順便截
+```
+
+**絕不花錢請 AI 去審一個腳本本來就會擋掉的東西。**
+
+---
+
+## 安裝
 
 ```bash
-# 1. Tool deps
 brew install --cask claude
-brew install glab gh
-curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.0/install.sh | bash
-nvm install --lts
-npm install -g @openai/codex openspec
+brew install gh          # 或 glab
+npm install -g @openai/codex   # 選配:跨引擎去相關性
 
-# 2. Auth
-claude login
-codex login
-glab auth login
-gh auth login
-
-# 3. Clone and install this repo
 git clone https://github.com/<you>/claude-workflow.git ~/code/claude-workflow
 ~/code/claude-workflow/scripts/setup.sh
 ```
 
-`setup.sh` will:
+`setup.sh` 會 symlink skill、slash commands、以及 `agents/` 底下的七個精簡 agent。
+**agent 定義要重啟 Claude Code session 才會載入。**
 
-- Check tool dependencies.
-- Symlink `skills/workflow-orchestrator/` into `~/.claude/skills/`.
-- Symlink `commands/workflow.md` and `commands/workflow/` into `~/.claude/commands/` (enables `/workflow` and `/workflow:*` slash commands).
-- Optionally copy `templates/codex-AGENTS.md` to `~/.codex/AGENTS.md`.
-- Print next steps for project-level setup.
+### 每個專案
+
+```bash
+cp ~/code/claude-workflow/templates/project-AGENTS.md.template <repo>/AGENTS.md
+~/code/claude-workflow/scripts/init-project.sh ios <repo>
+```
+
+會 scaffold 兩件事:
+
+- `<repo>/.claude/skills/` —— 兩個專案自備的 skill(`test-writer`、`rd-implementer`)
+- `<repo>/specs/pipeline.yaml` —— **機器可讀**的技術棧綁定,給關卡腳本用
+
+兩層設定的分工:**AGENTS.md 是寫給 AI 讀的散文,`pipeline.yaml` 是給腳本讀的。**
 
 ---
 
 ## Slash commands
 
-Once installed, the following slash commands are available in Claude Code:
-
-| Command | Purpose | Underlying skill |
-| --- | --- | --- |
-| `/workflow <feature>` | Full end-to-end pipeline (default entry point) | `workflow-orchestrator` |
-| `/workflow:spec <feature>` | Author a new spec only (stops at spec checkpoint) | `workflow-orchestrator` (spec stages 3–5) |
-| `/workflow:test` | Write TDD tests from approved spec | `test-writer` |
-| `/workflow:implement` | Implement code from approved spec | `rd-implementer` |
-| `/workflow:verify` | Verify implementation against spec | `code-reviewer` |
-| `/workflow:fix` | Fix review / MR comments and reply resolved | `review-fixer` |
-| `/workflow:review-mr <MR/PR>` | Review the project's MR/PR with inline comments | `mr-reviewer` (Android default: glab + DiffNote) |
-| `/workflow:report` | Generate spec-vs-impl coverage report (.md/.html) | `reporter` |
-
-Flags: `/workflow --fast` (1 combined reviewer per stage) / `/workflow --full` (2–3 parallel reviewers, default). Archive (Stage 12) is a pre-merge commit added on the feature branch after reviewer approval + user OK-to-merge (`openspec archive {name} --yes`; `scripts/archive.sh` is a standalone fallback) — feature + archive merge together in one MR.
-
-The `workflow:` namespace prefix avoids collisions with other plugins or skills that may register similarly named commands (`/test`, `/implement`, `/verify`, etc.).
+| 指令 | 做什麼 |
+|---|---|
+| `/workflow <描述>` | 完整流程 |
+| `/workflow:spec` | 只寫規格,停在 S6 |
+| `/workflow:test` | 寫測試並擷取 RED 證據 |
+| `/workflow:implement` | 實作到全綠 |
+| `/workflow:init` | 第一次用:問卷 → `specs/pipeline.yaml` |
+| `/workflow:verify` | 跑 S9:腳本 → smoke → 付費審查 |
+| `/workflow:dashboard` | 產出證據表 |
+| `/workflow:runs` | 跨 worktree 看誰卡在哪、誰在等你 |
+| `scripts/gates/runs --yield` | 哪道關擋過東西、擋了幾次;跑過 ≥5 次從沒擋過的會被點名 |
 
 ---
 
-## Per-project setup
+## 同時進行多個需求
 
-For each repo you work in:
+**pipeline,不是 parallel。** 機器階段 30–60 分鐘、人類階段約 6 分鐘,比例 7:1 ——
+所以要讓「你審 A 的說明頁時 B 正在跑建置」,而不是 N 個功能各自來打擾你。
+實務建議同時 2–3 個。
+
+一個功能一個 session、一個 worktree。**共享狀態放檔案系統,不需要協調者:**
 
 ```bash
-# 1. AGENTS.md — long-lived project rules read by Codex AND by workflow-orchestrator
-cp ~/code/claude-workflow/templates/project-AGENTS.md.template <repo>/AGENTS.md
-# Edit AGENTS.md: substitute {Project}, {language}, {build_command}, etc.
-
-# 2. Scaffold the stack's skill bundle into <repo>/.claude/skills/
-#    (auto-loaded by Claude Code as project-local skills when working in <repo>)
-~/code/claude-workflow/scripts/init-project.sh android <repo>
-# init-project.sh auto-substitutes {PROJECT_ROOT}; it prints remaining
-# placeholders ({PACKAGE_NAME}, {TEST_COMMAND}, etc.) you must edit by hand
-# inside the scaffolded files.
-
-# 3. Commit
-git -C <repo> add AGENTS.md .claude/skills/
-git -C <repo> commit -m "chore: add Codex AGENTS.md and workflow skill bindings"
+scripts/gates/scan-siblings <spec>   # 能力清單 + impact.files 碰撞警告
+scripts/gates/runs                   # 誰卡在哪、誰在等你
 ```
 
-Why per-repo:
-
-- **AGENTS.md** is read automatically by Codex AND referenced by workflow-orchestrator for project-specific bindings (`{TEST_COMMAND}`, `{BUILD_COMMAND}`, `{LAYERING_CONVENTION}`, etc.).
-- **`.claude/skills/`** holds the concrete `test-writer` / `rd-implementer` / `code-reviewer` / etc. skills that the orchestrator invokes. Tuning these per project is how the pipeline adapts to each codebase's conventions.
-
-Adding a new stack: copy an existing stack folder (`templates/skills/android/` or `templates/skills/ios/`) to `templates/skills/<your-stack>/`, edit the SKILL.md contents to your stack's idioms, then `init-project.sh <your-stack> <repo>`.
+碰撞偵測在**寫程式之前**就把「這兩個分支都會動 MeView 和 AppContainer」講出來,
+比合併時才發現便宜得多。
 
 ---
 
-## Project memory (separate, usually private)
+## 目錄
 
-Claude Code's per-project memory lives at `~/.claude/projects/-Users-<username>-<project>/memory/`. It contains:
+```
+claude-workflow/
+├── skills/workflow-orchestrator/
+│   ├── SKILL.md                    ← 唯一的規範來源
+│   ├── PIPELINE.md                 ← 入口(不是鏡像)
+│   └── references/
+│       ├── spec-template.yaml      通得過自己的 spec-lint
+│       └── dispatch-prompts.md
+├── agents/                          六個精簡定義
+│   ├── spec-grill.md               fable · 挑洞,兼第一個讀者
+│   ├── spec-reader.md              fable · 隔離,tools: []
+│   ├── spec-oracle.md              fable · 隔離,tools: []
+│   ├── code-adversary.md           fable · 有 Bash,要真的去跑重現
+│   ├── red-writer.md               opus  · S7 寫測試並擷取 RED 證據
+│   └── green-writer.md             opus  · S8 實作;「衝突就停」寫死在定義裡
+├── scripts/
+│   ├── gates/                       關卡的實作(+ smoke / test-review / findings / loop / pr-comment)
+│   ├── setup.sh
+│   └── init-project.sh
+├── commands/                        slash commands
+└── templates/
+    ├── project-AGENTS.md.template
+    └── skills/{android,ios}/        每個 stack 兩個:test-writer、rd-implementer
+```
 
-- Active tickets and their state
-- Confirmed product decisions (avoid re-litigating)
-- External audit context
-- Workflow preferences
+---
 
-**Keep this in a separate private repo**, not in `claude-workflow`. Reason:
-
-- Memory typically contains internal ticket IDs, hostnames, audit info, sometimes keystore fingerprints.
-- `claude-workflow` should be safe to share (this repo).
-
-Recommended layout:
+## 關卡腳本自己的測試
 
 ```bash
-# Project memory in its own private repo
-git clone <your-private-memory-repo> \
-  ~/.claude/projects/-Users-$(whoami)-<project>/memory
+scripts/gates/tests/run
 ```
-
-When migrating to a new machine, the new path may differ (username changes). The setup script prints a reminder.
-
----
-
-## The pipeline at a glance
-
-```
-┌─ 1. Identify ──────────── ticket + capability + {name}
-├─ 2. Worktree ──────────── .worktrees/{name} (mandatory for new specs)
-├─ 3. Spec author ──────── inline brainstorm + grill + spec.md
-├─ 4. ▮ User approves spec ◄────┐ refine loop
-├─ 5. Split + validate ──── spec.md → 5 derived files
-├─ 6. Tests (RED) ◄──────── CRITICAL fix loop (3/2/0 agents)
-├─ 7. Implement (GREEN) ◄── CRITICAL fix loop (3 agents)
-├─ 7.5 Verify + Report ◄── lint gate + tests + spec review + report (0 CRITICAL gate)
-├─ 8. Commit ◄──────────── CRITICAL fix loop (2 agents)
-├─ 9. ▮ User confirms push
-├─ 10. Push + PR ───────── git push + create PR
-├─ 10.5 Codex review ───── advisory pass on the MR (dispatcher relay-posts findings)
-├─ 11. PR review loop ◄── deferred; engine (codex/claude) + 2 user gates/comment
-└─ 12. Archive ────────── pre-merge commit on feature branch → final CI → user merges
-```
-
-See [`PIPELINE.md`](skills/workflow-orchestrator/PIPELINE.md) for the full reference, including:
-
-- Stage detail tables
-- Mermaid flowcharts (main flow + Stage 11 per-comment loop)
-- Stage 7.5 vs Stage 11 contrast
-- Reviewer dispatch pattern
-- Customization slots
-- Common mistakes
-
----
-
-## Core principles
-
-1. Every change traces to a spec.
-2. Single source of truth — authors edit one file, the rest are projections.
-3. Verification before commit — no commit until tests green + 0 CRITICAL (user-adjudicated `rejected`/`deferred` findings excepted).
-4. Lifecycle ends at archive, not at push.
-5. Per-comment user gate in PR review fixes — no batching.
-6. Reviewer agents in parallel, never serial.
-7. CRITICAL blocks; WARNING / SUGGESTION surfaces.
-8. Convergence boundary — tools before tests before AI review; CRITICAL reserved for code/test/behavior correctness + security baseline; review loops capped (initial + 2 re-dispatch rounds).
-
----
-
-## Customization
-
-workflow-orchestrator is **stack-agnostic**. Two layers of customization:
-
-**Layer 1 — `<repo>/AGENTS.md` placeholders** (light, edit anytime):
-
-| Placeholder | Used in orchestrator at | Examples |
-| --- | --- | --- |
-| `{TEST_COMMAND}` | Stage 7.5 test gate | `./gradlew test`, `npm test`, `pytest`, `cargo test` |
-| `{LINT_COMMAND}` | Stage 7.5 lint gate (no-op if none; AGENTS.md template spells it `{lint_command}` — same binding) | `./gradlew lint`, `npm run lint`, `ruff check`, SwiftLint |
-| `{BUILD_COMMAND}` | (project-skill discretion) | `./gradlew assembleDebug`, `npm run build` |
-| `{LAYERING_CONVENTION}` | Stage 7 implementation | Domain→Data→DI→Presentation→Navigation (Android Clean Arch); MVC; Hexagonal; … |
-| `{INTEGRATION_BRANCH}` | Stage 2 worktree base + Stage 10 push target | `main`, `develop`, `release` |
-| `{TICKET_PREFIX}` | Stage 1 ticket id | `AIP` (Linear), `JIRA`, `GH` |
-
-**Layer 2 — `<repo>/.claude/skills/<name>/SKILL.md` content** (heavy, scaffold once):
-
-The orchestrator invokes `test-writer`, `rd-implementer`, `code-reviewer`, `reporter`, `mr-reviewer`, `review-fixer` by convention name. Project-local versions live at `<repo>/.claude/skills/<name>/` and are auto-loaded by Claude Code. Scaffold via `init-project.sh <stack> <repo>`. The `mr-reviewer` convention is VCS-host-neutral; each stack's template picks its own implementation (Android default uses GitLab/`glab`; a GitHub-based stack could use `gh` + PR review API).
-
-Other configurable slots:
-
-| Slot | Default | Substitution |
-| --- | --- | --- |
-| Spec system | OpenSpec | Custom markdown, RFC, ADR |
-| VCS host | GitHub (`gh`) / GitLab (`glab`) | Bitbucket, Gitea, Forgejo |
-| Fix engine | `codex:codex-rescue` agent | Any code-writing agent + fixer skill |
-| Ticket tracker | Linear / Jira / GitHub Issues | Any |
-
----
-
-## Maintenance
-
-If you change the skill or commands on one machine, push to this repo so other machines pick it up:
 
 ```bash
-cd ~/code/claude-workflow
-git add skills/workflow-orchestrator/ commands/
-git commit -m "..."
-git push
+scripts/gates/tests/mutate     # 測試自己有沒有牙齒
 ```
 
-Other machines:
+**驗收標準是變異存活率,不是測試條數。**
 
-```bash
-cd ~/code/claude-workflow && git pull
-# symlink already points here; no further action needed
-```
+`mutate` 把已知的破壞逐一注入關卡腳本,跑測試,看有沒有被抓到。
+存活 = 那條防線目前是裝飾品。`--max-survivors N` 可以當 CI 門檻。
+
+軌跡:對抗審查初測 **1/29 被殺(存活 97%)** → 現在 **54 條變異全被殺(存活 0%)**。
+
+77 條測試,每一條都對應真實出過的錯,不是為了覆蓋率而寫:
+
+- 完備性指向別的 Requirement 的 Scenario(挑洞者抓到的,linter 當時擋不住)
+- 指紋一致但 YAML 載不進來(切片凍結了一個解析不了的規格)
+- 參數化測試的 issue 行格式(錨點選錯把 4 條正常測試誤判成沒跑)
+- 測試掛住導致後面靜默不執行(只解析結果會誤報成全過)
+- 可達性搜尋外包給 `git grep -E`(POSIX ERE 不支援 `\b`,pattern 靜默匹配不到)
+
+**一個反覆出現的失誤模式:用「本來就會通過」的案例去驗一個檢查。**
+這在開發過程中出現四次 —— 用沒有測試檔的乾淨 struct 驗可達性、
+用 `TBD` 驗中文佔位符偵測、斷言 `"mapping" in out` 卻被 YAML 錯誤訊息滿足、
+斷言 `"error" in out` 卻被統計行滿足。每一次那個檢查都看起來有效,其實沒有。
+`mutate` 存在的理由就是把「這條測試真的守著那個行為嗎」自動化,不靠自覺。
+
+**門檻要照語言校。** 中文密度高,一句 33 個字的話低於拉丁文校出來的 40 字上限而漏過;
+中文另設 20 字門檻,純 ASCII 無空白的 token(query 參數、識別字)則不受長度規則管。
+
+**兩個方向都要測。** 可達性那條的假訊號是「全部誤報成到不了」——
+只測「該擋有沒有擋」看不出來,要有「該過有沒有過」才抓得到。
+反過來,存活的變異幾乎全是把某個 `f.error` 換成 `pass` ——
+**沉默地放行**才是最危險的失效方向,而只驗「正常情況能不能過」對它毫無保護力。
+
+## 核心原則
+
+1. **證據** —— 每一句「這是對的」都要跑得出來。附不出重現就自動作廢,不需要人裁決。
+2. **凍結** —— 規格批准後凍結,測試 RED 後凍結。要改是明確事件。
+3. **成本** —— 腳本關卡全綠才啟動付費關卡。
+4. **隔離** —— 獨立讀者看不到程式碼,那是它存在的全部理由。
+5. **缺席** —— 「必須附重現」會低估缺席類問題,所以可達性是獨立的機械關卡。
+
+---
+
+## 這條線本身是怎麼驗證的
+
+設計不是推理出來的。它在一個真實的 iOS 專案上跑完一個完整功能
+(規格 → 59 條測試 → 實作 → 關卡 → 證據表 → commit),
+過程中撞出**九個設計缺陷**並全部修正,包括:
+
+- 「實作前就綠 = 假測試」會誤判純值型別 → 改成書面豁免 + 機械條件
+- `failure_class` 漏了「掛住」—— 它會讓後面的測試靜默不執行
+- lint gate 要求整包乾淨,在有歷史債的 repo 上等於從第一天就失效
+- 「必須附重現」低估缺席類問題 → 新增可達性關卡(已用變異驗證)
+- **規格從來沒被機器讀過** —— 凍結了一個載不進來的 YAML,凍得很成功但毫無意義
+
+最後一條是 `spec-lint` 第一次執行就抓到的。
 
 ---
 
 ## License
 
-Adapt as you like. Suggested: MIT for shareable copies; remove license if keeping private.
+隨意取用。建議:對外分享用 MIT;自用可以不放 license。

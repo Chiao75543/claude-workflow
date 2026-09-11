@@ -1,0 +1,146 @@
+#!/usr/bin/env python3
+"""spec-diff — 規格改動要不要重新批准。
+
+人類在 S5 批准的是**具體例子**(examples 就是契約)。所以界線畫在這裡:
+
+  行為改變   某個 example 的 in/out 變了、then 變了、mode 變了、
+             Scenario 或覆蓋被拿掉  → **要重新批准**
+  事實修正   規格對環境的假設是錯的,但意圖沒變(why / design / impact /
+             tasks / 註解)          → 不需重新批准,但**必須列在證據表上**
+  純新增     多了 Scenario、多了 example、N/A 改成有覆蓋
+             → 不擋(是收緊不是放寬),但列出來讓人知道
+
+比對對象是 S5 批准時存下的 evidence/spec.approved.yaml。
+
+用法: spec-diff <spec.yaml>
+退出碼: 0 只有事實修正或新增 / 1 有行為改變(要退回 S5) / 2 用法錯誤
+"""
+
+from __future__ import annotations
+
+import pathlib
+import sys
+
+sys.path.insert(0, str(pathlib.Path(__file__).parent))
+from _common import Findings, evidence_dir, load_spec  # noqa: E402
+
+# 這些區塊改了不影響契約
+NON_CONTRACT = {"why", "what", "impact", "design", "tasks", "meta"}
+
+
+def index_scenarios(spec: dict) -> dict[str, tuple[str, dict]]:
+    out = {}
+    for req in spec.get("requirements") or []:
+        if not isinstance(req, dict):
+            continue
+        for sc in req.get("scenarios") or []:
+            if isinstance(sc, dict) and sc.get("id"):
+                out[sc["id"]] = (req.get("id"), sc)
+    return out
+
+
+def index_completeness(spec: dict) -> dict[str, dict]:
+    return {
+        req.get("id"): (req.get("completeness") or {})
+        for req in (spec.get("requirements") or [])
+        if isinstance(req, dict)
+    }
+
+
+def compare_examples(sid: str, old: list, new: list, f: Findings) -> None:
+    old = old or []
+    new = new or []
+    for i in range(min(len(old), len(new))):
+        a, b = old[i], new[i]
+        if not (isinstance(a, dict) and isinstance(b, dict)):
+            continue
+        if a.get("in") != b.get("in"):
+            f.error(f"{sid} examples[{i}].in",
+                    f"輸入變了 —— 這是不同的主張\n      批准時 {a.get('in')}\n      現在   {b.get('in')}")
+        if a.get("out") != b.get("out"):
+            f.error(f"{sid} examples[{i}].out",
+                    f"預期結果變了 —— 你批准的就是這個例子\n      批准時 {a.get('out')}\n      現在   {b.get('out')}")
+    if len(new) < len(old):
+        f.error(f"{sid} examples", f"少了 {len(old) - len(new)} 組例子 —— 契約被縮減")
+    elif len(new) > len(old):
+        f.warn(f"{sid} examples", f"多了 {len(new) - len(old)} 組例子(收緊,不擋)")
+
+
+def main(argv: list[str]) -> int:
+    if len(argv) != 1:
+        print(__doc__)
+        return 2
+    spec_path = pathlib.Path(argv[0])
+    approved_path = evidence_dir(spec_path) / "spec.approved.yaml"
+    if not approved_path.exists():
+        print(f"✘ 找不到 {approved_path}")
+        print("  S5 批准時要存下快照。沒有快照就無從判斷改動是否需要重新批准。")
+        return 2
+
+    approved = load_spec(approved_path)
+    current = load_spec(spec_path)
+    f = Findings()
+
+    old_sc, new_sc = index_scenarios(approved), index_scenarios(current)
+
+    for sid in sorted(set(old_sc) - set(new_sc)):
+        f.error(sid, "Scenario 被移除 —— 你批准過的東西不見了")
+    for sid in sorted(set(new_sc) - set(old_sc)):
+        f.warn(sid, "新增的 Scenario(擴大覆蓋,不擋)")
+
+    for sid in sorted(set(old_sc) & set(new_sc)):
+        _, a = old_sc[sid]
+        _, b = new_sc[sid]
+        for field in ("given", "when"):
+            if a.get(field) != b.get(field):
+                f.error(f"{sid}.{field}",
+                        f"觸發條件變了 —— 同一個 id 底下換了情境\n      批准時 {a.get(field)}\n      現在   {b.get(field)}")
+        if a.get("then") != b.get("then"):
+            f.error(f"{sid}.then", "行為契約變了")
+        # 批准後新增豁免 = 讓某條測試不必先紅過。那是契約鬆綁,不是事實修正。
+        if a.get("red_exempt_reason") != b.get("red_exempt_reason"):
+            if not a.get("red_exempt_reason"):
+                f.error(f"{sid}.red_exempt_reason",
+                        "批准後新增 RED 豁免 —— 這條測試從此不必先紅過,是契約鬆綁")
+            elif not b.get("red_exempt_reason"):
+                f.warn(f"{sid}.red_exempt_reason", "移除了豁免(收緊,不擋)")
+            else:
+                f.error(f"{sid}.red_exempt_reason", "豁免理由被改寫 —— 人批准的是原本那個理由")
+        if a.get("mode") != b.get("mode"):
+            f.error(f"{sid}.mode", f"驗證方式變了 {a.get('mode')} → {b.get('mode')}"
+                                   + (" —— 從自動驗證降級成只能人工" if b.get("mode") == "6d" else ""))
+        compare_examples(sid, a.get("examples"), b.get("examples"), f)
+
+    old_cp, new_cp = index_completeness(approved), index_completeness(current)
+    # Requirement 改名的話,只比對交集等於整段 completeness 都不比 ——
+    # 改個 id 就能悄悄把覆蓋改成 N/A(對抗審查實證)。
+    for rid in sorted(set(old_cp) - set(new_cp)):
+        f.error(str(rid), "Requirement 不見了(被移除或改了 id)—— 它的完備性表態無從比對")
+    for rid in sorted(set(new_cp) - set(old_cp)):
+        f.warn(str(rid), "新增的 Requirement(擴大範圍,不擋)")
+    for rid in sorted(set(old_cp) & set(new_cp)):
+        for category in set(old_cp[rid]) | set(new_cp[rid]):
+            a, b = old_cp[rid].get(category), new_cp[rid].get(category)
+            if a == b:
+                continue
+            if isinstance(a, list) and isinstance(b, str):
+                f.error(f"{rid}.{category}", "原本有 Scenario 覆蓋,現在改成 N/A —— 覆蓋被放棄")
+            elif isinstance(a, str) and isinstance(b, list):
+                f.warn(f"{rid}.{category}", "原本 N/A,現在補了 Scenario(收緊,不擋)")
+            else:
+                f.warn(f"{rid}.{category}", "完備性表態有調整")
+
+    # 非契約區塊的改動:記下來,不擋,但要出現在證據表上
+    factual = sorted(k for k in NON_CONTRACT if approved.get(k) != current.get(k))
+    if factual:
+        print(f"  事實修正(不需重新批准,但會列在證據表上): {', '.join(factual)}")
+
+    code = f.report("spec-diff")
+    if code:
+        print("\n  → 有行為改變。你批准的是那些具體例子,例子變了就要重新批准。")
+        print("     退回 S5:更新說明頁 → 讓人重新確認 → 重存 spec.approved.yaml")
+    return code
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

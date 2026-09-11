@@ -1,0 +1,95 @@
+# 規格模板。這份檔案本身通得過 scripts/gates/spec-lint ——
+# 模板就是 linter 的第一個測試案例。
+#
+# 規格**只給 AI 讀**,人類讀的是 S5 產出的說明頁。
+# 所以這裡不必是散文,可以嚴格到「空話根本沒有欄位可以放」。
+
+meta:
+  name: example-feature          # kebab-case,同時是目錄名與分支名的一部分
+  ticket: null                   # 或 "AIP-1234"
+  capability: example            # 這個功能屬於哪個能力
+  change_type: ADDED             # ADDED | MODIFIED
+  draft_version: 1
+
+why: |
+  為什麼現在要做。觸發事件、誰受益。
+  如果是修正先前的錯誤認知,在這裡寫明白 —— 下游會引用它。
+
+what:
+  changes:
+    - 這次會改變什麼(使用者視角)
+  non_goals:
+    - 明確不做的事。非目標寫得越具體,後面越少爭議
+
+impact:
+  files:
+    - path/to/NewThing.ext        # 新
+    - path/to/Existing.ext        # 改:一句話說改什麼
+  call_sites: |
+    來自**全 codebase grep**(不是抽樣)。grep 呼叫點本身,不是 import ——
+    wildcard import 與完全限定呼叫會被漏掉。
+    沒有既有呼叫點就明寫「無既有呼叫點 —— 全新能力」。
+  risks:
+    - 已知但接受的風險。會出現在證據表上
+
+design: |
+  設計決定與**理由**。每個決定要說得出「不這樣會怎樣」。
+  這一段是 spec-grill 和獨立讀者最會挑的地方。
+
+requirements:
+  - id: REQ-001
+    statement: App SHALL 做到什麼(這是契約的一句話版本)
+
+    # 六類遺漏必須逐項表態:列 Scenario id,或寫「N/A — 理由」。
+    # 「沒寫到」在整條線上是不可見的,所以要逼出沉默。
+    # 指向的 Scenario 必須在**同一個** Requirement 裡 ——
+    # 指到別的 Requirement 等於這個 Requirement 自己零覆蓋。
+    completeness:
+      empty_boundary: [SC-001]
+      error_path: [SC-002]
+      concurrency: "N/A — 這個流程由單一 entry point 觸發且有重入鎖"
+      illegal_state: "N/A — 沒有狀態機,不存在非法前置狀態"
+      authorization: "N/A — 不涉及受保護資源"
+      data_migration: "N/A — 不改資料結構,也不從既有資料搬移"
+
+    scenarios:
+      - id: SC-001
+        mode: 6a                  # 6a 單元 | 6b 靜態 | 6c 產物/驅動 | 6d 只能人工
+        given: {input_size: 0}
+        when: process
+        # then 必須是**結構化 mapping**。散文沒有欄位可以放。
+        then:
+          returns: empty_list
+          throws: null
+        # examples 就是契約 —— 同時是可測性的定義,也是測試本身。
+        # 由 S4 的獨立讀者產出、人類批准後寫回這裡。
+        examples:
+          - in: {input_size: 0}
+            out: {returns: empty_list, throws: null}
+
+      - id: SC-002
+        mode: 6a
+        given: {transport: offline}
+        when: process
+        then:
+          throws: NetworkError
+          user_sees_error: true   # 反 EXPLOIT:不加這條的話「不報錯」可以靠吞例外達成
+        examples:
+          - in: {transport: offline}
+            out: {throws: NetworkError, user_sees_error: true}
+
+      # 純值型別之類沒有縫可以 stub 的,寫書面豁免。
+      # 豁免只在該測試完全沒建構 repository stub 時成立。
+      # - id: SC-003
+      #   red_exempt_reason: 純值型別的對照表,無 repository 縫可 stub
+
+      # 只能人工驗的必須說明為什麼不能自動化,會被 spec-grill 挑戰。
+      # - id: SC-004
+      #   mode: 6d
+      #   manual_reason: 需要實體 NFC 卡片,模擬器產不出 tag discovery 事件
+
+tasks:
+  - {done: false, text: "Domain:實體與介面"}
+  - {done: false, text: "Data:實作"}
+  - {done: false, text: "Presentation:畫面與狀態"}
+  - {done: false, text: "接線:讓新東西真的到得了(G8 會擋)"}

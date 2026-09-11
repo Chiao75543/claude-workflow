@@ -82,54 +82,52 @@ rather than guess a missing one:
 (`{TEST_COMMAND}` / `{LINT_COMMAND}` / `{BUILD_COMMAND}` come from Common
 Commands above; upper- and lower-case spellings refer to the same binding.)
 
-## Development Workflow (TDD)
+## Development Workflow
 
 ```
-Spec → TDD Test (RED) → Implement (GREEN) → Verify → Report → Commit
+規格 → 說明頁批准 → 凍結 → 測試(RED)→ 審過才凍結 → 實作(GREEN)→ 腳本關卡 → smoke → 付費審查 → 自動推 + PR 留言
 ```
 
-- Specs use OpenSpec format at `openspec/changes/{feature-name}/`
-- Write failing tests BEFORE production code
-- Commit footer includes `Spec:` + `Scenarios:` + `AI-assisted: yes`
+- 規格是**結構化 YAML**,放在 `specs/{name}/spec.yaml`,只給 AI 讀;
+  人類讀的是 S5 產出的說明頁。
+- 測試先於實作。**stub 必須回傳「沒有任何 Scenario 預期的東西」** ——
+  回 `[]` 或靜默成功會讓對應測試在實作前就綠,那是空測試。
+- 測試分兩個命名空間:`spec/`(從規格 examples 來,RED 後凍結)、
+  `impl/`(實作者自己加的,不凍結、不算證據)。
+- Commit footer 帶 `Spec:` + `Scenarios:` + `AI-assisted:`。
 
-## Pre-commit Verification (Stage 7.5)
+## 機器可讀的綁定:`specs/pipeline.yaml`
 
-Before any commit, you MUST:
+AGENTS.md 是寫給 AI 讀的散文;驗證關卡的腳本需要真正的設定檔:
 
-1. Run `{lint_command}` — must be clean (skip if the project has none).
-   Once lint is green, style-level review comments are off-limits.
-2. Run the relevant test suite — must be green.
-3. Cross-check implementation against `openspec/changes/{name}/specs/{name}/spec.md`
-   line-by-line — 0 CRITICAL findings required.
-4. Generate / update `openspec/changes/{name}/report.md` summarizing coverage.
+```yaml
+runner: {test_output_format}       # red-capture 的輸出解析器
+tests:
+  globs: ["{test_glob}"]
+  scenario_pattern: '@Test\(\s*"(SC-\d+[a-z]?)'
+reachability:
+  globs: ["{app_source_glob}"]     # G7 在哪裡找建構點
+lint: "{lint_command}"
+test: "{test_command}"
+smoke: "{smoke_command}"           # 用真的入口跑一次、拿到真的結果
+integration_branch: {integration_branch}
+auto_push: true
+ci: none                           # none | github | gitlab
+rules_files: [AGENTS.md]
+```
 
-If any of the above fails, fix before committing. Do NOT bypass this gate.
+## Pre-commit 驗證
 
-## PR Comment Fix Workflow (Stage 11)
+commit 之前必須:
 
-When fixing a PR review comment:
+1. `{lint_command}` —— **只看變更的檔案**。真實 repo 都有歷史債,
+   要求整包乾淨等於這關從第一天就失效。lint 綠了之後,風格類意見一律禁提。
+2. 相關測試全綠。
+3. `scripts/gates/` 的八道腳本關卡全綠(規格檢查、凍結、lint、測試、
+   RED 對帳、追溯、範例覆蓋、可達性),才啟動付費關卡。
+4. `scripts/gates/dashboard specs/{name}/spec.yaml` 產出證據表。
 
-- Address ONE comment per commit. No batching.
-- First produce a fix PLAN (files, changes, spec mapping, risks, confidence) —
-  do NOT edit yet. Wait for human approval.
-- After plan approval, apply the minimal change — no drive-by refactoring, no
-  unrelated cleanup.
-- If the comment contradicts the spec, surface the conflict; do not silently
-  override the reviewer.
-- Commit footer for PR-comment fixes:
-
-  ```
-  fix(review): {scope} address {file}:{line} - {summary}
-
-  Comment: {reviewer_name} on {file}:{line}
-  PR: #{PR_ID}
-  Spec: openspec/changes/{name}/specs/{name}/spec.md
-  Scenarios: {scenario-name}
-  AI-assisted: codex
-  ```
-
-- Do NOT push. Do NOT mark the discussion as resolved — the human verifies
-  the diff first, then the pipeline resolves it.
+任一項不過就先修,**不得繞過**。
 
 ## Branching And Worktree
 

@@ -1,25 +1,27 @@
 ---
 name: "workflow:verify"
-description: "Verify current implementation matches the spec. Produces CRITICAL / WARNING / SUGGESTION findings by comparing OpenSpec/SDD acceptance criteria against git diff."
+description: "跑 S9:腳本關卡 G0–G7 全綠 → smoke(真的入口跑一次)→ 才派付費審查 G9/G10;審查結果四類分流,迴圈由 loop 腳本數。"
 category: Workflow
-tags: [workflow, verify, code-review]
+tags: [workflow, verify, gates]
 ---
 
-Run spec-vs-implementation verification.
+跑 S9 的三段:腳本 → smoke → 付費。
 
-**Input**: optional spec path, change name, or diff range in `$ARGUMENTS`. If empty, the skill uses the active spec and current `git diff`.
+**動作**
 
-**Action**
+1. `scripts/gates/` 的 G0–G7 依序跑;沒過退回 S8
+2. `scripts/gates/smoke specs/{name}/spec.yaml`;**沒過就停,不派審查**
+3. 派 `spec-oracle` 與 `code-adversary`(fable),派完立刻 `scripts/gates/findings dispatched --gate G9|G10`;
+   每條 finding 用 `findings add` 收,實跑重現 → `set confirmed` / `set void`(停在 proposed 算沒處理完)
+4. `must_fix` / `overbuilt` → `scripts/gates/loop fix F-n` → 修 → 重跑 G0–G7 + 重現 → `loop resolved`
+5. `ask_user` **不修**,留給 PR 留言問人;`style` 記下不動
+6. `scripts/gates/findings check` 乾淨(或只剩 ask_user)→ 進 S10
 
-Invoke the `code-reviewer` skill via the **Skill tool**:
+**注意**
 
-```
-Skill(skill="code-reviewer", args="$ARGUMENTS")
-```
-
-**Notes**
-
-- Produces a tiered report: CRITICAL (spec violations — must fix), WARNING (concerns — should fix), SUGGESTION (nits — optional).
-- Block on any CRITICAL before continuing to commit/push.
-- After fixes, re-run `/workflow:verify` to confirm.
-- Pair with `/workflow:report` to persist the verification result as a .md/.html file.
+- **順序就是花錢的順序。** 功能不對其他免談:smoke 沒過連審都不審。
+- 沒附重現的 `must_fix` / `ask_user` / `overbuilt`,`findings add` 會拒收 —— 那是證據規則,不是格式挑剔。
+- `loop` 第 3 次 `fix` 會拒絕(parked)、解過又出現會拒絕(flipflop)、G10 重派第 2 次會拒絕。
+  被拒絕就停,交給 PR 留言的「需要你決定」;人答了用 `loop decided F-n ship|hold|respec` 記,那是唯一的解除方式。
+  換 id 再修會被 `findings add`(同 repro)與 `loop`(幽靈 id)雙雙拒收。
+- 做到哪算夠 = 批准的 examples。審查者發現例子外的 bug 是 `ask_user`,不是叫實作者修。

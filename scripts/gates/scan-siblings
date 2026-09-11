@@ -1,0 +1,104 @@
+#!/usr/bin/env python3
+"""scan-siblings — S1 / S3:跨 worktree 的能力清單與碰撞偵測。
+
+B 模式(一個功能一個 session)沒有塔台,所以共享狀態放在檔案系統:
+每個 session 掃描兄弟 worktree 的規格檔就有了全域視角。零協調、零跨 session 訊息。
+
+不帶參數     列出所有 worktree 在飛的能力
+帶 <spec.yaml>  另外比對 impact.files,把會撞的檔案講出來
+
+退出碼: 0(碰撞是警告,不擋 —— 它需要的是人決定順序,不是自動失敗)
+"""
+
+from __future__ import annotations
+
+import pathlib
+import sys
+
+sys.path.insert(0, str(pathlib.Path(__file__).parent))
+from _common import in_flight_specs, load_spec, repo_root, sibling_worktrees  # noqa: E402
+
+
+def impact_files(spec: dict) -> set[str]:
+    files = (spec.get("impact") or {}).get("files") or []
+    out = set()
+    for entry in files:
+        if isinstance(entry, str):
+            out.add(entry.split("#")[0].strip())
+    return {f for f in out if f}
+
+
+def collect(root: pathlib.Path) -> list[dict]:
+    """自己 + 所有兄弟 worktree 的規格。"""
+    found = []
+    for tree in [root] + sibling_worktrees(root):
+        for spec_path in in_flight_specs(tree):
+            try:
+                spec = load_spec(spec_path)
+            except SystemExit:
+                found.append({"worktree": tree.name, "path": spec_path,
+                              "name": spec_path.parent.name, "broken": True})
+                continue
+            meta = spec.get("meta") or {}
+            found.append({
+                "worktree": tree.name,
+                "path": spec_path,
+                "name": meta.get("name") or spec_path.parent.name,
+                "capability": meta.get("capability"),
+                "change_type": meta.get("change_type"),
+                "files": impact_files(spec),
+                "broken": False,
+            })
+    return found
+
+
+def main(argv: list[str]) -> int:
+    root = repo_root()
+    everything = collect(root)
+
+    print(f"▸ 在飛的規格({len(everything)} 份,跨 {len({e['worktree'] for e in everything})} 個 worktree)")
+    for entry in everything:
+        if entry["broken"]:
+            print(f"  ✘ {entry['worktree']:<24} {entry['name']:<22} 規格解析不了")
+            continue
+        print(f"    {entry['worktree']:<24} {entry['name']:<22} "
+              f"{entry['change_type'] or '?':<9} capability={entry['capability'] or '—'}")
+
+    if not argv:
+        # 同名能力預警
+        seen: dict[str, list[str]] = {}
+        for e in everything:
+            if e.get("capability"):
+                seen.setdefault(e["capability"], []).append(e["name"])
+        for capability, names in seen.items():
+            if len(names) > 1:
+                print(f"\n  ⚠ 能力 {capability} 同時被 {len(names)} 份規格宣告: {', '.join(names)}")
+        return 0
+
+    spec_path = pathlib.Path(argv[0]).resolve()
+    mine = next((e for e in everything if e["path"].resolve() == spec_path), None)
+    if mine is None:
+        print(f"\n✘ {spec_path} 不在掃描結果裡")
+        return 1
+
+    print(f"\n▸ {mine['name']} 的檔案碰撞")
+    hits = False
+    for other in everything:
+        if other is mine or other["broken"]:
+            continue
+        shared = mine["files"] & other["files"]
+        if shared:
+            hits = True
+            print(f"  ⚠ 與 {other['name']}({other['worktree']})共用 {len(shared)} 個檔案:")
+            for path in sorted(shared):
+                print(f"      {path}")
+    if hits:
+        print("\n  這些檔案兩邊都會動 —— 先決定誰先 merge,或約定插入位置慣例。")
+        print("  在寫程式之前知道,比合併時才發現便宜得多。")
+    else:
+        print("  沒有共用檔案。")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

@@ -1,0 +1,182 @@
+#!/usr/bin/env python3
+"""test-review — S7½:凍結之前,先審測試本身。
+
+凍結錯的測試比沒凍結更糟 —— 實作者只能一直「衝突就停」。所以上鎖前看三件事:
+
+  機械(這支腳本)
+    · 每條測試至少有一個斷言(零斷言 = 空測試)
+    · 每條測試至少引用它那條 Scenario 某組 example 的**具體值**(不是只看型別)
+    · 每組 example 至少被一條測試引用(批准的例子沒人測 = 契約沒被測)
+  語意(opus 派遣的 test-reviewer,結果寫在 evidence/test-review.agent.json)
+    · 斷言對的是不是那個值該出現的地方、case 名稱看不看得出在測什麼
+
+機械檢查只能驗「值有出現」,抓不到「值對了但斷在錯的地方」—— 那是派遣存在的理由。
+派遣的每條 finding 也得指名「哪條測試、缺哪個值」,否則不算數(證據規則)。
+
+結果寫 evidence/test-review.json,連同每個測試檔的指紋 ——
+dashboard 用它確認「審過的」和「凍結的」是同一批檔案。
+
+用法: test-review <spec.yaml> [--mechanical-only]
+退出碼: 0 通過 / 1 有問題
+"""
+
+from __future__ import annotations
+
+import datetime
+import pathlib
+import re
+import sys
+
+sys.path.insert(0, str(pathlib.Path(__file__).parent))
+import _config  # noqa: E402
+from _common import Findings, evidence_dir, load_spec, read_json, scenarios, sha256, write_json  # noqa: E402
+from _state import tree_fingerprint  # noqa: E402
+
+SKIP_TOKENS = {"true", "false", "null", "none", "nil", "yes", "no"}
+# 註解裡的東西不算:`// #expect(...) 之後補` 不是斷言,`// emptyList` 不是引用。
+# `#` 開頭只在後面接空白時當註解(Python / shell),否則會把 Swift 的 #expect 剝掉。
+COMMENT = re.compile(r"/\*.*?\*/|//[^\n]*|^\s*#\s[^\n]*", re.S | re.M)
+
+
+def strip_comments(text: str) -> str:
+    return COMMENT.sub("", text)
+
+
+def camel(token: str) -> str:
+    head, *rest = token.split("_")
+    return head + "".join(w[:1].upper() + w[1:] for w in rest)
+
+
+def leaves(value):
+    if isinstance(value, dict):
+        for v in value.values():
+            yield from leaves(v)
+    elif isinstance(value, list):
+        for v in value:
+            yield from leaves(v)
+    else:
+        yield value
+
+
+def anchors_of(example: dict) -> list[tuple[str, re.Pattern]]:
+    """一組 example 的 out 裡,哪些值可以拿來在測試裡找。布林與 null 太泛,不算。"""
+    out = []
+    for leaf in leaves(example.get("out")):
+        if isinstance(leaf, bool) or leaf is None:
+            continue
+        if isinstance(leaf, (int, float)):
+            out.append((str(leaf), re.compile(rf"(?<![\w.]){re.escape(str(leaf))}(?![\w.])")))
+            continue
+        text = str(leaf).strip()
+        if len(text) < 2 or text.lower() in SKIP_TOKENS:
+            continue
+        forms = {text, camel(text)} if "_" in text else {text}
+        out.append((text, re.compile("|".join(re.escape(f) for f in forms), re.I)))
+    return out
+
+
+def collect_tests(root: pathlib.Path, config: dict) -> list[dict]:
+    """[{file, sc, name, body}] —— body 是這條測試到下一條測試之間的文字。"""
+    pattern = re.compile(config["tests"]["scenario_pattern"])
+    tests, seen = [], set()
+    for glob in config["tests"]["globs"]:
+        for path in sorted(root.glob(glob)):
+            if not path.is_file() or path in seen:
+                continue
+            seen.add(path)
+            text = path.read_text(errors="ignore")
+            matches = list(pattern.finditer(text))
+            for i, m in enumerate(matches):
+                end = matches[i + 1].start() if i + 1 < len(matches) else len(text)
+                line_end = text.find("\n", m.start())
+                line_end = line_end if line_end > 0 else end
+                # 描述字串不算 body:命名慣例會把 example 的值寫進名字,那不是斷言。
+                # 只剝到字串收尾的引號,單行測試的斷言還在。
+                quote = text.find('"', m.end())
+                body_start = quote + 1 if 0 <= quote < line_end else line_end
+                tests.append({
+                    "file": str(path.relative_to(root)),
+                    "sc": m.group(1),
+                    "name": text[m.start():line_end].strip()[:80],
+                    "body": strip_comments(text[body_start:end]),
+                })
+    return tests
+
+
+def main(argv: list[str]) -> int:
+    args = [a for a in argv if not a.startswith("-")]
+    if not args:
+        print(__doc__)
+        return 2
+    spec_path = pathlib.Path(args[0]).resolve()
+    root = spec_path.parents[2]
+    ev = evidence_dir(spec_path)
+    spec = load_spec(spec_path)
+    config = _config.load(root)
+    f = Findings()
+
+    assert_re = re.compile(config["assert_pattern"])
+    tests = collect_tests(root, config)
+    by_sc: dict[str, list[dict]] = {}
+    for t in tests:
+        by_sc.setdefault(t["sc"], []).append(t)
+
+    for _, sc in scenarios(spec):
+        sid = sc.get("id")
+        if sc.get("mode") == "6d":
+            continue
+        examples = [e for e in (sc.get("examples") or []) if isinstance(e, dict)]
+        example_anchors = [anchors_of(e) for e in examples]
+        for i, anchors in enumerate(example_anchors, 1):
+            if not anchors:
+                f.warn(f"{sid} example #{i}", "out 只有布林/null,機械上驗不了值有沒有被斷言 —— 交給語意審查")
+
+        for t in by_sc.get(sid, []):
+            where = f"{t['file']} · {t['name']}"
+            if not assert_re.search(t["body"]):
+                f.error(where, "沒有任何斷言 —— 空測試")
+            if any(anchors for anchors in example_anchors) and not any(
+                rx.search(t["body"]) for anchors in example_anchors for _, rx in anchors
+            ):
+                wanted = sorted({a for anchors in example_anchors for a, _ in anchors})[:5]
+                f.error(where, f"沒有引用 {sid} 任何一組 example 的具體值(例如 {', '.join(wanted)})")
+
+        for i, anchors in enumerate(example_anchors, 1):
+            if not anchors:
+                continue
+            if not any(rx.search(t["body"]) for t in by_sc.get(sid, []) for _, rx in anchors):
+                f.error(f"{sid} example #{i}", "沒有任何測試引用這組 example 的值 —— 批准的例子沒人測")
+
+    agent = None
+    if "--mechanical-only" not in argv:
+        agent = read_json(ev / "test-review.agent.json")
+        if agent is None:
+            f.error("語意審查", "缺 evidence/test-review.agent.json —— test-reviewer 還沒派,或它沒寫結果")
+        else:
+            for item in agent.get("findings") or []:
+                if not isinstance(item, dict):
+                    continue
+                spot = f"{item.get('test', '?')} ({item.get('sc', '?')})"
+                if not item.get("test") or not item.get("problem"):
+                    f.warn(spot, "finding 沒指名測試或問題,依證據規則作廢")
+                    continue
+                (f.error if item.get("blocking") else f.warn)(spot, str(item["problem"]))
+
+    files = sorted({t["file"] for t in tests})
+    code = f.report("test-review")
+    write_json(ev / "test-review.json", {
+        "ok": code == 0,
+        "mechanical_only": "--mechanical-only" in argv,
+        "at": datetime.datetime.now().astimezone().isoformat(timespec="seconds"),
+        "tests": len(tests),
+        "files": {rel: sha256(root / rel) for rel in files},
+        "tree": tree_fingerprint(root),
+        "errors": [f"{w}: {m}" for w, m in f.errors],
+        "warnings": [f"{w}: {m}" for w, m in f.warnings],
+        "agent": agent,
+    })
+    return code
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

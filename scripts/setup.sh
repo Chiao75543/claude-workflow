@@ -8,6 +8,7 @@
 #   1. Checks required tools (claude, codex, git, node)
 #   2. Symlinks skills/workflow-orchestrator/ into ~/.claude/skills/
 #   3. Symlinks commands/workflow.md and commands/workflow/ into ~/.claude/commands/
+#   3b. Symlinks agents/*.md into ~/.claude/agents/  (pipeline 派遣用的精簡 agent)
 #   4. Optionally copies templates/codex-AGENTS.md to ~/.codex/AGENTS.md
 #   5. Prints next steps for project-level AGENTS.md and memory
 
@@ -74,6 +75,33 @@ else
   ln -s "$SKILL_SRC" "$SKILL_DST"
   echo "==> Linked $SKILL_DST -> $SKILL_SRC"
 fi
+echo ""
+
+# 3b. Symlink pipeline agents
+#     fable: spec-grill / spec-reader / spec-oracle / code-adversary
+#     opus:  red-writer / green-writer(S7 / S8 外派;凍結規則讓外派變安全)
+#     這些是精簡定義,工具集刻意最小化。實測開機成本(單次派遣,零工作量):
+#         general-purpose(全套工具)  31,554
+#         spec-grill(3 個工具)        5,587
+#         spec-reader(tools: [])      3,137
+#     也就是說 tool schema 佔了 general-purpose 開機費的九成。
+#     隔離型 agent(spec-reader / spec-oracle)的 tools: [] 是**結構性**保證 ——
+#     實測確認空陣列會被接受,agent 內部確實沒有任何工具可用,
+#     不是只靠 prompt 裡的指示。看得到程式碼就測不出規格歧義。
+#     注意:agent 定義要 session 重啟才會載入。
+mkdir -p "$CLAUDE_DIR/agents"
+for agent_src in "$REPO_DIR"/agents/*.md; do
+  [ -e "$agent_src" ] || continue
+  agent_dst="$CLAUDE_DIR/agents/$(basename "$agent_src")"
+  if [ -L "$agent_dst" ] && [ "$(readlink "$agent_dst")" = "$agent_src" ]; then
+    echo "==> Agent already linked: $(basename "$agent_src")"
+  else
+    [ -e "$agent_dst" ] && [ ! -L "$agent_dst" ] && mv "$agent_dst" "$agent_dst.backup.$(date +%s)"
+    ln -sfn "$agent_src" "$agent_dst"
+    echo "==> Linked agent: $(basename "$agent_src")"
+  fi
+done
+echo "    (agent 定義需要重啟 Claude Code session 才會生效)"
 echo ""
 
 # 3. Symlink slash commands (/workflow + /workflow:* sub-commands)

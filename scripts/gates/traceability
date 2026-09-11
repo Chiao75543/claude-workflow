@@ -1,0 +1,78 @@
+#!/usr/bin/env python3
+"""traceability — G6:規格與測試雙向對得上。
+
+  · 每條 Scenario 至少有一條測試看著
+  · 每條測試引用的 SC-id 都解析得到(沒有孤兒測試)
+
+測試檔位置與 SC-id 的認法來自 specs/pipeline.yaml(見 _config.py)。
+
+用法: traceability <spec.yaml>
+退出碼: 0 雙向齊全 / 1 有缺口
+"""
+
+from __future__ import annotations
+
+import pathlib
+import re
+import sys
+
+sys.path.insert(0, str(pathlib.Path(__file__).parent))
+import _config  # noqa: E402
+from _common import Findings, load_spec, scenario_ids  # noqa: E402
+
+
+def collect_test_ids(root: pathlib.Path, config: dict) -> dict[str, set[str]]:
+    """回傳 {SC-id: {檔案相對路徑}}。"""
+    pattern = re.compile(config["tests"]["scenario_pattern"])
+    found: dict[str, set[str]] = {}
+    seen: set[pathlib.Path] = set()
+    for glob in config["tests"]["globs"]:
+        for path in root.glob(glob):
+            if not path.is_file() or path in seen:
+                continue
+            seen.add(path)
+            try:
+                text = path.read_text(errors="ignore")
+            except OSError:
+                continue
+            for match in pattern.finditer(text):
+                found.setdefault(match.group(1), set()).add(str(path.relative_to(root)))
+    return found
+
+
+def main(argv: list[str]) -> int:
+    if len(argv) != 1:
+        print(__doc__)
+        return 2
+    spec_path = pathlib.Path(argv[0])
+    root = spec_path.resolve().parents[2]
+    spec = load_spec(spec_path)
+    config = _config.load(root)
+    f = Findings()
+
+    declared = scenario_ids(spec)
+    # 只能人工驗的不要求自動化測試,但必須有 manual_reason(spec-lint 已擋)
+    manual = {
+        sc.get("id")
+        for req in (spec.get("requirements") or [])
+        if isinstance(req, dict)
+        for sc in (req.get("scenarios") or [])
+        if isinstance(sc, dict) and sc.get("mode") == "6d"
+    }
+    expected = declared - manual
+    in_tests = collect_test_ids(root, config)
+
+    for sid in sorted(expected - set(in_tests)):
+        f.error(sid, "規格有這條 Scenario,但沒有任何測試引用它")
+    for sid in sorted(set(in_tests) - declared):
+        f.error(sid, f"測試引用了規格裡不存在的 Scenario ({', '.join(sorted(in_tests[sid]))})")
+    for sid in sorted(manual & set(in_tests)):
+        f.warn(sid, "標記為只能人工驗(6d),卻有自動化測試引用 —— mode 可能該降級")
+
+    print(f"  規格 {len(declared)} 條 Scenario(其中 {len(manual)} 條只能人工驗)"
+          f" · 測試涵蓋 {len(set(in_tests) & declared)} 條")
+    return f.report("traceability")
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

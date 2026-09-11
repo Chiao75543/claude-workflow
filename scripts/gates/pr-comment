@@ -1,0 +1,76 @@
+#!/usr/bin/env python3
+"""pr-comment — 把證據表變成 PR 留言。你看 PR 只看這一則。
+
+從 evidence/dashboard.json 產 markdown。頂端只有兩種標題:
+  「✅ 全乾淨,沒有要你決定的事」
+  「⏸ 需要你決定」+ 條列(parked / flipflop 的 finding、等你回答的 edge case、
+     只能人工驗的 Scenario、規格改了要重新批准)
+
+用法: pr-comment <spec.yaml> [--check]
+  --check  只回退出碼:0 全乾淨 / 1 有事要人決定(orchestrator 用它決定要不要標人)
+"""
+
+from __future__ import annotations
+
+import pathlib
+import sys
+
+sys.path.insert(0, str(pathlib.Path(__file__).parent))
+from _common import evidence_dir, read_json  # noqa: E402
+
+
+def decisions(dash: dict) -> list[str]:
+    """dashboard 已經把「要人做決定」的項目標好了(decision: true),這裡只負責排版。"""
+    return [f"**{a['title']}** —— {a['body']}" for a in dash.get("attention") or [] if a.get("decision")]
+
+
+def main(argv: list[str]) -> int:
+    args = [a for a in argv if not a.startswith("-")]
+    if not args:
+        print(__doc__)
+        return 2
+    ev = evidence_dir(pathlib.Path(args[0]).resolve())
+    dash = read_json(ev / "dashboard.json")
+    if dash is None:
+        print("✘ 缺 evidence/dashboard.json —— 先跑 dashboard")
+        return 2
+    findings = read_json(ev / "findings.json") or {}
+    todo = decisions(dash)
+    if "--check" in argv:
+        return 1 if todo else 0
+
+    lines = []
+    if todo:
+        lines.append("## ⏸ 需要你決定")
+        lines += [f"- {t}" for t in todo]
+    else:
+        lines.append("## ✅ 全乾淨,沒有要你決定的事")
+    lines.append("")
+    lines.append(f"**{dash.get('name')}** · `{dash.get('branch')}` · {dash.get('scale')}")
+    lines.append("")
+    lines.append("| 關卡 | | 結果 |")
+    lines.append("|---|---|---|")
+    for g in dash.get("gates") or []:
+        lines.append(f"| {g['id']} | {g['what']} | {'✓' if g['ok'] else '✘'} {g['note']} |")
+    s = (findings.get("summary") or {})
+    if s:
+        lines.append("")
+        lines.append(f"審查活動量:提出 {s.get('proposed', 0)} → 作廢 {s.get('void', 0)} → 證實 {s.get('confirmed', 0)}")
+    other = [a for a in dash.get("attention") or [] if not a.get("decision")]
+    if other:
+        lines.append("")
+        lines.append("<details><summary>其他注意事項</summary>")
+        lines.append("")
+        lines += [f"- **{a['tag']}** {a['title']} —— {a['body']}" for a in other]
+        lines.append("")
+        lines.append("</details>")
+    shots = dash.get("screenshots") or []
+    if shots:
+        lines.append("")
+        lines.append("畫面證據:" + "、".join(shots))
+    print("\n".join(lines))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

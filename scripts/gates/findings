@@ -1,0 +1,147 @@
+#!/usr/bin/env python3
+"""findings — 審查結果的四類分流。這就是迴圈不會無限的原因。
+
+  must_fix   違反某組 example / 資安或架構違規   必附重現(會紅的測試、會命中的指令)→ 必修
+  ask_user   example 沒涵蓋的 bug、極端 edge case   必附重現 + 問句 → 問人,不自動修
+  overbuilt  example 外的公開介面、多一層抽象       必指名哪個介面沒有任何 example 用到 → 擋,拿掉
+  style      內部囉嗦、命名                          不需證明 → 提醒,不擋
+
+沒附重現的 must_fix / ask_user / overbuilt **收不進來**(證據規則)。
+狀態:proposed → confirmed(重現實跑會紅)/ void(跑不紅)→ fixed / accepted_risk / added_example
+
+用法:
+  findings <spec.yaml> add --id F-001 --gate G10 --class must_fix --title "…" --repro "指令或測試路徑"
+                           [--sc SC-003] [--question "要不要防這個?"]
+  findings <spec.yaml> set F-001 confirmed|void|fixed|accepted_risk|added_example
+  findings <spec.yaml> dispatched --gate G9|G10   記「派過了」—— 零 finding 的乾淨審查也要留下派過的紀錄
+  findings <spec.yaml> list
+  findings <spec.yaml> check     還有沒有沒處理完的(proposed 也算)、或等人回答的 ask_user
+
+同一個重現(repro)只能有一個 id:換 id 重 add 會被拒 —— 否則 loop 的計數會歸零。
+退出碼(check): 0 乾淨 / 1 還有待處理或待決
+"""
+
+from __future__ import annotations
+
+import datetime
+import pathlib
+import sys
+
+sys.path.insert(0, str(pathlib.Path(__file__).parent))
+from _common import evidence_dir, read_json, triage_findings, write_json  # noqa: E402
+from _state import tree_fingerprint  # noqa: E402
+
+CLASSES = {"must_fix", "ask_user", "overbuilt", "style"}
+NEEDS_REPRO = {"must_fix", "ask_user", "overbuilt"}
+STATUSES = {"proposed", "confirmed", "void", "fixed", "accepted_risk", "added_example"}
+
+
+def flag(argv: list[str], name: str) -> str | None:
+    return argv[argv.index(name) + 1] if name in argv and argv.index(name) + 1 < len(argv) else None
+
+
+def load(ev: pathlib.Path) -> dict:
+    return read_json(ev / "findings.json") or {"items": [], "dispatched": {}}
+
+
+def summary(state: dict) -> dict:
+    items = state["items"]
+    return {
+        "proposed": len(items),
+        "void": sum(1 for i in items if i["status"] == "void"),
+        "confirmed": sum(1 for i in items if i["status"] in ("confirmed", "fixed", "accepted_risk", "added_example")),
+    }
+
+
+def main(argv: list[str]) -> int:
+    if len(argv) < 2:
+        print(__doc__)
+        return 2
+    ev = evidence_dir(pathlib.Path(argv[0]).resolve())
+    verb = argv[1]
+    state = load(ev)
+    items = state["items"]
+
+    if verb == "add":
+        fid, gate, cls = flag(argv, "--id"), flag(argv, "--gate"), flag(argv, "--class")
+        title, repro, question = flag(argv, "--title"), flag(argv, "--repro"), flag(argv, "--question")
+        if not (fid and gate and cls and title):
+            print("✘ 需要 --id --gate --class --title")
+            return 2
+        if cls not in CLASSES:
+            print(f"✘ class 只能是 {', '.join(sorted(CLASSES))}")
+            return 2
+        if any(i["id"] == fid for i in items):
+            print(f"✘ {fid} 已存在")
+            return 2
+        twin = next((i for i in items if repro and i.get("repro") == repro and i["status"] != "void"), None)
+        if twin:
+            print(f"✘ 同一個重現已經是 {twin['id']} —— 用原 id 繼續,換 id 等於把修復次數歸零")
+            return 1
+        if cls in NEEDS_REPRO and not (repro or "").strip():
+            print(f"✘ {cls} 必須附重現(--repro)—— 跑不出來的主張不收")
+            return 1
+        if cls == "ask_user" and not (question or "").strip():
+            print("✘ ask_user 必須附問句(--question)—— 人要回答的是一個問題,不是一段描述")
+            return 1
+        items.append({
+            "id": fid, "gate": gate, "class": cls, "title": title, "sc": flag(argv, "--sc"),
+            "repro": repro, "question": question, "status": "proposed",
+            "at": datetime.datetime.now().astimezone().isoformat(timespec="seconds"),
+        })
+        state["summary"] = summary(state)
+        write_json(ev / "findings.json", state)
+        print(f"{fid} [{cls}] {title}")
+        return 0
+
+    if verb == "dispatched":
+        gate = flag(argv, "--gate")
+        if gate not in ("G9", "G10"):
+            print("✘ --gate 只能是 G9 或 G10")
+            return 2
+        state.setdefault("dispatched", {})[gate] = {
+            "at": datetime.datetime.now().astimezone().isoformat(timespec="seconds"),
+            "tree": tree_fingerprint(ev.parents[1]),
+        }
+        state["summary"] = summary(state)
+        write_json(ev / "findings.json", state)
+        print(f"{gate} 派過了")
+        return 0
+
+    if verb == "set":
+        fid, status = (argv[2] if len(argv) > 2 else None), (argv[3] if len(argv) > 3 else None)
+        item = next((i for i in items if i["id"] == fid), None)
+        if item is None or status not in STATUSES:
+            print(f"✘ 找不到 {fid} 或狀態不合法({', '.join(sorted(STATUSES))})")
+            return 2
+        if item["class"] == "ask_user" and status == "fixed":
+            print("✘ ask_user 不能直接 fixed —— 人說要防就 added_example,不要就 accepted_risk")
+            return 1
+        item["status"] = status
+        state["summary"] = summary(state)
+        write_json(ev / "findings.json", state)
+        print(f"{fid} → {status}")
+        return 0
+
+    if verb in ("list", "check"):
+        pending, asking = triage_findings(items)
+        for i in items:
+            mark = "✘" if i in pending else ("?" if i in asking else " ")
+            print(f"  {mark} {i['id']:<7} {i['class']:<10} {i['status']:<14} {i['title'][:60]}")
+        s = summary(state)
+        print(f"提出 {s['proposed']} → 作廢 {s['void']} → 證實 {s['confirmed']}")
+        if verb == "list":
+            return 0
+        if pending:
+            print(f"findings: 還有 {len(pending)} 條必修沒處理")
+        if asking:
+            print(f"findings: {len(asking)} 條等你決定")
+        print(f"findings: {'OK' if not pending and not asking else 'PENDING'}")
+        return 1 if pending or asking else 0
+
+    print(__doc__)
+    return 2
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

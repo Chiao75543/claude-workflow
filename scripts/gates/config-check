@@ -1,0 +1,41 @@
+#!/usr/bin/env python3
+"""config-check — specs/pipeline.yaml 填齊了沒。
+
+/workflow:init 問卷跑完、或接手一個別人設定過的專案時跑一次。
+沒填的鍵會讓對應的關卡直接失敗(不是跳過),所以早點知道比較便宜。
+
+用法: config-check [repo-root]
+退出碼: 0 齊全 / 1 有缺
+"""
+
+from __future__ import annotations
+
+import pathlib
+import sys
+
+sys.path.insert(0, str(pathlib.Path(__file__).parent))
+import _config  # noqa: E402
+from _common import repo_root  # noqa: E402
+
+
+def main(argv: list[str]) -> int:
+    root = pathlib.Path(argv[0]).resolve() if argv else repo_root()
+    path = root / "specs" / "pipeline.yaml"
+    if not path.exists():
+        print(f"✘ 找不到 {path} —— 跑 /workflow:init 先回答問卷")
+        return 1
+    config = _config.load(root)
+    gaps = _config.missing(config)
+    if config.get("ci") not in ("none", "github", "gitlab"):
+        gaps.append("ci(只能是 none / github / gitlab)")
+    for key in ("runner", "lint", "test", "smoke", "integration_branch", "ci", "auto_push"):
+        print(f"  {key:<20} {config.get(key)!r}")
+    if gaps:
+        print(f"\nconfig-check: FAIL  缺 {', '.join(gaps)}")
+        return 1
+    print("\nconfig-check: PASS")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

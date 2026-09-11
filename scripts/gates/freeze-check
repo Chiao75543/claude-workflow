@@ -1,0 +1,80 @@
+#!/usr/bin/env python3
+"""freeze-check — G1 / G2:規格與測試檔沒有被偷改。
+
+除了比對指紋,**也重新驗證規格載得進去** ——
+切片教訓:凍結一個解析不了的 YAML,凍得很成功但毫無意義。
+
+用法: freeze-check <spec.yaml>
+退出碼: 0 一致 / 1 有漂移
+"""
+
+from __future__ import annotations
+
+import pathlib
+import sys
+
+sys.path.insert(0, str(pathlib.Path(__file__).parent))
+from _common import Findings, evidence_dir, load_spec, sha256  # noqa: E402
+
+
+def parse_hash_file(path: pathlib.Path) -> list[tuple[str, str]]:
+    """每行 `sha256:<hex>  <相對路徑>`;# 開頭是註解。"""
+    entries = []
+    for line in path.read_text().splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        parts = line.split(None, 1)
+        if len(parts) == 2:
+            entries.append((parts[0], parts[1].strip()))
+    return entries
+
+
+def main(argv: list[str]) -> int:
+    if len(argv) != 1:
+        print(__doc__)
+        return 2
+    spec_path = pathlib.Path(argv[0])
+    root = spec_path.resolve().parents[2]  # <root>/specs/<name>/spec.yaml
+    ev = evidence_dir(spec_path)
+    f = Findings()
+
+    # 可解析性:凍結的東西必須真的載得進來
+    try:
+        load_spec(spec_path)
+    except SystemExit as exc:
+        print(f"  ✘ {spec_path}  {exc}")
+        print("\nfreeze-check: FAIL  (規格解析不了 —— 指紋一致也沒有意義)")
+        return 1
+
+    spec_hash_file = ev / "spec.hash"
+    if not spec_hash_file.exists():
+        f.error("evidence/spec.hash", "不存在 —— 規格尚未凍結")
+    else:
+        recorded = parse_hash_file(spec_hash_file)
+        if not recorded:
+            f.error("evidence/spec.hash", "內容為空")
+        else:
+            actual = sha256(spec_path)
+            if recorded[0][0] != actual:
+                f.error(str(spec_path), f"規格已被改動\n      凍結時 {recorded[0][0][:23]}…\n      現在   {actual[:23]}…")
+
+    tests_hash_file = ev / "tests.hash"
+    if not tests_hash_file.exists():
+        f.error("evidence/tests.hash", "不存在 —— 測試尚未凍結")
+    else:
+        entries = parse_hash_file(tests_hash_file)
+        if not entries:
+            f.error("evidence/tests.hash", "內容為空")
+        for recorded_hash, rel in entries:
+            target = root / rel
+            if not target.exists():
+                f.error(rel, "凍結時存在,現在不見了")
+            elif sha256(target) != recorded_hash:
+                f.error(rel, "測試檔已被改動 —— 實作階段不得動規格測試")
+
+    return f.report("freeze-check")
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

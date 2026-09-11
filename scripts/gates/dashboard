@@ -1,0 +1,441 @@
+#!/usr/bin/env python3
+"""dashboard — S11:你在按推之前唯一要看的東西。
+
+自己跑得動的關卡就跑,讀得到的證據就讀,產出一頁 HTML。
+
+兩個刻意的設計:
+  · **可達性(G8)排在最前面,和嚴重度分開。** 切片教訓:「必須附可執行重現」
+    這條規則會系統性低估「缺席」類的問題 —— 東西根本不存在時寫不出失敗測試,
+    所以「整個功能沒接上導航」只能歸在次要等級,會沉到摺線下面。
+  · **顯示審查活動量,不只顯示結果。** 一張只有綠勾的表會訓練你變成橡皮圖章;
+    「提出 12 → 作廢 9 → 證實 3」才分得出「乾淨」和「沒認真查」。
+
+順序就是花錢的順序:G0–G7 腳本 → smoke → 才輪到 G9/G10。smoke 沒過,付費關卡標「未跑」。
+另外寫一份 evidence/dashboard.json 給 pr-comment 用,並在最後一行說「能不能自動推」——
+全綠、smoke 過、零待決事項才能;不然就是 PR 上要有「需要你決定」。
+
+用法: dashboard <spec.yaml> [--base main] [-o evidence/dashboard.html]
+"""
+
+from __future__ import annotations
+
+import datetime
+import html
+import json
+import pathlib
+import re
+import subprocess
+import sys
+
+sys.path.insert(0, str(pathlib.Path(__file__).parent))
+import _config  # noqa: E402
+from _common import (  # noqa: E402
+    evidence_dir, integration_branch, load_spec, read_json, scenario_ids, triage_findings, write_json,
+)
+from _state import tree_fingerprint  # noqa: E402
+
+# 型別宣告。要吃得下常見寫法,否則最該檢查的東西反而隱形:
+#   @MainActor final class XViewModel / actor XService / data class / sealed class / object
+# 以及 Compose 的 @Composable fun XScreen(。
+ATTRS = r"(?:@[\w.]+(?:\([^)]*\))?\s+)*"
+MODS = r"(?:(?:public|private|fileprivate|internal|open|final|abstract|sealed|data|value|export|default)\s+)*"
+DECL = re.compile(rf"^\s*{ATTRS}{MODS}(?:struct|class|enum|actor|protocol|interface|object|record)\s+(\w+)", re.M)
+# 大寫開頭的 fun 是 Compose 畫面的慣例
+FUNC_DECL = re.compile(rf"^\s*{ATTRS}{MODS}fun\s+([A-Z]\w*)\s*\(", re.M)
+# file-local 的型別本來就不該對外可達,不是 G8 要問的問題
+PRIVATE = re.compile(rf"^\s*{ATTRS}(?:private|fileprivate)\s", re.M)
+
+
+# 這幾個標籤是「要人做決定」,其他的只是讓人知道。自動推只被前者擋。
+DECISION_TAGS = {"需要你決定", "要重新批准", "要人工驗", "無法驗證", "無外部錨定"}
+
+
+def git(root: pathlib.Path, *args: str) -> str:
+    try:
+        return subprocess.run(["git", *args], cwd=root, capture_output=True,
+                              text=True, check=True).stdout
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        return ""
+
+
+def in_reach_scope(root: pathlib.Path, rel: str, globs: list[str]) -> bool:
+    return any(pathlib.Path(root, rel).match(g) or rel.startswith(g.split("*")[0]) for g in globs)
+
+
+def check_reachability(root: pathlib.Path, base: str, config: dict) -> list[dict]:
+    """G7:新增的型別有沒有人建構它。缺席類問題唯一的機械防線。"""
+    added = [p for p in git(root, "diff", "--name-only", "--diff-filter=A", f"{base}...HEAD").split("\n") if p]
+    if not added:  # 尚未 commit 的情況
+        added = [p for p in git(root, "diff", "--cached", "--name-only", "--diff-filter=A").split("\n") if p]
+    globs = config["reachability"]["globs"] or []
+    in_scope = {p for p in added if in_reach_scope(root, p, globs)}
+
+    # 自己用 Python 搜,不外包給 git grep ——
+    # git grep -E 是 POSIX ERE,不支援 \b 與 \s,pattern 會靜默匹配不到而全部誤報。
+    #
+    # **建構點只能在產品程式碼裡。** 測試檔、markdown、註解都不算 ——
+    # 每個型別都有規格測試會 Name(),把測試算進來的話 G7 幾乎必然通過,
+    # 那它就完全失去存在意義(對抗審查實證)。
+    tracked = [t for t in git(root, "ls-files").split("\n") if t]
+    production = {t for t in tracked if in_reach_scope(root, t, globs)}
+    contents: dict[str, str] = {}
+    for rel in production:
+        path = root / rel
+        if path.is_file() and path.stat().st_size < 2_000_000:
+            try:
+                contents[rel] = path.read_text(errors="ignore")
+            except OSError:
+                pass
+
+    results = []
+    for rel in sorted(in_scope):
+        text = contents.get(rel)
+        if text is None:
+            continue
+        # 檔案裡**每一個**對外型別都要檢查,不是只看第一個 ——
+        # 常見寫法是一個檔案放 View + ViewModel,只看第一個等於主型別沒被檢查。
+        names = list(dict.fromkeys(DECL.findall(text) + FUNC_DECL.findall(text)))
+        for name in names:
+            # file-local 的型別不是 G7 要問的問題(它本來就不該對外可達)
+            decl_line = next((ln for ln in text.splitlines() if re.search(rf"\b{re.escape(name)}\b", ln)
+                              and (DECL.match(ln + "\n") or FUNC_DECL.match(ln + "\n"))), "")
+            if PRIVATE.match(decl_line + "\n"):
+                continue
+            use = re.compile(rf"\b{re.escape(name)}\s*\(")
+            sites = [other for other, body in contents.items()
+                     if other != rel and use.search(body)]
+            results.append({"file": rel, "symbol": name, "sites": sorted(sites)})
+    return results
+
+
+def run(cmd: list[str], cwd: pathlib.Path) -> tuple[bool, str]:
+    try:
+        proc = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True)
+        return proc.returncode == 0, (proc.stdout + proc.stderr).strip()
+    except FileNotFoundError:
+        return False, "找不到指令"
+
+
+def esc(text) -> str:
+    return html.escape(str(text))
+
+
+def render(context: dict) -> str:
+    gates_rows = "\n".join(
+        f'<div class="g"><span class="gid">{esc(g["id"])}</span><span>{esc(g["what"])}</span>'
+        f'<span class="v {"p" if g["ok"] else "f"}">{"✓" if g["ok"] else "✘"} {esc(g["note"])}</span></div>'
+        for g in context["gates"]
+    )
+    attn_items = "\n".join(
+        f'<div class="a"><span class="pill">{esc(a["tag"])}</span><div><h3>{esc(a["title"])}</h3>'
+        f'<p>{esc(a["body"])}</p></div></div>'
+        for a in context["attention"]
+    ) or '<div class="a"><span class="pill ok">0</span><div><h3>沒有需要你注意的</h3>'\
+         '<p>可達性、規格缺口、人工驗證殘留都是零。</p></div></div>'
+    shots = "\n".join(
+        f'<figure><img src="screenshots/{esc(s)}" alt="{esc(s)}"><figcaption>{esc(s)}</figcaption></figure>'
+        for s in context["screenshots"]
+    )
+    return f"""<!doctype html><meta charset="utf-8">
+<title>{esc(context['name'])} 證據表</title>
+<style>
+:root{{--bg:#F0F2F4;--panel:#fff;--ink:#171B20;--dim:#626D78;--rule:#D3D9DE;--pass:#1F7A4C;--fail:#A32C2C;--attn:#9A6212}}
+@media(prefers-color-scheme:dark){{:root{{--bg:#10141A;--panel:#171D25;--ink:#E4EAF0;--dim:#8C99A6;--rule:#262F3A;--pass:#5FBE8A;--fail:#E08585;--attn:#D9A055}}}}
+*{{box-sizing:border-box}}body{{background:var(--bg);color:var(--ink);font:15px/1.6 -apple-system,"PingFang TC",sans-serif;margin:0}}
+.p{{max-width:46rem;margin:0 auto;padding:2.5rem 1.25rem 4rem;display:flex;flex-direction:column;gap:1.75rem}}
+h1{{font-size:1.7rem;margin:.3rem 0 0}}h2{{font-size:.72rem;font-family:ui-monospace,monospace;letter-spacing:.14em;text-transform:uppercase;color:var(--dim);margin:0 0 .6rem;font-weight:500}}
+h3{{font-size:.95rem;margin:0 0 .2rem}}header{{border-bottom:2px solid var(--ink);padding-bottom:1rem}}
+.k{{font-family:ui-monospace,monospace;font-size:.68rem;letter-spacing:.16em;text-transform:uppercase;color:var(--dim)}}
+.sub{{color:var(--dim);font-size:.95rem}}.panel{{background:var(--panel);border:1px solid var(--rule)}}
+.a{{display:grid;grid-template-columns:auto 1fr;gap:.85rem;padding:.9rem 1rem;border-bottom:1px solid var(--rule);align-items:start}}
+.a:last-child{{border-bottom:none}}.a p{{margin:0;font-size:.88rem;color:var(--dim)}}
+.pill{{font-family:ui-monospace,monospace;font-size:.64rem;padding:.2rem .45rem;border:1px solid var(--attn);color:var(--attn);white-space:nowrap;margin-top:.15rem}}
+.pill.ok{{border-color:var(--pass);color:var(--pass)}}
+.g{{display:grid;grid-template-columns:2.6rem 1fr auto;gap:.8rem;padding:.55rem 1rem;border-bottom:1px solid var(--rule);font-size:.9rem;align-items:baseline}}
+.g:last-child{{border-bottom:none}}.gid{{font-family:ui-monospace,monospace;font-size:.72rem;color:var(--dim)}}
+.v{{font-family:ui-monospace,monospace;font-size:.76rem;text-align:right;color:var(--dim)}}.v.p{{color:var(--pass)}}.v.f{{color:var(--fail)}}
+figure{{margin:0}}figure img{{max-width:min(100%,15rem);border:1px solid var(--rule);display:block}}
+figcaption{{font-family:ui-monospace,monospace;font-size:.7rem;color:var(--dim);margin-top:.3rem}}
+.shots{{display:flex;gap:1rem;flex-wrap:wrap;padding:1rem}}
+</style>
+<div class="p">
+<header><div class="k">{esc(context['branch'])} · 推送前證據表</div><h1>{esc(context['name'])}</h1>
+<div class="sub">{esc(context['scale'])}</div></header>
+<section><h2>需要你注意</h2><div class="panel">{attn_items}</div></section>
+<section><h2>關卡</h2><div class="panel">{gates_rows}</div></section>
+{'<section><h2>畫面證據</h2><div class="panel shots">' + shots + '</div></section>' if shots else ''}
+</div>"""
+
+
+def main(argv: list[str]) -> int:
+    args = [a for a in argv if not a.startswith("-")]
+    if not args:
+        print(__doc__)
+        return 2
+    spec_path = pathlib.Path(args[0])
+    root = spec_path.resolve().parents[2]
+    spec = load_spec(spec_path)
+    config = _config.load(root)
+    # base 預設跟 pipeline.yaml 的 integration_branch;寫死 main 的話,整合分支叫 develop 的專案
+    # `git diff main...HEAD` 出錯回空 → G3「沒有變更的檔案」G7「0 個新型別」靜默變綠(對抗審查實證)。
+    base = argv[argv.index("--base") + 1] if "--base" in argv else integration_branch(root)
+    base_ok = subprocess.run(["git", "rev-parse", "--verify", "-q", f"{base}^{{commit}}"], cwd=root,
+                             capture_output=True).returncode == 0
+    ev = evidence_dir(spec_path)
+    here = pathlib.Path(__file__).parent
+
+    gates, attention = [], []
+
+    ok, _ = run([str(here / "spec-lint"), str(spec_path)], root)
+    gates.append({"id": "G0", "what": "規格檢查", "ok": ok, "note": "schema/完備性/可測性"})
+
+    frozen_ok, _ = run([str(here / "freeze-check"), str(spec_path)], root)
+
+    # 指紋不符時,由 spec-diff 判定是「要重新批准的行為改變」還是「事實修正」。
+    # 沒有批准快照就無從判斷 —— 那本身是個問題,要講出來。
+    approved = ev / "spec.approved.yaml"
+    if approved.exists():
+        # evidence/ 全部是 AI 可寫的。唯一不在 AI 手裡的錨點是 git 歷史:
+        # 批准快照必須 commit,之後任何改動才會在 diff 裡被人看見。
+        rel_approved = str(approved.resolve().relative_to(root.resolve()))
+        tracked = git(root, "ls-files", "--error-unmatch", rel_approved).strip() != ""
+        dirty = git(root, "status", "--porcelain", "--", rel_approved).strip() != ""
+        if not tracked or dirty:
+            attention.append({
+                "tag": "無外部錨定", "title": "批准快照沒有 commit",
+                "body": "evidence/ 底下每個檔案 AI 都能重寫。spec.approved.yaml 一定要在批准當下 commit,"
+                        "之後對它的任何改動才會出現在 git diff 裡被人看見。現在它"
+                        + ("還沒被 git 追蹤。" if not tracked else "有未提交的改動。"),
+            })
+        diff_ok, diff_out = run([str(here / "spec-diff"), str(spec_path)], root)
+        factual = [ln.strip() for ln in diff_out.splitlines() if "事實修正" in ln]
+        gates.append({"id": "G1/2", "what": "規格與測試沒被偷改", "ok": frozen_ok and diff_ok,
+                      "note": "指紋比對" if frozen_ok else
+                              ("規格有改,但只是事實修正" if diff_ok else "規格有行為改變 → 要重新批准")})
+        if not diff_ok:
+            attention.append({
+                "tag": "要重新批准", "title": "規格的行為契約改過了",
+                "body": "你批准的是那些具體例子,而例子(或 then / mode / 覆蓋)變了。"
+                        "退回說明頁重新確認一次,再重存批准快照。",
+            })
+        elif factual:
+            attention.append({
+                "tag": "事實修正", "title": "規格改過,但不影響契約",
+                "body": " ".join(factual) + " —— 不需要重新批准,但你應該知道它改過。",
+            })
+    else:
+        gates.append({"id": "G1/2", "what": "規格與測試沒被偷改", "ok": False,
+                      "note": "缺 spec.approved.yaml"})
+        attention.append({
+            "tag": "缺快照", "title": "沒有批准快照,無從判斷規格改動",
+            "body": "S5 批准時要存下 evidence/spec.approved.yaml。"
+                    "沒有它,任何後續改動都分不出是事實修正還是行為改變。",
+        })
+
+    # G2b 測試審過才凍結 —— 審過的檔案指紋要和凍結的一模一樣,否則審的是別的版本。
+    review = read_json(ev / "test-review.json")
+    frozen_files = {}
+    for line in (ev / "tests.hash").read_text().splitlines() if (ev / "tests.hash").exists() else []:
+        digest, _, rel = line.partition("  ")
+        if rel:
+            frozen_files[rel.strip()] = digest.strip()
+    if not review:
+        gates.append({"id": "G2b", "what": "測試在凍結前審過", "ok": False, "note": "缺 test-review.json"})
+    elif not review.get("ok"):
+        gates.append({"id": "G2b", "what": "測試在凍結前審過", "ok": False,
+                      "note": f"{len(review.get('errors') or [])} 條問題"})
+    elif review.get("mechanical_only") or review.get("agent") is None:
+        gates.append({"id": "G2b", "what": "測試在凍結前審過", "ok": False,
+                      "note": "只跑過機械檢查,語意審查(test-reviewer)沒跑"})
+    elif frozen_files and review.get("files") != frozen_files:
+        gates.append({"id": "G2b", "what": "測試在凍結前審過", "ok": False, "note": "審過的和凍結的不是同一批檔"})
+    else:
+        gates.append({"id": "G2b", "what": "測試在凍結前審過", "ok": True,
+                      "note": f"{review.get('tests', 0)} 條測試 · 機械 + 語意"})
+
+    ok, out = run([str(here / "traceability"), str(spec_path)], root)
+    covered = re.search(r"測試涵蓋 (\d+) 條", out)
+    gates.append({"id": "G6", "what": "規格↔測試雙向", "ok": ok,
+                  "note": f"{len(scenario_ids(spec))} 條 Scenario · 涵蓋 {covered.group(1) if covered else '?'}"})
+
+    # G3 lint —— 只看變更的檔案。契約:設定的指令接受檔案路徑當結尾參數。
+    changed = [c for c in (
+        git(root, "diff", "--name-only", "--diff-filter=ACM", f"{base}...HEAD").split("\n")
+        + git(root, "diff", "--cached", "--name-only", "--diff-filter=ACM").split("\n")
+    ) if c and (root / c).is_file()]
+    lint_cmd = config.get("lint")
+    if not lint_cmd:
+        gates.append({"id": "G3", "what": "lint(變更的檔案)", "ok": False,
+                      "note": "specs/pipeline.yaml 沒設 lint"})
+    elif not base_ok:
+        gates.append({"id": "G3", "what": "lint(變更的檔案)", "ok": False, "note": f"找不到整合分支 {base}"})
+    elif not changed:
+        gates.append({"id": "G3", "what": "lint(變更的檔案)", "ok": True, "note": "沒有變更的檔案"})
+    else:
+        ok, out = run(lint_cmd.split() + changed, root)
+        gates.append({"id": "G3", "what": "lint(變更的檔案)", "ok": ok,
+                      "note": f"{len(changed)} 個檔案" if ok else out.strip().splitlines()[-1][:60]})
+
+    # G4 測試 —— 沒設定指令就是失敗。證據表不能宣稱「綠」而沒有人跑過。
+    test_cmd = config.get("test")
+    if not test_cmd:
+        gates.append({"id": "G4", "what": "測試實作後是綠的", "ok": False,
+                      "note": "specs/pipeline.yaml 沒設 test"})
+        attention.append({
+            "tag": "無法驗證", "title": "沒有人確認測試現在是綠的",
+            "body": "RED 證據只證明測試在實作前是紅的,不證明實作後是綠的。"
+                    "沒設 test 指令的話,GREEN 仍然只是「AI 說 OK」—— 那正是這條線要消滅的東西。",
+        })
+    else:
+        ok, out = run(test_cmd.split(), root)
+        gates.append({"id": "G4", "what": "測試實作後是綠的", "ok": ok,
+                      "note": "全綠" if ok else out.strip().splitlines()[-1][:60]})
+
+    red = read_json(ev / "red.json")
+    if red:
+        counts = red.get("counts", {})
+        blocking = {k: v for k, v in counts.items() if k in {"error", "compile", "hang", "passed"}}
+        recon_ok = all(r.get("reconciled") for r in red.get("reconciliation", []))
+        gates.append({"id": "G5", "what": "每條測試都曾真的紅過", "ok": not blocking and recon_ok,
+                      "note": " · ".join(f"{k} {v}" for k, v in counts.items())})
+        exempted = [t for t in red.get("tests", []) if t.get("failure_class") == "exempt"]
+        if exempted:
+            reasons = red.get("exemptions", {})
+            attention.append({
+                "tag": "書面豁免", "title": f"{len(exempted)} 條測試靠豁免通過 G5",
+                "body": "這些測試在實作前就是綠的,靠規格裡寫的理由放行:"
+                        + "；".join(f"{k} —— {v}" for k, v in list(reasons.items())[:3])
+                        + "。豁免只在該測試完全沒建構 repository stub 時成立,請確認理由站得住。",
+            })
+    else:
+        gates.append({"id": "G5", "what": "每條測試都曾真的紅過", "ok": False, "note": "缺 red.json"})
+
+    if not config["reachability"]["globs"]:
+        reach, unreachable = [], []
+        gates.append({"id": "G7", "what": "新增的東西到得了", "ok": False,
+                      "note": "specs/pipeline.yaml 沒設 reachability.globs"})
+    elif not base_ok:
+        reach, unreachable = [], []
+        gates.append({"id": "G7", "what": "新增的東西到得了", "ok": False, "note": f"找不到整合分支 {base}"})
+    else:
+        reach = check_reachability(root, base, config)
+        unreachable = [r for r in reach if not r["sites"]]
+        gates.append({"id": "G7", "what": "新增的東西到得了", "ok": not unreachable,
+                      "note": f"{len(reach)} 個新型別 · {len(unreachable)} 個沒有建構點"})
+    for item in unreachable:
+        attention.append({
+            "tag": "到不了", "title": f"{item['symbol']} 沒有任何建構點",
+            "body": f"{item['file']} 定義了它,但整個 repo 沒有別的地方呼叫 {item['symbol']}(。"
+                    "合併之後使用者體感會是零 —— 這類問題寫不出失敗測試,所以只有這道關擋得住。",
+        })
+
+    # smoke —— 功能不對其他免談。證據要新鮮:工作樹指紋對不上就是過期。
+    smoke = read_json(ev / "smoke.json")
+    scripts_green = all(g["ok"] for g in gates)
+    if not smoke:
+        smoke_ok = False
+        gates.append({"id": "S", "what": "smoke:真的入口跑一次", "ok": False, "note": "缺 smoke.json"})
+    elif smoke.get("tree") != tree_fingerprint(root):
+        smoke_ok = False
+        gates.append({"id": "S", "what": "smoke:真的入口跑一次", "ok": False, "note": "證據過期(工作樹變了)"})
+    else:
+        smoke_ok = bool(smoke.get("ok"))
+        gates.append({"id": "S", "what": "smoke:真的入口跑一次", "ok": smoke_ok,
+                      "note": f"{smoke.get('duration_s')}s · 截圖 {len(smoke.get('screenshots') or [])} 張"
+                              if smoke_ok else ("超時" if smoke.get("timed_out") else f"exit {smoke.get('exit_code')}")})
+
+    # G9/G10 —— 付費審查。smoke 或腳本沒過就不該派;派了也只看 findings 有沒有處理完。
+    findings = read_json(ev / "findings.json") or {}
+    loop = read_json(ev / "loop.json") or {}
+    items = findings.get("items") or []
+    pending, asking = triage_findings(items)
+    halted = {fid: it for fid, it in (loop.get("findings") or {}).items()
+              if it.get("status") in ("parked", "flipflop")}
+    # 「派過了」要有紀錄:零 finding 的乾淨審查和「根本沒派」在證據上必須分得出來
+    dispatched = findings.get("dispatched") or {}
+    reviewed = "G9" in dispatched and "G10" in dispatched
+    if not (scripts_green and smoke_ok):
+        gates.append({"id": "G9/10", "what": "獨立讀者 + 對抗審查", "ok": False,
+                      "note": "未跑 —— 腳本或 smoke 沒過,不花這個錢"})
+    elif not reviewed:
+        gates.append({"id": "G9/10", "what": "獨立讀者 + 對抗審查", "ok": False,
+                      "note": "沒有派過的紀錄(findings dispatched --gate G9/G10)"})
+    else:
+        s = findings.get("summary") or {}
+        gates.append({"id": "G9/10", "what": "獨立讀者 + 對抗審查", "ok": not pending and not halted,
+                      "note": f"提出 {s.get('proposed', 0)} → 作廢 {s.get('void', 0)} → 證實 {s.get('confirmed', 0)}"
+                              + (f" · {len(pending)} 條沒處理完" if pending else "")})
+    for fid, it in halted.items():
+        attention.append({
+            "tag": "需要你決定", "title": f"{fid} {'修 2 次未果' if it['status'] == 'parked' else '解過又出現'}",
+            "body": "這是決策,不是 code review:照樣出貨 / 分支停在這 / 回頭改規格。",
+        })
+    for i in asking:
+        attention.append({
+            "tag": "需要你決定", "title": f"{i['id']}:{i.get('title')}",
+            "body": f"{i.get('question')} 重現:{i.get('repro')}。要防 → 加一組 example;不用 → 記成已接受風險。",
+        })
+
+    manual = [sc.get("id") for req in (spec.get("requirements") or []) if isinstance(req, dict)
+              for sc in (req.get("scenarios") or []) if isinstance(sc, dict) and sc.get("mode") == "6d"]
+    if manual:
+        attention.append({"tag": "要人工驗", "title": f"{len(manual)} 條只能人工驗證",
+                          "body": "、".join(manual) + " —— 這些沒有自動化證據,你得自己跑一次。"})
+
+    # 畫面證據只認這一輪 smoke 記下的截圖;目錄裡的舊圖不算(smoke 開跑會清,但這裡不信目錄)
+    shots = sorted(smoke.get("screenshots") or []) if smoke and smoke_ok else []
+    if not shots:
+        attention.append({"tag": "無畫面證據", "title": "沒有任何截圖",
+                          "body": "如果這次有畫面變更,單元測試驗不到它的呈現。"})
+
+    stat = git(root, "diff", "--cached", "--shortstat").strip() or git(root, "diff", "--shortstat", f"{base}...HEAD").strip()
+    context_name = (spec.get("meta") or {}).get("name", spec_path.parent.name)
+    context = {
+        "name": context_name,
+        "branch": git(root, "rev-parse", "--abbrev-ref", "HEAD").strip(),
+        "scale": stat or "—",
+        "gates": gates, "attention": attention, "screenshots": shots,
+    }
+    # 命中率紀錄:哪道關擋過東西、擋了幾次,才有數據決定哪道關值得留。
+    # append-only,跨功能累積。舊版有 disposition 標記做同一件事,重寫時被誤刪,這裡補回。
+    yield_line = {
+        "at": datetime.datetime.now().astimezone().isoformat(timespec="seconds"),
+        "name": context_name,
+        "gates": {g["id"]: g["ok"] for g in gates},
+        "attention": [a["tag"] for a in attention],
+        "review": findings.get("summary") or {},
+    }
+    with (root / "specs" / "_yield.jsonl").open("a") as fh:
+        fh.write(json.dumps(yield_line, ensure_ascii=False) + "\n")
+
+    out_path = pathlib.Path(argv[argv.index("-o") + 1]) if "-o" in argv else ev / "dashboard.html"
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path.write_text(render(context))
+
+    # 全綠、零待決事項才自動推;不然 PR 上必須有「需要你決定」。
+    all_green = all(g["ok"] for g in gates)
+    for a in attention:
+        a["decision"] = a["tag"] in DECISION_TAGS
+    decisions = [a for a in attention if a["decision"]]
+    context["auto_push_ok"] = all_green and not decisions and bool(config.get("auto_push", True))
+    write_json(ev / "dashboard.json", context)
+
+    for g in gates:
+        print(f"  {'✓' if g['ok'] else '✘'} {g['id']:<6} {g['what']:<22} {g['note']}")
+    print(f"  → {out_path}")
+    if context["auto_push_ok"]:
+        verdict = "可以"
+    elif not all_green:
+        verdict = "不行(有關卡沒過)"
+    elif decisions:
+        verdict = "不行(有待決事項)"
+    else:
+        verdict = "不行(auto_push: false)"
+    print(f"  自動推:{verdict}")
+    for a in decisions:
+        print(f"  ⏸ {a['title']}")
+    return 0 if all_green else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))
