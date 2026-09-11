@@ -1010,6 +1010,36 @@ def test_smoke(tmp: pathlib.Path) -> None:
     check("6c 上一輪 artifact 會先清掉,不能拿舊證據過關",
           code == 1 and "不存在、不是檔案或內容為空" in out, out[:300])
 
+    stale_shot_result = {"scenarios": [{
+        "id": "SC-002", "ok": True, "examples": [1],
+        "evidence": [{"kind": "screenshot", "path": "screenshots/old.jpg"}],
+    }]}
+    root = repo_6c("smoke-6c-stale-screenshot", stale_shot_result, artifact=None)
+    stale = root / "specs/demo/evidence/screenshots"
+    stale.mkdir(parents=True)
+    (stale / "old.jpg").write_text("old screenshot")
+    code, out = run_gate("smoke", spec, cwd=root)
+    check("6c screenshots 目錄會整輪重建,舊副檔名也不能當本輪證據",
+          code == 1 and "不存在、不是檔案或內容為空" in out, out[:300])
+
+    traversal_result = {"scenarios": [{
+        "id": "SC-002", "ok": True, "examples": [1],
+        "evidence": [{"kind": "runner_log", "path": "screenshots/../smoke-results.json"}],
+    }]}
+    root = repo_6c("smoke-6c-path-traversal", traversal_result, artifact=None)
+    code, out = run_gate("smoke", spec, cwd=root)
+    check("6c evidence 路徑解析後不可逃出指定 screenshots/smoke-artifacts 子目錄",
+          code == 1 and "不存在、不是檔案或內容為空" in out, out[:300])
+
+    dot_path_result = {"scenarios": [{
+        "id": "SC-002", "ok": True, "examples": [1],
+        "evidence": [{"kind": "runner_log", "path": "."}],
+    }]}
+    root = repo_6c("smoke-6c-dot-path", dot_path_result, artifact=None)
+    code, out = run_gate("smoke", spec, cwd=root)
+    check("6c 空語意路徑要正常 fail closed,不可 traceback",
+          code == 1 and "必須在本輪" in out and "Traceback" not in out, out[:300])
+
     root = repo_6c("smoke-6c-valid", valid_result)
     code, out = run_gate("smoke", spec, cwd=root)
     smoke = json.loads((root / "specs/demo/evidence/smoke.json").read_text())

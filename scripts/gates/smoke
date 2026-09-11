@@ -69,7 +69,6 @@ def validate_scenario_results(spec: dict, ev: pathlib.Path, results_path: pathli
     errors: list[str] = []
     normalized: list[dict] = []
     seen: set[str] = set()
-    ev_root = ev.resolve()
     for index, item in enumerate(items, 1):
         where = f"smoke result #{index}"
         if not isinstance(item, dict):
@@ -113,14 +112,15 @@ def validate_scenario_results(spec: dict, ev: pathlib.Path, results_path: pathli
                 errors.append(f"{sid} evidence path 必須是 evidence/ 底下的相對路徑")
                 continue
             rel_path = pathlib.Path(rel)
-            if rel_path.parts[0] not in {"screenshots", "smoke-artifacts"}:
+            if not rel_path.parts or rel_path.parts[0] not in {"screenshots", "smoke-artifacts"}:
                 errors.append(f"{sid} evidence {rel!r} 必須在本輪 screenshots/ 或 smoke-artifacts/ 內")
                 continue
             if rel_path.suffix.lower() == ".md" or "checklist" in rel_path.name.lower():
                 errors.append(f"{sid} evidence {rel!r} 是 checklist/Markdown,不能當成實跑通過證據")
                 continue
+            allowed_root = (ev / rel_path.parts[0]).resolve()
             path = (ev / rel_path).resolve()
-            if not path.is_relative_to(ev_root) or not path.is_file() or path.stat().st_size == 0:
+            if not path.is_relative_to(allowed_root) or not path.is_file() or path.stat().st_size == 0:
                 errors.append(f"{sid} evidence {rel!r} 不存在、不是檔案或內容為空")
                 continue
             normalized_evidence.append({"kind": kind, "path": rel})
@@ -152,17 +152,17 @@ def main(argv: list[str]) -> int:
         return 1
 
     shots_dir = ev / "screenshots"
-    shots_dir.mkdir(parents=True, exist_ok=True)
-    # 上一輪的截圖不是這一輪的證據。舊圖在 git 歷史裡,這裡直接清。
-    for old in shots_dir.glob("*.png"):
-        old.unlink()
+    # 上一輪的任何畫面檔都不是這一輪的證據；整個目錄重建，不能只刪根目錄 PNG，
+    # 否則巢狀檔案或其他副檔名仍可被 smoke-results.json 引用。
+    if shots_dir.exists():
+        shutil.rmtree(shots_dir)
+    shots_dir.mkdir(parents=True)
     artifacts_dir = ev / "smoke-artifacts"
     if artifacts_dir.exists():
         shutil.rmtree(artifacts_dir)
     artifacts_dir.mkdir(parents=True)
     results_path = ev / "smoke-results.json"
     results_path.unlink(missing_ok=True)
-    before: set[str] = set()
     env = {
         **os.environ,
         "SMOKE_SCREENSHOTS": str(shots_dir),
@@ -197,7 +197,7 @@ def main(argv: list[str]) -> int:
     duration = round(time.monotonic() - started, 1)
 
     (ev / "smoke.log").write_text(output)
-    new_shots = sorted({p.name for p in shots_dir.glob("*.png")} - before)
+    new_shots = sorted(p.name for p in shots_dir.glob("*.png"))
     scenario_results, evidence_errors = validate_scenario_results(spec, ev, results_path)
     ok = code == 0 and not timed_out and not evidence_errors
     write_json(ev / "smoke.json", {
