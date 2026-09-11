@@ -25,6 +25,16 @@ GATES = HERE.parent
 
 # (腳本, 說明, 找, 換)
 MUTATIONS: list[tuple[str, str, str, str]] = [
+    # ---- verification mode / stage contract ----
+    ("_common.py", "6c 又被錯當成 S7 RED 測試",
+     'RED_MODES = {"6a", "6b"}',
+     'RED_MODES = {"6a", "6b", "6c"}'),
+    ("_common.py", "6b 被當成 6c 一起免除 RED",
+     'RED_MODES = {"6a", "6b"}',
+     'RED_MODES = {"6a"}'),
+    ("_common.py", "未知 mode 被靜默排除在所有階段之外",
+     '    return [\n        (str(sc.get("id") or "(無 id)"), sc.get("mode"))\n        for _, sc in scenarios(spec)\n        if not isinstance(sc.get("mode"), str) or sc.get("mode") not in MODES\n    ]',
+     '    return []'),
     # ---- red-capture ----
     ("red-capture", "error/compile/hang 不再擋",
      'BLOCKING = {"error", "compile", "hang", "passed"}',
@@ -252,6 +262,15 @@ MUTATIONS: list[tuple[str, str, str, str]] = [
     ("smoke", "退出碼永遠 0",
      '    return 0 if ok else 1\n\n\nif __name__',
      '    return 0\n\n\nif __name__'),
+    ("smoke", "6c 缺/錯/未執行證據不影響 smoke 通過",
+     '    ok = code == 0 and not timed_out and not evidence_errors',
+     '    ok = code == 0 and not timed_out'),
+    ("smoke", "6c 上一輪 artifact 不清,可拿舊證據過關",
+     '    if artifacts_dir.exists():\n        shutil.rmtree(artifacts_dir)',
+     '    if False:\n        shutil.rmtree(artifacts_dir)'),
+    ("smoke", "checklist Markdown 可以冒充 6c 實跑證據",
+     '            if rel_path.suffix.lower() == ".md" or "checklist" in rel_path.name.lower():',
+     '            if False:'),
     # ---- dashboard(S7 以後)----
     ("dashboard", "smoke 證據過期也算數",
      '    elif smoke.get("tree") != tree_fingerprint(root):',

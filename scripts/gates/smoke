@@ -10,6 +10,14 @@ UI 專案是開 app 導航到目標畫面截圖;API 是打一次端點;CLI 是�
 指令拿得到兩個環境變數:
   SMOKE_SCREENSHOTS  截圖要放的目錄(evidence/screenshots),放進去就會上證據表
   SMOKE_SPEC         規格路徑
+  SMOKE_RESULTS      6c 逐 Scenario/example 的結果 JSON 路徑
+  SMOKE_ARTIFACTS    6c 的 request capture/build log/錄影等實際證據目錄
+
+規格含 6c 時,指令成功還不夠。SMOKE_RESULTS 必須寫成:
+  {"scenarios": [{"id": "SC-001", "ok": true, "examples": [1],
+                    "evidence": [{"kind": "screenshot", "path": "screenshots/sc-001.png"}]}]}
+每條 6c 的每組 example 都要涵蓋,且 evidence 必須指向本輪新產生的非空檔案。
+checklist 或純文字宣稱不算通過證據。
 
 用法: smoke <spec.yaml>
 退出碼: 0 通過 / 1 失敗或超時
@@ -21,14 +29,107 @@ import datetime
 import os
 import pathlib
 import signal
+import shutil
 import subprocess
 import sys
 import time
 
 sys.path.insert(0, str(pathlib.Path(__file__).parent))
 import _config  # noqa: E402
-from _common import evidence_dir, write_json  # noqa: E402
+from _common import (  # noqa: E402
+    SMOKE_MODES, evidence_dir, invalid_scenario_modes, load_spec, scenarios,
+    scenario_ids_for_modes, write_json,
+)
 from _state import tree_fingerprint  # noqa: E402
+
+
+EVIDENCE_KINDS = {"artifact", "build_log", "request_capture", "recording", "runner_log", "screenshot"}
+
+
+def validate_scenario_results(spec: dict, ev: pathlib.Path, results_path: pathlib.Path) -> tuple[list[dict], list[str]]:
+    """驗 6c 的逐條實跑結果。只接受這一輪清空後重新產生的檔案證據。"""
+    expected = scenario_ids_for_modes(spec, SMOKE_MODES)
+    example_counts = {
+        sc.get("id"): len([e for e in (sc.get("examples") or []) if isinstance(e, dict)])
+        for _, sc in scenarios(spec) if sc.get("id") in expected
+    }
+    if not expected:
+        return [], []
+    if not results_path.exists():
+        return [], [f"缺 {results_path.name} —— 6c 不能只靠 smoke 指令退出碼或 checklist 通過"]
+    try:
+        import json
+        payload = json.loads(results_path.read_text())
+    except (OSError, ValueError) as exc:
+        return [], [f"{results_path.name} 不是可讀的 JSON: {exc}"]
+    items = payload.get("scenarios") if isinstance(payload, dict) else None
+    if not isinstance(items, list):
+        return [], [f"{results_path.name}.scenarios 必須是 list"]
+
+    errors: list[str] = []
+    normalized: list[dict] = []
+    seen: set[str] = set()
+    ev_root = ev.resolve()
+    for index, item in enumerate(items, 1):
+        where = f"smoke result #{index}"
+        if not isinstance(item, dict):
+            errors.append(f"{where} 必須是 mapping")
+            continue
+        sid = item.get("id")
+        if sid not in expected:
+            errors.append(f"{where} 的 id {sid!r} 不是本規格的 6c Scenario")
+            continue
+        if sid in seen:
+            errors.append(f"{sid} 重複出現在 smoke results")
+            continue
+        seen.add(sid)
+        if item.get("ok") is not True:
+            errors.append(f"{sid} 沒有實際通過(ok 必須是 true)")
+
+        covered = item.get("examples")
+        wanted = set(range(1, example_counts.get(sid, 0) + 1))
+        if not isinstance(covered, list) or any(not isinstance(n, int) or isinstance(n, bool) for n in covered):
+            errors.append(f"{sid}.examples 必須列出實際驗過的 1-based example 編號")
+            covered_set: set[int] = set()
+        else:
+            covered_set = set(covered)
+            if covered_set != wanted:
+                errors.append(f"{sid}.examples 應完整等於 {sorted(wanted)},得到 {sorted(covered_set)}")
+
+        evidence = item.get("evidence")
+        normalized_evidence = []
+        if not isinstance(evidence, list) or not evidence:
+            errors.append(f"{sid}.evidence 不可為空 —— checklist/口頭宣稱不算實跑證據")
+            evidence = []
+        for ev_item in evidence:
+            if not isinstance(ev_item, dict):
+                errors.append(f"{sid}.evidence 每項必須含 kind 與 path")
+                continue
+            kind, rel = ev_item.get("kind"), ev_item.get("path")
+            if kind not in EVIDENCE_KINDS:
+                errors.append(f"{sid} evidence kind {kind!r} 不合法；checklist 不算通過證據")
+                continue
+            if not isinstance(rel, str) or not rel.strip() or pathlib.Path(rel).is_absolute():
+                errors.append(f"{sid} evidence path 必須是 evidence/ 底下的相對路徑")
+                continue
+            rel_path = pathlib.Path(rel)
+            if rel_path.parts[0] not in {"screenshots", "smoke-artifacts"}:
+                errors.append(f"{sid} evidence {rel!r} 必須在本輪 screenshots/ 或 smoke-artifacts/ 內")
+                continue
+            if rel_path.suffix.lower() == ".md" or "checklist" in rel_path.name.lower():
+                errors.append(f"{sid} evidence {rel!r} 是 checklist/Markdown,不能當成實跑通過證據")
+                continue
+            path = (ev / rel_path).resolve()
+            if not path.is_relative_to(ev_root) or not path.is_file() or path.stat().st_size == 0:
+                errors.append(f"{sid} evidence {rel!r} 不存在、不是檔案或內容為空")
+                continue
+            normalized_evidence.append({"kind": kind, "path": rel})
+        normalized.append({"id": sid, "ok": item.get("ok") is True,
+                           "examples": sorted(covered_set), "evidence": normalized_evidence})
+
+    for sid in sorted(expected - seen):
+        errors.append(f"{sid} 缺逐 Scenario 的 6c 實跑結果")
+    return normalized, errors
 
 
 def main(argv: list[str]) -> int:
@@ -38,6 +139,12 @@ def main(argv: list[str]) -> int:
     spec_path = pathlib.Path(argv[0]).resolve()
     root = spec_path.parents[2]
     ev = evidence_dir(spec_path)
+    spec = load_spec(spec_path)
+    invalid = invalid_scenario_modes(spec)
+    if invalid:
+        for sid, mode in invalid:
+            print(f"✘ {sid} 未知或缺少 mode {mode!r} —— 不能靜默略過 smoke 證據")
+        return 1
     config = _config.load(root)
     cmd = config.get("smoke")
     if not cmd:
@@ -49,8 +156,20 @@ def main(argv: list[str]) -> int:
     # 上一輪的截圖不是這一輪的證據。舊圖在 git 歷史裡,這裡直接清。
     for old in shots_dir.glob("*.png"):
         old.unlink()
+    artifacts_dir = ev / "smoke-artifacts"
+    if artifacts_dir.exists():
+        shutil.rmtree(artifacts_dir)
+    artifacts_dir.mkdir(parents=True)
+    results_path = ev / "smoke-results.json"
+    results_path.unlink(missing_ok=True)
     before: set[str] = set()
-    env = {**os.environ, "SMOKE_SCREENSHOTS": str(shots_dir), "SMOKE_SPEC": str(spec_path)}
+    env = {
+        **os.environ,
+        "SMOKE_SCREENSHOTS": str(shots_dir),
+        "SMOKE_SPEC": str(spec_path),
+        "SMOKE_RESULTS": str(results_path),
+        "SMOKE_ARTIFACTS": str(artifacts_dir),
+    }
     timeout = int(config.get("smoke_timeout") or 600)
 
     started = time.monotonic()
@@ -79,7 +198,8 @@ def main(argv: list[str]) -> int:
 
     (ev / "smoke.log").write_text(output)
     new_shots = sorted({p.name for p in shots_dir.glob("*.png")} - before)
-    ok = code == 0 and not timed_out
+    scenario_results, evidence_errors = validate_scenario_results(spec, ev, results_path)
+    ok = code == 0 and not timed_out and not evidence_errors
     write_json(ev / "smoke.json", {
         "ok": ok,
         "exit_code": code,
@@ -87,10 +207,15 @@ def main(argv: list[str]) -> int:
         "command": cmd,
         "duration_s": duration,
         "screenshots": new_shots,
+        "required_scenarios": sorted(scenario_ids_for_modes(spec, SMOKE_MODES)),
+        "scenario_results": scenario_results,
+        "evidence_errors": evidence_errors,
         "at": datetime.datetime.now().astimezone().isoformat(timespec="seconds"),
         "tree": tree_fingerprint(root),
     })
     tail = output.strip().splitlines()[-1][:80] if output.strip() else ""
+    for error in evidence_errors:
+        print(f"  ✘ {error}")
     print(f"  {'✓' if ok else '✘'} smoke  {duration}s · 截圖 {len(new_shots)} 張" + (f" · {tail}" if not ok else ""))
     print(f"smoke: {'PASS' if ok else 'FAIL'}")
     return 0 if ok else 1

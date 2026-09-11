@@ -29,7 +29,10 @@ import sys
 
 sys.path.insert(0, str(pathlib.Path(__file__).parent))
 import _config  # noqa: E402
-from _common import Findings, evidence_dir, load_spec, read_json, scenarios, sha256, write_json  # noqa: E402
+from _common import (  # noqa: E402
+    RED_MODES, SMOKE_MODES, Findings, evidence_dir, invalid_scenario_modes, load_spec,
+    read_json, scenario_ids_for_modes, scenarios, sha256, write_json,
+)
 from _state import tree_fingerprint  # noqa: E402
 
 SKIP_TOKENS = {"true", "false", "null", "none", "nil", "yes", "no"}
@@ -75,6 +78,43 @@ def anchors_of(example: dict) -> list[tuple[str, re.Pattern]]:
     return out
 
 
+def boolean_signatures_of(example: dict) -> list[tuple[str, re.Pattern, re.Pattern]]:
+    """布林/null 沒有可單獨搜尋的值，改用「輸出欄位名 + 字面值」辨識。
+
+    只找 true/false 會讓任何布林斷言都能冒充契約；只找欄位名則可能只是取值。
+    兩者同時出現在測試 body，才把它視為 anchorless example 的機械證據。
+    """
+    out = []
+
+    def walk(value, key: str | None = None) -> None:
+        if isinstance(value, dict):
+            for child_key, child_value in value.items():
+                walk(child_value, str(child_key))
+            return
+        if isinstance(value, list):
+            for child in value:
+                walk(child, key)
+            return
+        if key is None or (not isinstance(value, bool) and value is not None):
+            return
+        forms = {key, camel(key)} if "_" in key else {key}
+        key_rx = re.compile("|".join(re.escape(form) for form in forms), re.I)
+        literals = ("nil", "null", "none") if value is None else (("true",) if value else ("false",))
+        value_rx = re.compile(r"\b(?:" + "|".join(literals) + r")\b", re.I)
+        out.append((key, key_rx, value_rx))
+
+    walk(example.get("out"))
+    return out
+
+
+def matches_example(body: str, anchors: list[tuple[str, re.Pattern]],
+                    boolean_signatures: list[tuple[str, re.Pattern, re.Pattern]]) -> bool:
+    if anchors:
+        return any(rx.search(body) for _, rx in anchors)
+    return any(key_rx.search(body) and value_rx.search(body)
+               for _, key_rx, value_rx in boolean_signatures)
+
+
 def collect_tests(root: pathlib.Path, config: dict) -> list[dict]:
     """[{file, sc, name, body}] —— body 是這條測試到下一條測試之間的文字。"""
     pattern = re.compile(config["tests"]["scenario_pattern"])
@@ -115,6 +155,9 @@ def main(argv: list[str]) -> int:
     config = _config.load(root)
     f = Findings()
 
+    for sid, mode in invalid_scenario_modes(spec):
+        f.error(sid, f"未知或缺少 mode {mode!r} —— 不能靜默略過測試審查")
+
     assert_re = re.compile(config["assert_pattern"])
     tests = collect_tests(root, config)
     by_sc: dict[str, list[dict]] = {}
@@ -123,28 +166,35 @@ def main(argv: list[str]) -> int:
 
     for _, sc in scenarios(spec):
         sid = sc.get("id")
-        if sc.get("mode") == "6d":
+        if sc.get("mode") not in RED_MODES:
             continue
         examples = [e for e in (sc.get("examples") or []) if isinstance(e, dict)]
         example_anchors = [anchors_of(e) for e in examples]
-        for i, anchors in enumerate(example_anchors, 1):
-            if not anchors:
-                f.warn(f"{sid} example #{i}", "out 只有布林/null,機械上驗不了值有沒有被斷言 —— 交給語意審查")
+        example_boolean_signatures = [boolean_signatures_of(e) for e in examples]
+        for i, (anchors, signatures) in enumerate(zip(example_anchors, example_boolean_signatures), 1):
+            if not anchors and not signatures:
+                f.warn(f"{sid} example #{i}", "out 沒有可辨識的具體值或布林欄位 —— 交給語意審查")
 
         for t in by_sc.get(sid, []):
             where = f"{t['file']} · {t['name']}"
             if not assert_re.search(t["body"]):
                 f.error(where, "沒有任何斷言 —— 空測試")
-            if any(anchors for anchors in example_anchors) and not any(
-                rx.search(t["body"]) for anchors in example_anchors for _, rx in anchors
-            ):
+            if any(example_anchors) or any(example_boolean_signatures):
+                matched = any(
+                    matches_example(t["body"], anchors, signatures)
+                    for anchors, signatures in zip(example_anchors, example_boolean_signatures)
+                )
+            else:
+                matched = True
+            if not matched:
                 wanted = sorted({a for anchors in example_anchors for a, _ in anchors})[:5]
-                f.error(where, f"沒有引用 {sid} 任何一組 example 的具體值(例如 {', '.join(wanted)})")
+                wanted += sorted({key for signatures in example_boolean_signatures for key, _, _ in signatures})[:5]
+                f.error(where, f"沒有引用 {sid} 任何一組 example 的具體輸出(例如 {', '.join(wanted)})")
 
-        for i, anchors in enumerate(example_anchors, 1):
-            if not anchors:
+        for i, (anchors, signatures) in enumerate(zip(example_anchors, example_boolean_signatures), 1):
+            if not anchors and not signatures:
                 continue
-            if not any(rx.search(t["body"]) for t in by_sc.get(sid, []) for _, rx in anchors):
+            if not any(matches_example(t["body"], anchors, signatures) for t in by_sc.get(sid, [])):
                 f.error(f"{sid} example #{i}", "沒有任何測試引用這組 example 的值 —— 批准的例子沒人測")
 
     agent = None
@@ -163,12 +213,17 @@ def main(argv: list[str]) -> int:
                 (f.error if item.get("blocking") else f.warn)(spot, str(item["problem"]))
 
     files = sorted({t["file"] for t in tests})
+    deferred_smoke = sorted(scenario_ids_for_modes(spec, SMOKE_MODES))
+    if deferred_smoke:
+        f.warn("延後驗證", f"{', '.join(deferred_smoke)} 是 6c,由 S9b smoke 審查實跑證據,不以 @Test 冒充")
     code = f.report("test-review")
     write_json(ev / "test-review.json", {
         "ok": code == 0,
         "mechanical_only": "--mechanical-only" in argv,
         "at": datetime.datetime.now().astimezone().isoformat(timespec="seconds"),
         "tests": len(tests),
+        "reviewed_modes": sorted(RED_MODES),
+        "deferred_smoke": deferred_smoke,
         "files": {rel: sha256(root / rel) for rel in files},
         "tree": tree_fingerprint(root),
         "errors": [f"{w}: {m}" for w, m in f.errors],

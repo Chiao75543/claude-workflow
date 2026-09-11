@@ -18,7 +18,10 @@ import sys
 
 sys.path.insert(0, str(pathlib.Path(__file__).parent))
 import _config  # noqa: E402
-from _common import Findings, load_spec, scenario_ids  # noqa: E402
+from _common import (  # noqa: E402
+    MANUAL_MODES, RED_MODES, SMOKE_MODES, Findings, invalid_scenario_modes, load_spec,
+    scenario_ids, scenario_ids_for_modes,
+)
 
 
 def collect_test_ids(root: pathlib.Path, config: dict) -> dict[str, set[str]]:
@@ -51,15 +54,12 @@ def main(argv: list[str]) -> int:
     f = Findings()
 
     declared = scenario_ids(spec)
-    # 只能人工驗的不要求自動化測試,但必須有 manual_reason(spec-lint 已擋)
-    manual = {
-        sc.get("id")
-        for req in (spec.get("requirements") or [])
-        if isinstance(req, dict)
-        for sc in (req.get("scenarios") or [])
-        if isinstance(sc, dict) and sc.get("mode") == "6d"
-    }
-    expected = declared - manual
+    for sid, mode in invalid_scenario_modes(spec):
+        f.error(sid, f"未知或缺少 mode {mode!r} —— 不能靜默略過追溯要求")
+
+    expected = scenario_ids_for_modes(spec, RED_MODES)
+    deferred_smoke = scenario_ids_for_modes(spec, SMOKE_MODES)
+    manual = scenario_ids_for_modes(spec, MANUAL_MODES)
     in_tests = collect_test_ids(root, config)
 
     for sid in sorted(expected - set(in_tests)):
@@ -68,9 +68,11 @@ def main(argv: list[str]) -> int:
         f.error(sid, f"測試引用了規格裡不存在的 Scenario ({', '.join(sorted(in_tests[sid]))})")
     for sid in sorted(manual & set(in_tests)):
         f.warn(sid, "標記為只能人工驗(6d),卻有自動化測試引用 —— mode 可能該降級")
+    for sid in sorted(deferred_smoke & set(in_tests)):
+        f.warn(sid, "標記為 build/smoke 驗證(6c),另有自動化測試引用；S9b 仍須實跑,不能拿這條測試取代")
 
-    print(f"  規格 {len(declared)} 條 Scenario(其中 {len(manual)} 條只能人工驗)"
-          f" · 測試涵蓋 {len(set(in_tests) & declared)} 條")
+    print(f"  規格 {len(declared)} 條 Scenario(RED {len(expected)} · smoke {len(deferred_smoke)}"
+          f" · 人工 {len(manual)}) · RED 測試涵蓋 {len(set(in_tests) & expected)} 條")
     return f.report("traceability")
 
 

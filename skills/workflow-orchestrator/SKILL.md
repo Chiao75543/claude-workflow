@@ -255,11 +255,22 @@ wt="$(git worktree list --porcelain \
 
 `scripts/gates/red-capture` 需要 `evidence/red-inputs.json` 列出各層的輸出檔與測試檔。
 
+`mode` 同時決定證據階段,不是只有 schema 標籤:
+
+| mode | S7 / S7½ | 後續 |
+|---|---|---|
+| `6a` 單元測試 | 必須有 true RED、逐 example 審查並凍結 | G4 必須 GREEN |
+| `6b` 靜態 assertion | 必須有 RED 與逐 example 追溯,不可跟 6c 一起略過 | G4 的專案 test 指令必須轉綠 |
+| `6c` build artifact／可驅動 smoke | 明確列為 deferred,不准寫假的 `@Test` 充數 | S9b 必須逐 Scenario/example 交實跑檔案證據 |
+| `6d` 只能人工 | 不進自動測試證據；`manual_reason` 必填 | 證據表列為人工待驗 |
+
+任何未知或缺少的 mode 都 fail closed；不能因為不在某階段集合裡就靜默免驗。
+
 ### S7½ 審測試,再凍結
 
 **凍結錯的測試比沒凍結更糟** —— 實作者只能一直「衝突就停」。所以上鎖前:
 
-1. `scripts/gates/test-review specs/{name}/spec.yaml --mechanical-only` —— 零斷言、
+1. `scripts/gates/test-review specs/{name}/spec.yaml --mechanical-only` —— 對 6a/6b 檢查零斷言、
    沒引用 example 具體值、example 沒人測,三種都擋
 2. **派遣 `test-reviewer`**(opus,只有 Read/Grep/Glob)—— 看機械抓不到的:斷在對不對的地方、
    一條測試一件事、case 名稱讀得出 given/when/then。它寫 `evidence/test-review.agent.json`
@@ -302,6 +313,12 @@ wt="$(git worktree list --porcelain \
 **S9b smoke**:`scripts/gates/smoke specs/{name}/spec.yaml`。用真的入口跑一次、拿到真的結果 ——
 UI 專案開 app 導航到目標畫面截圖(放進 `$SMOKE_SCREENSHOTS`)、API 打一次端點、CLI 跑一次指令。
 **沒過就停在這裡,G9/G10 不派** —— 功能不對,審它幹嘛。退回 S8。
+
+規格含 6c 時,整支 smoke 指令 exit 0 仍不夠。指令必須把逐 Scenario 結果寫到
+`$SMOKE_RESULTS`,每條列 `id`、`ok:true`、涵蓋的 1-based `examples`,以及本輪放在
+`$SMOKE_SCREENSHOTS`／`$SMOKE_ARTIFACTS` 的非空檔案證據(build log、request capture、
+runner log、錄影、截圖或產物)。缺 Scenario、缺 example、`ok:false`、舊檔、不存在／空檔、
+或只有 checklist 都讓 smoke FAIL。這是 6c 在 S7 被延後而不是被豁免的後半條防線。
 
 **S9c 付費審查 G9/G10**:派 `spec-oracle` 與 `code-adversary`(fable),**派完立刻
 `scripts/gates/findings dispatched --gate G9`(G10 同)** —— 零 finding 的乾淨審查也要留下派過的紀錄,
@@ -388,11 +405,12 @@ orchestrator 處理完重新留言。**orchestrator 一律不代按 merge。**
                        **沒設定 = 失敗,不是跳過** —— 「沒有人檢查」和「檢查通過」
                        是兩件完全不同的事。沒有這一關,RED 證據只證明實作前是紅的,
                        不證明實作後是綠的,GREEN 就還是「AI 說 OK」
-  G5  red-capture      六類 + 三方對帳。**豁免會浮上證據表**,不能只躺在 red.json 裡
-  G6  traceability     Scenario ↔ 測試雙向
+  G5  red-capture      6a/6b:六類 + 三方對帳。6c 明列 deferred,**不是豁免**
+  G6  traceability     6a/6b Scenario ↔ RED 測試雙向;6c 明列交 S9b
   G7  可達性           新增的型別有沒有人建構它
 ────────────────────────────────────────────
-  S   smoke            用真的入口跑一次、拿到真的結果。證據要新鮮(工作樹指紋對得上)。
+  S   smoke            用真的入口跑一次；6c 逐 Scenario/example 對到本輪實際檔案。
+                       證據要新鮮(工作樹指紋對得上)。
                        **沒過,下面全部不跑**
 ────────────────────────────────────────────
 付費判定

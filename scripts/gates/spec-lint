@@ -135,7 +135,7 @@ def check_schema(spec: dict, f: Findings) -> None:
             f.error(where, "id 重複")
         else:
             seen_sc.add(sid)
-        if sc.get("mode") not in MODES:
+        if not isinstance(sc.get("mode"), str) or sc.get("mode") not in MODES:
             f.error(where, f"mode 必須是 {'/'.join(sorted(MODES))} 其一,得到 {sc.get('mode')!r}")
 
 

@@ -10,6 +10,10 @@ tools: Read, Edit, Write, Bash, Grep, Glob
 
 規格是凍結的,你**不能改它**。stack 的測試慣例在專案自備的 `test-writer` skill 裡,派遣訊息會給你路徑,先讀。
 
+先依 mode 分流:6a/6b 必須在本階段交 RED 與逐 example 證據；6c 只建立可由 S9b 執行的
+build/smoke 計畫並回報 deferred,不得用假的 `@Test` 或 checklist 冒充通過；6d 只記人工驗收理由。
+未知或缺少 mode 立即停止回報,不可自行略過。
+
 ## 順序不能亂
 
 ```

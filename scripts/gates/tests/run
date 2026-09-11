@@ -83,6 +83,15 @@ tasks:
 ONE_SCENARIO = VALID_SPEC.replace("      error_path: [SC-002]", '      error_path: "N/A — 這個樣本只保留一條 Scenario"')
 ONE_SCENARIO = ONE_SCENARIO[:ONE_SCENARIO.index("      - id: SC-002")] + "tasks:\n  - {done: false, text: \"做事\"}\n"
 
+MIXED_6C_SPEC = VALID_SPEC.replace(
+    "      - id: SC-002\n        mode: 6a",
+    "      - id: SC-002\n        mode: 6c",
+)
+MIXED_6B_SPEC = VALID_SPEC.replace(
+    "      - id: SC-002\n        mode: 6a",
+    "      - id: SC-002\n        mode: 6b",
+)
+
 
 def make_repo(tmp: pathlib.Path, spec: str = VALID_SPEC) -> pathlib.Path:
     root = tmp / "repo"
@@ -197,6 +206,12 @@ def test_spec_lint(tmp: pathlib.Path) -> None:
     root = make_repo(tmp / "lint-mode", bad)
     code, out = run_gate("spec-lint", "specs/demo/spec.yaml", cwd=root)
     check("mode 值不合法 → 擋", code == 1 and "mode" in out, out[:160])
+
+    bad = VALID_SPEC.replace("        mode: 6a\n        given: {size: 0}", "        mode: [6a]\n        given: {size: 0}")
+    root = make_repo(tmp / "lint-mode-list", bad)
+    code, out = run_gate("spec-lint", "specs/demo/spec.yaml", cwd=root)
+    check("mode 不是字串 → 正常擋而非 traceback",
+          code == 1 and "mode 必須是" in out and "Traceback" not in out, out[:200])
 
     bad = VALID_SPEC.replace("      - id: SC-002", "      - id: SC-001")
     root = make_repo(tmp / "lint-dup", bad)
@@ -393,6 +408,29 @@ def test_red_capture(tmp: pathlib.Path) -> None:
     check("有 Scenario 沒有 RED 證據 → 擋(不是只 warn)",
           code == 1 and "沒有出現在任何一層的 RED 證據裡" in out, out[:250])
 
+    root = setup_red(tmp, "red-defer-6c", tmp / "one-red.txt", 1, MIXED_6C_SPEC)
+    code, out = run_gate("red-capture", "specs/demo/spec.yaml", cwd=root)
+    red = json.loads((root / "specs/demo/evidence/red.json").read_text())
+    check("6c 在 RED 階段明確延後到 S9b,不要求假的 @Test",
+          code == 0 and red.get("deferred_smoke") == ["SC-002"] and "S9b" in out, out[:300])
+
+    root = setup_red(tmp, "red-still-requires-6b", tmp / "one-red.txt", 1, MIXED_6B_SPEC)
+    code, out = run_gate("red-capture", "specs/demo/spec.yaml", cwd=root)
+    check("6b 仍必須交 RED 證據,不可跟著 6c 被略過",
+          code == 1 and "SC-002" in out and "沒有出現在" in out, out[:300])
+
+    invalid_spec = MIXED_6C_SPEC.replace("        mode: 6c", "        mode: 6z")
+    root = setup_red(tmp, "red-invalid-mode", tmp / "one-red.txt", 1, invalid_spec)
+    code, out = run_gate("red-capture", "specs/demo/spec.yaml", cwd=root)
+    check("red-capture 遇到未知 mode 直接擋,不會因不在 RED 集合而靜默免驗",
+          code == 1 and "未知或缺少 mode" in out, out[:300])
+
+    malformed_spec = MIXED_6C_SPEC.replace("        mode: 6c", "        mode: [6c]")
+    root = setup_red(tmp, "red-malformed-mode", tmp / "one-red.txt", 1, malformed_spec)
+    code, out = run_gate("red-capture", "specs/demo/spec.yaml", cwd=root)
+    check("red-capture 遇到非字串 mode 要正常報錯,不可 traceback 或靜默免驗",
+          code == 1 and "未知或缺少 mode" in out and "Traceback" not in out, out[:300])
+
     # W6:文件宣稱六類,red.json 就要讀得到六類。compile 與 hang 先前從不出現。
     root = setup_red(tmp, "red-compile-json", tmp / "compile.txt", 1, ONE_SCENARIO)
     run_gate("red-capture", "specs/demo/spec.yaml", cwd=root)
@@ -459,6 +497,22 @@ def test_traceability(tmp: pathlib.Path) -> None:
     root = build("trace-6d", '@Test("SC-001 a")\n', manual)
     code, out = run_gate("traceability", "specs/demo/spec.yaml", cwd=root)
     check("只能人工驗的 Scenario 不要求自動化測試 → 過", code == 0, out[:160])
+
+    root = build("trace-6c", '@Test("SC-001 a")\n', MIXED_6C_SPEC)
+    code, out = run_gate("traceability", "specs/demo/spec.yaml", cwd=root)
+    check("6c 在 G6 不要求 @Test,輸出明列留給 smoke",
+          code == 0 and "smoke 1" in out and "RED 測試涵蓋 1" in out, out[:220])
+
+    root = build("trace-6b", '@Test("SC-001 a")\n', MIXED_6B_SPEC)
+    code, out = run_gate("traceability", "specs/demo/spec.yaml", cwd=root)
+    check("6b 追溯要求未退化,缺 Scenario 對應仍擋",
+          code == 1 and "SC-002" in out, out[:220])
+
+    invalid = MIXED_6C_SPEC.replace("        mode: 6c", "        mode: 6z")
+    root = build("trace-invalid-mode", '@Test("SC-001 a")\n', invalid)
+    code, out = run_gate("traceability", "specs/demo/spec.yaml", cwd=root)
+    check("traceability 未知 mode → 擋,不可靜默略過",
+          code == 1 and "未知或缺少 mode" in out, out[:220])
 
 
 # ---------------------------------------------------------------- spec-diff
@@ -643,7 +697,6 @@ def test_reachability(tmp: pathlib.Path) -> None:
     check("沒有建構點的型別:標為到不了",
           "Lonely" in by_symbol and not by_symbol["Lonely"], str(by_symbol))
 
-
 def test_reachability_hardening(tmp: pathlib.Path) -> None:
     """對抗審查找到的三個洞:測試檔算建構點、只看第一個型別、認不得常見宣告。
     這三個合起來讓 G8 幾乎必然通過 —— 那道關就只是劇場。"""
@@ -691,8 +744,9 @@ def test_reachability_hardening(tmp: pathlib.Path) -> None:
 
 def test_test_review(tmp: pathlib.Path) -> None:
     """凍結錯的測試比沒凍結更糟。機械檢查:零斷言、沒引用 example 的值、example 沒人測。"""
-    def repo(name: str, test_src: str, agent: str | None = '{"findings": []}') -> pathlib.Path:
-        root = make_repo(tmp / name)
+    def repo(name: str, test_src: str, agent: str | None = '{"findings": []}',
+             spec: str = VALID_SPEC) -> pathlib.Path:
+        root = make_repo(tmp / name, spec)
         (root / "Tests").mkdir()
         (root / "Tests" / "DemoTests.swift").write_text(test_src)
         (root / "specs" / "pipeline.yaml").write_text('runner: swift-testing\ntests:\n  globs: ["Tests/**/*.swift"]\n')
@@ -719,6 +773,26 @@ def test_test_review(tmp: pathlib.Path) -> None:
     check("斷言沒引用 SC 任何 example 的具體值 → 擋", code == 1 and "沒有引用 SC-001" in out, out[:300])
     check("example 沒被任何測試引用也點名", "沒有任何測試引用這組 example" in out, out[:300])
 
+    mixed_spec = VALID_SPEC.replace(
+        """        examples:
+          - in: {size: 0}
+            out: {returns: empty_list}
+""",
+        """        examples:
+          - in: {action: select_warm}
+            out: {filter_intent: warm, network_calls: 0}
+          - in: {action: tap_add}
+            out: {add_form_open: true}
+""",
+    )
+    mixed = ('@Test("SC-001 filter") func a() { #expect(vm.filterIntent == .warm); #expect(vm.networkCalls == 0) }\n'
+             '@Test("SC-001 add") func b() { #expect(vm.addFormOpen == true) }\n'
+             '@Test("SC-002 offline") func c() { #expect(throws: NetworkError.self) { try process() } }\n')
+    root = repo("tr-mixed-bool", mixed)
+    (root / "specs/demo/spec.yaml").write_text(mixed_spec.lstrip())
+    code, out = run_gate("test-review", "specs/demo/spec.yaml", cwd=root)
+    check("同 Scenario 混合具體值與布林-only example → 各自以輸出欄位配對", code == 0, out[:500])
+
     root = repo("tr-noagent", good, agent=None)
     code, out = run_gate("test-review", "specs/demo/spec.yaml", cwd=root)
     check("語意審查沒跑(缺 agent json)→ 擋", code == 1 and "test-review.agent.json" in out, out[:300])
@@ -735,6 +809,24 @@ def test_test_review(tmp: pathlib.Path) -> None:
     root = repo("tr-agentvague", good, agent='{"findings": [{"problem": "感覺不太對", "blocking": true}]}')
     code, out = run_gate("test-review", "specs/demo/spec.yaml", cwd=root)
     check("沒指名測試的 finding 依證據規則作廢(只 warn)", code == 0 and "作廢" in out, out[:300])
+
+    only_6a = good.splitlines()[0] + "\n"
+    root = repo("tr-defer-6c", only_6a, spec=MIXED_6C_SPEC)
+    code, out = run_gate("test-review", "specs/demo/spec.yaml", cwd=root)
+    review = json.loads((root / "specs/demo/evidence/test-review.json").read_text())
+    check("test-review 對 6c 明確延後,不要求 @Test/example anchor",
+          code == 0 and review.get("deferred_smoke") == ["SC-002"] and "S9b" in out, out[:320])
+
+    root = repo("tr-still-requires-6b", only_6a, spec=MIXED_6B_SPEC)
+    code, out = run_gate("test-review", "specs/demo/spec.yaml", cwd=root)
+    check("test-review 仍審 6b example,不可跟著 6c 被略過",
+          code == 1 and "SC-002 example #1" in out, out[:320])
+
+    invalid = MIXED_6C_SPEC.replace("        mode: 6c", "        mode: 6z")
+    root = repo("tr-invalid-mode", only_6a, spec=invalid)
+    code, out = run_gate("test-review", "specs/demo/spec.yaml", cwd=root)
+    check("test-review 未知 mode → 擋,不可靜默略過",
+          code == 1 and "未知或缺少 mode" in out, out[:320])
 
 
 # ---------------------------------------------------------------- loop / findings / smoke / pr-comment
@@ -842,6 +934,95 @@ def test_smoke(tmp: pathlib.Path) -> None:
     code, out = run_gate("smoke", spec, cwd=root)
     smoke = json.loads((root / "specs/demo/evidence/smoke.json").read_text())
     check("超時 → FAIL 且 timed_out", code == 1 and smoke["timed_out"] is True, f"{code} {smoke}")
+
+    def repo_6c(name: str, payload: dict | None, artifact: str | None = "real smoke output",
+                artifact_name: str = "run.log") -> pathlib.Path:
+        case_root = make_repo(tmp / name, MIXED_6C_SPEC)
+        fixture = case_root / "smoke-fixture"
+        lines = [
+            "#!/usr/bin/env python3",
+            "import json, os, pathlib",
+        ]
+        if artifact is not None:
+            lines.append(f"pathlib.Path(os.environ['SMOKE_ARTIFACTS'], {artifact_name!r}).write_text({artifact!r})")
+        if payload is not None:
+            lines.append(f"pathlib.Path(os.environ['SMOKE_RESULTS']).write_text(json.dumps({payload!r}))")
+        fixture.write_text("\n".join(lines) + "\n")
+        fixture.chmod(0o755)
+        (case_root / "specs" / "pipeline.yaml").write_text(
+            'runner: swift-testing\nsmoke: "./smoke-fixture"\n')
+        return case_root
+
+    valid_result = {"scenarios": [{
+        "id": "SC-002", "ok": True, "examples": [1],
+        "evidence": [{"kind": "runner_log", "path": "smoke-artifacts/run.log"}],
+    }]}
+
+    root = repo_6c("smoke-6c-no-results", None)
+    code, out = run_gate("smoke", spec, cwd=root)
+    check("6c 指令 exit 0 但缺逐 Scenario results → 擋",
+          code == 1 and "不能只靠 smoke 指令退出碼" in out, out[:300])
+
+    root = repo_6c("smoke-6c-no-evidence", {"scenarios": [{
+        "id": "SC-002", "ok": True, "examples": [1], "evidence": [],
+    }]})
+    code, out = run_gate("smoke", spec, cwd=root)
+    check("6c result 沒有實際證據檔 → 擋",
+          code == 1 and "evidence 不可為空" in out, out[:300])
+
+    root = repo_6c("smoke-6c-checklist", {"scenarios": [{
+        "id": "SC-002", "ok": True, "examples": [1],
+        "evidence": [{"kind": "artifact", "path": "smoke-artifacts/s7-smoke-checklist.md"}],
+    }]}, artifact="- [x] 自稱跑過\n", artifact_name="s7-smoke-checklist.md")
+    code, out = run_gate("smoke", spec, cwd=root)
+    check("只有 checklist 即使打勾也不能當 6c 通過證據",
+          code == 1 and "checklist" in out, out[:300])
+
+    root = repo_6c("smoke-6c-missing-example", {"scenarios": [{
+        "id": "SC-002", "ok": True, "examples": [],
+        "evidence": [{"kind": "runner_log", "path": "smoke-artifacts/run.log"}],
+    }]})
+    code, out = run_gate("smoke", spec, cwd=root)
+    check("6c 沒覆蓋全部核准 examples → 擋",
+          code == 1 and "應完整等於 [1]" in out, out[:300])
+
+    root = repo_6c("smoke-6c-not-run", {"scenarios": [{
+        "id": "SC-002", "ok": False, "examples": [1],
+        "evidence": [{"kind": "runner_log", "path": "smoke-artifacts/run.log"}],
+    }]})
+    code, out = run_gate("smoke", spec, cwd=root)
+    check("6c 標成未執行/未通過(ok=false)→ 擋",
+          code == 1 and "沒有實際通過" in out, out[:300])
+
+    root = repo_6c("smoke-6c-mismatched-id", {"scenarios": [{
+        "id": "SC-999", "ok": True, "examples": [1],
+        "evidence": [{"kind": "runner_log", "path": "smoke-artifacts/run.log"}],
+    }]})
+    code, out = run_gate("smoke", spec, cwd=root)
+    check("6c 結果引用不符規格的 Scenario id → 擋,且缺的正式 id 仍點名",
+          code == 1 and "SC-999" in out and "SC-002 缺" in out, out[:360])
+
+    root = repo_6c("smoke-6c-stale-artifact", valid_result, artifact=None)
+    stale = root / "specs/demo/evidence/smoke-artifacts"
+    stale.mkdir(parents=True)
+    (stale / "run.log").write_text("old run")
+    code, out = run_gate("smoke", spec, cwd=root)
+    check("6c 上一輪 artifact 會先清掉,不能拿舊證據過關",
+          code == 1 and "不存在、不是檔案或內容為空" in out, out[:300])
+
+    root = repo_6c("smoke-6c-valid", valid_result)
+    code, out = run_gate("smoke", spec, cwd=root)
+    smoke = json.loads((root / "specs/demo/evidence/smoke.json").read_text())
+    check("6c 每條 Scenario/example 有本輪非空證據 → PASS 並寫入 smoke.json",
+          code == 0 and smoke["ok"] and smoke["required_scenarios"] == ["SC-002"]
+          and smoke["scenario_results"][0]["examples"] == [1], f"{code} {smoke}")
+
+    invalid_spec = MIXED_6C_SPEC.replace("        mode: 6c", "        mode: 6z")
+    root = make_repo(tmp / "smoke-invalid-mode", invalid_spec)
+    (root / "specs" / "pipeline.yaml").write_text('runner: swift-testing\nsmoke: "true"\n')
+    code, out = run_gate("smoke", spec, cwd=root)
+    check("smoke 未知 mode → 在執行指令前擋,不可靜默免驗",
+          code == 1 and "未知或缺少 mode" in out, out[:300])
 
 
 def test_dashboard_gating_order(tmp: pathlib.Path) -> None:

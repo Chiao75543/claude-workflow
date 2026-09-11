@@ -20,6 +20,8 @@ tags: [workflow, verify, gates]
 **注意**
 
 - **順序就是花錢的順序。** 功能不對其他免談:smoke 沒過連審都不審。
+- 有 mode 6c 時,smoke 指令必須寫 `$SMOKE_RESULTS`:逐 Scenario 列 `ok:true`、完整 example 編號,
+  並指向本輪 `$SMOKE_SCREENSHOTS`／`$SMOKE_ARTIFACTS` 的非空實際證據；checklist 不能當通過。
 - 沒附重現的 `must_fix` / `ask_user` / `overbuilt`,`findings add` 會拒收 —— 那是證據規則,不是格式挑剔。
 - `loop` 第 3 次 `fix` 會拒絕(parked)、解過又出現會拒絕(flipflop)、G10 重派第 2 次會拒絕。
   被拒絕就停,交給 PR 留言的「需要你決定」;人答了用 `loop decided F-n ship|hold|respec` 記,那是唯一的解除方式。

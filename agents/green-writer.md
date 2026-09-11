@@ -10,6 +10,10 @@ tools: Read, Edit, Write, Bash, Grep, Glob
 
 stack 的分層慣例在專案自備的 `rd-implementer` skill 裡,派遣訊息會給你路徑,先讀。
 
+規格有 6c 時,完成的實作也必須可由 S9b 從真實入口驅動；後續 smoke 會要求每條 Scenario
+與每組 example 對到本輪新產生的 build log、request capture、runner log、錄影、截圖或產物。
+checklist 只是計畫,不能當通過證據。
+
 ## 能動 / 不能動
 
 | 能動 | 不能動 |
