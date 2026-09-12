@@ -36,7 +36,7 @@ Claude 扮演資深 QA/RD，以規格驗收條件為基準撰寫完整單元測�
 
 ---
 
-## 測試型態分類（6a / 6b / 6c）
+## 測試型態分類（6a / 6b / 6c / 6d）
 
 依 Scenario 內容分類，一個 change 可混用三種：
 
@@ -44,7 +44,8 @@ Claude 扮演資深 QA/RD，以規格驗收條件為基準撰寫完整單元測�
 |---|---|---|
 | **6a Unit-test** | 行為規格：狀態轉換、資料轉換、錯誤處理（`WHEN <user action>` / `WHEN <external system returns>`） | Swift Testing 單元測試（本文件主體，Step 4a–4c） |
 | **6b Static-validation** | 設定檔斷言：`WHEN 檢視 project.yml / Info.plist / *.xcconfig`、`THEN (NOT) contains <pattern>` | assertion script（grep / PlistBuddy，Step 4d） |
-| **6c Manual-smoke** | 需真機／模擬器實測或 build 產物檢查（APNs 權限彈窗、Universal Links 實跳、上架前產物檢查） | `smoke-checklist.md`，無自動測試（Step 4e） |
+| **6c Build/smoke** | build 產物或可由腳本驅動的模擬器／真實入口流程 | S7 寫可執行計畫；S9b 實跑並逐 Scenario/example 產生結果與檔案證據（Step 4e） |
+| **6d Manual-only** | 環境限制使自動驅動不可行 | `manual_reason` + 人工 checklist；不得冒充自動證據（Step 4f） |
 
 ---
 
@@ -161,7 +162,7 @@ specs/{name}/
 - UI Behavior 章節的狀態描述
 - Error scenario 的錯誤觸發與處理
 
-將每個 Scenario 記錄並標定型態（6a/6b/6c），供後續覆蓋率報告使用。
+將每個 Scenario 記錄並標定型態（6a/6b/6c/6d），供後續各階段證據與覆蓋率報告使用。
 
 **找不到規格**:先要求使用者建立 `specs/{name}/spec.yaml`(或把舊規格遷移過來),不另走 fallback。
 
@@ -416,9 +417,17 @@ echo "PASS"
 
 先對現狀執行一次確認 FAIL（true RED），實作完成後轉 PASS。
 
-#### 4e. 6c Manual-smoke checklist
+#### 4e. 6c Build/smoke
 
-無法自動化的 Scenario（真機推播、Universal Links 實跳、build 產物檢查）寫成 `specs/{name}/evidence/smoke-checklist.md`：每條 scenario + 預期結果 + checkbox。明確告知使用者：實作完成後須手動跑完矩陣；此類 Scenario 無自動測試、跳過覆蓋率檢查。
+S7 不替 6c 寫假的單元測試；寫出可在 GREEN 後由 `scripts/gates/smoke` 執行的驅動計畫。
+S9b 指令須使用 `$SMOKE_RESULTS` 逐 Scenario 列 `ok:true`、完整的 1-based example 編號,
+並把本輪 build log、request capture、runner log、錄影、截圖或產物放到
+`$SMOKE_SCREENSHOTS`／`$SMOKE_ARTIFACTS` 後引用。只有 checklist、缺檔、空檔或舊檔都不能通過。
+
+#### 4f. 6d Manual-only checklist
+
+真的無法自動驅動（例如需要無法模擬的實體硬體）才使用 6d。規格必須寫 `manual_reason`,
+另列人工 checklist；它會留在證據表上等待 owner 驗收,不得降級成 6c 或單元測試來隱藏缺口。
 
 ---
 
@@ -490,7 +499,8 @@ xcrun xccov view --report build/tests.xcresult
 - MindEYDataTests/ProfileRepositoryImplTests.swift（3 個測試）
 - MindEYTests/SignInViewModelTests.swift（4 個測試）
 - tests/static_validation.sh（6b，如適用）
-- smoke-checklist.md（6c，如適用）
+- 6c smoke driver／結果格式（如適用；S9b 實跑後才算通過）
+- manual-checklist.md（6d，如適用）
 
 ⚠️ 發現的問題（程式碼與規格不一致）：
 - [ ] SignInViewModel 未處理 DomainError.network，但 spec.md 有定義

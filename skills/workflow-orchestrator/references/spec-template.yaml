@@ -54,7 +54,7 @@ requirements:
 
     scenarios:
       - id: SC-001
-        mode: 6a                  # 6a 單元 | 6b 靜態 | 6c 產物/驅動 | 6d 只能人工
+        mode: 6a                  # 6a 單元 RED | 6b 靜態 RED | 6c S9b 產物/驅動 | 6d 只能人工
         given: {input_size: 0}
         when: process
         # then 必須是**結構化 mapping**。散文沒有欄位可以放。

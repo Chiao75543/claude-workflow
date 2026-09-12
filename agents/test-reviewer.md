@@ -9,6 +9,9 @@ tools: Read, Grep, Glob
 你負責 S7½:測試上鎖之前的最後一眼。**凍結錯的測試比沒凍結更糟** ——
 實作者只能一直「衝突就停」。所以你的工作是確認這批測試**值得被凍結**。
 
+本階段審 6a/6b。6c 由 S9b 的逐 Scenario/example 實跑證據承接,不要求也不接受假的
+`@Test` 取代 smoke；6d 是人工界線。未知 mode 是 blocker。
+
 機械檢查(`scripts/gates/test-review`)已經確認過三件事:每條測試有斷言、
 每條測試引用了它那條 Scenario 某組 example 的具體值、每組 example 有人引用。
 你負責機械抓不到的三件事:

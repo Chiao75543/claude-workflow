@@ -33,7 +33,8 @@ import sys
 sys.path.insert(0, str(pathlib.Path(__file__).parent))
 import _config  # noqa: E402
 from _common import (  # noqa: E402
-    Findings, evidence_dir, load_spec, read_json, scenario_ids, sha256, write_json,
+    MANUAL_MODES, RED_MODES, SMOKE_MODES, Findings, evidence_dir, invalid_scenario_modes,
+    load_spec, read_json, scenario_ids_for_modes, sha256, write_json,
 )
 
 DEFAULT_MARKER = "STUB-NOT-IMPLEMENTED"
@@ -138,6 +139,9 @@ def main(argv: list[str]) -> int:
     f = Findings()
     tests, recon = [], []
 
+    for sid, mode in invalid_scenario_modes(spec):
+        f.error(sid, f"未知或缺少 mode {mode!r} —— 不能靜默略過 RED 證據")
+
     for entry in inputs:
         layer = entry.get("layer", "?")
         out_path = pathlib.Path(entry["output"])
@@ -206,7 +210,10 @@ def main(argv: list[str]) -> int:
     from collections import Counter
     counts = Counter(t["failure_class"] for t in tests)
     covered = {t["scenario"] for t in tests if t["scenario"]}
-    missing = sorted(scenario_ids(spec) - covered)
+    red_required = scenario_ids_for_modes(spec, RED_MODES)
+    deferred_smoke = sorted(scenario_ids_for_modes(spec, SMOKE_MODES))
+    manual = sorted(scenario_ids_for_modes(spec, MANUAL_MODES))
+    missing = sorted(red_required - covered)
 
     write_json(ev / "red.json", {
         "spec_hash": sha256(spec_path),
@@ -214,6 +221,9 @@ def main(argv: list[str]) -> int:
         "runner": runner,
         "marker": marker,
         "exemptions": exemptions,
+        "required_modes": sorted(RED_MODES),
+        "deferred_smoke": deferred_smoke,
+        "manual": manual,
         "reconciliation": recon,
         "counts": dict(counts),
         "tests": tests,
@@ -224,15 +234,12 @@ def main(argv: list[str]) -> int:
         mark = "OK" if r["reconciled"] else "!!"
         print(f"  {r['layer']:<8} 宣告 {r['declared_in_source']:>3} · runner {r['reported_by_runner']} "
               f"· 啟動 {r['started']:>3}  {mark}")
-    # 有測試檔卻沒出現在 RED 證據裡,正是繞過凍結的路徑(RED 之後才加的測試)。
-    # 只能人工驗的(6d)本來就沒有自動化測試,排除。
-    manual = {
-        sc.get("id")
-        for req in (spec.get("requirements") or []) if isinstance(req, dict)
-        for sc in (req.get("scenarios") or []) if isinstance(sc, dict) and sc.get("mode") == "6d"
-    }
-    for sid in sorted(set(missing) - manual):
+    # 6a/6b 沒出現在 RED 證據裡,正是繞過凍結的路徑(RED 之後才加)。
+    # 6c 不是豁免:它只延後到 S9b,由 smoke gate 要求逐 Scenario/example 的實跑證據。
+    for sid in missing:
         f.error("覆蓋", f"{sid} 沒有出現在任何一層的 RED 證據裡 —— 這條測試沒有紅過的紀錄")
+    if deferred_smoke:
+        f.warn("延後驗證", f"{', '.join(deferred_smoke)} 是 6c,RED 階段不要求 @Test；S9b smoke 必須逐條交實跑證據")
     print(f"  → {ev / 'red.json'}")
     return f.report("red-capture")
 

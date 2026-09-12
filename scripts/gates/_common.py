@@ -24,6 +24,13 @@ COMPLETENESS_CATEGORIES = [
 
 MODES = {"6a", "6b", "6c", "6d"}
 
+# mode 不是單純的 schema 列舉,而是「哪個階段要收哪種證據」的契約。
+# 6a/6b 在 S7 交 RED 與凍結證據;6c 到 S9b 由 build/smoke 實際驅動;
+# 6d 只能人工驗收,不得被前兩種自動證據冒充。
+RED_MODES = {"6a", "6b"}
+SMOKE_MODES = {"6c"}
+MANUAL_MODES = {"6d"}
+
 
 class Findings:
     """收集錯誤與警告,最後一次印出。錯誤讓退出碼非零。"""
@@ -79,6 +86,23 @@ def scenarios(spec: dict):
 
 def scenario_ids(spec: dict) -> set[str]:
     return {sc.get("id") for _, sc in scenarios(spec) if sc.get("id")}
+
+
+def scenario_ids_for_modes(spec: dict, modes: set[str]) -> set[str]:
+    """回傳指定驗證 mode 的 Scenario ids。未知 mode 不會落入任何集合。"""
+    return {
+        sc.get("id") for _, sc in scenarios(spec)
+        if sc.get("id") and isinstance(sc.get("mode"), str) and sc.get("mode") in modes
+    }
+
+
+def invalid_scenario_modes(spec: dict) -> list[tuple[str, object]]:
+    """列出未知/缺少 mode；各 gate 都要 fail closed，不能只依賴先跑 spec-lint。"""
+    return [
+        (str(sc.get("id") or "(無 id)"), sc.get("mode"))
+        for _, sc in scenarios(spec)
+        if not isinstance(sc.get("mode"), str) or sc.get("mode") not in MODES
+    ]
 
 
 def repo_root(start: pathlib.Path | None = None) -> pathlib.Path:
