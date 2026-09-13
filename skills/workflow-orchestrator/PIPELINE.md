@@ -17,7 +17,9 @@ S8  實作 GREEN        green-writer(opus):只做 examples 涵蓋的事
 S9a 腳本關卡 G0–G7
 S9b smoke             真的入口跑一次;沒過不派審查
 S9c 付費審查 G9/G10   四類分流:must_fix / ask_user / overbuilt / style;loop 腳本數次數
+S9d pre-commit 證據表  候選快照已 stage 才能 commit;絕不自動推
 S10 commit
+S10½ delivery 證據表   批准快照已 commit 且乾淨才可推
 S11 自動推 + 開 PR    證據表貼成留言;有「需要你決定」才叫你
 S12 CI 獨立重跑       ci: none 就跳過;紅了 orchestrator 自己拉 log 修
 S13 ⏸ 你按 merge

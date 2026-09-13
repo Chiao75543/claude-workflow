@@ -125,7 +125,11 @@ commit 之前必須:
 2. 相關測試全綠。
 3. `scripts/gates/` 的八道腳本關卡全綠(規格檢查、凍結、lint、測試、
    RED 對帳、追溯、範例覆蓋、可達性),才啟動付費關卡。
-4. `scripts/gates/dashboard specs/{name}/spec.yaml` 產出證據表。
+4. stage 這次 commit 的完整內容（含 `evidence/spec.approved.yaml`），再跑
+   `scripts/gates/dashboard specs/{name}/spec.yaml --pre-commit`。這只證明候選樹可提交；
+   staged 快照不等於 owner 批准，且絕不允許 auto-push。
+5. commit 後立即重跑 `scripts/gates/dashboard specs/{name}/spec.yaml`。只有批准快照已 commit
+   且對該檔的工作樹乾淨，delivery 裁決才可允許推送。
 
 任一項不過就先修,**不得繞過**。
 

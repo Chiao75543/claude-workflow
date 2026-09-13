@@ -183,9 +183,9 @@ MUTATIONS: list[tuple[str, str, str, str]] = [
     ("spec-lint", "空話「符合預期」不擋(黑名單退回舊版)",
      '    "正確", "適當", "合理", "正常", "良好", "妥善", "應該要能", "符合預期", "成功處理",',
      '    "正確", "適當", "合理", "正常", "良好", "妥善", "應該要能",'),
-    ("dashboard", "批准快照沒 commit 也不點名",
-     "        if not tracked or dirty:",
-     "        if False:"),
+    ("dashboard", "批准快照沒 commit 也通過關卡",
+     '            "ok": frozen_ok and diff_ok and anchor_ready,',
+     '            "ok": frozen_ok and diff_ok,'),
     ("dashboard", "命中率紀錄不追加",
      '    with (root / "specs" / "_yield.jsonl").open("a") as fh:\n'
      '        fh.write(json.dumps(yield_line, ensure_ascii=False) + "\\n")',
@@ -202,6 +202,15 @@ MUTATIONS: list[tuple[str, str, str, str]] = [
     ("dashboard", "可達性:到不了的型別不報",
      "    unreachable = [r for r in reach if not r[\"sites\"]]",
      "    unreachable = []"),
+    ("dashboard", "可達性:只看 committed 不看 staged",
+     "    added = sorted(committed | staged)",
+     "    added = sorted(committed)"),
+    ("dashboard", "可達性:staged diff 錯用 HEAD 當基準",
+     '            merge_base,\n        ).splitlines() if p\n    }\n    added = sorted(committed | staged)',
+     '            "HEAD",\n        ).splitlines() if p\n    }\n    added = sorted(committed | staged)'),
+    ("dashboard", "可達性:Git 非零退出當成空結果",
+     "    if result.returncode != 0:",
+     "    if False:"),
     ("dashboard", "可達性:只看檔案第一個型別",
      "        for name in names:",
      "        for name in names[:1]:"),
@@ -291,11 +300,47 @@ MUTATIONS: list[tuple[str, str, str, str]] = [
      '"ok": not pending and not halted,',
      '"ok": not pending,'),
     ("dashboard", "有待決事項也自動推",
-     '    context["auto_push_ok"] = all_green and not decisions and bool(config.get("auto_push", True))',
-     '    context["auto_push_ok"] = all_green and bool(config.get("auto_push", True))'),
+     '    context["auto_push_ok"] = (\n'
+     '        not pre_commit and all_green and not decisions and bool(config.get("auto_push", True))\n'
+     '    )',
+     '    context["auto_push_ok"] = (\n'
+     '        not pre_commit and all_green and bool(config.get("auto_push", True))\n'
+     '    )'),
     ("dashboard", "auto_push: false 被無視",
-     '    context["auto_push_ok"] = all_green and not decisions and bool(config.get("auto_push", True))',
-     '    context["auto_push_ok"] = all_green and not decisions'),
+     '    context["auto_push_ok"] = (\n'
+     '        not pre_commit and all_green and not decisions and bool(config.get("auto_push", True))\n'
+     '    )',
+     '    context["auto_push_ok"] = (\n'
+     '        not pre_commit and all_green and not decisions\n'
+     '    )'),
+    ("dashboard", "pre-commit 也允許自動推",
+     '    context["auto_push_ok"] = (\n'
+     '        not pre_commit and all_green and not decisions and bool(config.get("auto_push", True))\n'
+     '    )',
+     '    context["auto_push_ok"] = (\n'
+     '        all_green and not decisions and bool(config.get("auto_push", True))\n'
+     '    )'),
+    ("dashboard", "pre-commit 把 stage 後又修改的快照當成 pending_commit",
+     "    if index_blob and index_blob != head_blob and worktree_blob == index_blob:",
+     "    if index_blob and index_blob != head_blob:"),
+    ("dashboard", "approval symlink 跟到已 commit 的 spec 就算有錨點",
+     "    approved_abs = approved.absolute()",
+     "    approved_abs = approved.resolve()"),
+    ("dashboard", "dashboard 末端不重驗 approval mode/blob token",
+     "        if not anchor_stable:",
+     "        if False:"),
+    ("dashboard", "G7 改讀未 stage 的工作樹內容",
+     '        contents[rel] = git_required(root, f"reachability blob {rel}", "show", f":{rel}")',
+     '        contents[rel] = (root / rel).read_text(errors="replace")'),
+    ("dashboard", "caller 可覆寫 configured integration base",
+     "    base_matches_config = requested_base == configured_base",
+     "    base_matches_config = True"),
+    ("_state.py", "pre-commit 用工作樹冒充實際 index candidate",
+     "def index_fingerprint(root: pathlib.Path) -> str:\n"
+     '    """實際 index candidate 的內容指紋，同樣排除 evidence。',
+     "def index_fingerprint(root: pathlib.Path) -> str:\n"
+     "    return tree_fingerprint(root)\n\n"
+     '    """實際 index candidate 的內容指紋，同樣排除 evidence。'),
     # ---- 第二輪對抗審查:_state.py 之前零變異 ----
     ("_state.py", "已追蹤的 evidence 不從 tree 拿掉(commit 前後指紋不同)",
      '        git("rm", "-r", "-q", "--cached", "--ignore-unmatch", "--", *EXCLUDED)',
