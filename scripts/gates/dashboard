@@ -330,12 +330,13 @@ def main(argv: list[str]) -> int:
         })
 
     # smoke —— 功能不對其他免談。證據要新鮮:工作樹指紋對不上就是過期。
+    current_tree = tree_fingerprint(root)
     smoke = read_json(ev / "smoke.json")
     scripts_green = all(g["ok"] for g in gates)
     if not smoke:
         smoke_ok = False
         gates.append({"id": "S", "what": "smoke:真的入口跑一次", "ok": False, "note": "缺 smoke.json"})
-    elif smoke.get("tree") != tree_fingerprint(root):
+    elif smoke.get("tree") != current_tree:
         smoke_ok = False
         gates.append({"id": "S", "what": "smoke:真的入口跑一次", "ok": False, "note": "證據過期(工作樹變了)"})
     else:
@@ -353,13 +354,32 @@ def main(argv: list[str]) -> int:
               if it.get("status") in ("parked", "flipflop")}
     # 「派過了」要有紀錄:零 finding 的乾淨審查和「根本沒派」在證據上必須分得出來
     dispatched = findings.get("dispatched") or {}
-    reviewed = "G9" in dispatched and "G10" in dispatched
+    missing_dispatch = [gate for gate in ("G9", "G10") if gate not in dispatched]
+    invalid_dispatch = [
+        gate for gate in ("G9", "G10")
+        if gate in dispatched and (
+            not isinstance(dispatched[gate], dict)
+            or not isinstance(dispatched[gate].get("tree"), str)
+            or re.fullmatch(r"tree:(?:[0-9a-f]{40}|[0-9a-f]{64})", dispatched[gate]["tree"]) is None
+        )
+    ]
+    stale_dispatch = [
+        gate for gate in ("G9", "G10")
+        if gate not in missing_dispatch and gate not in invalid_dispatch
+        and dispatched[gate]["tree"] != current_tree
+    ]
     if not (scripts_green and smoke_ok):
         gates.append({"id": "G9/10", "what": "獨立讀者 + 對抗審查", "ok": False,
                       "note": "未跑 —— 腳本或 smoke 沒過,不花這個錢"})
-    elif not reviewed:
+    elif missing_dispatch:
         gates.append({"id": "G9/10", "what": "獨立讀者 + 對抗審查", "ok": False,
-                      "note": "沒有派過的紀錄(findings dispatched --gate G9/G10)"})
+                      "note": f"沒有派過的紀錄({', '.join(missing_dispatch)})"})
+    elif invalid_dispatch:
+        gates.append({"id": "G9/10", "what": "獨立讀者 + 對抗審查", "ok": False,
+                      "note": f"dispatch tree 無效({', '.join(invalid_dispatch)})，必須重新審查"})
+    elif stale_dispatch:
+        gates.append({"id": "G9/10", "what": "獨立讀者 + 對抗審查", "ok": False,
+                      "note": f"審查過期(工作樹變了: {', '.join(stale_dispatch)})"})
     else:
         s = findings.get("summary") or {}
         gates.append({"id": "G9/10", "what": "獨立讀者 + 對抗審查", "ok": not pending and not halted,
@@ -387,6 +407,14 @@ def main(argv: list[str]) -> int:
     if not shots:
         attention.append({"tag": "無畫面證據", "title": "沒有任何截圖",
                           "body": "如果這次有畫面變更,單元測試驗不到它的呈現。"})
+
+    # 前面逐關判斷可能要花時間；在產出裁決前再確認一次，避免工作樹在第一次取樣後改變，
+    # 卻讓舊 smoke 與審查指紋一起被當成目前狀態。輸出 evidence 本身不在指紋內。
+    if tree_fingerprint(root) != current_tree:
+        for gate in gates:
+            if gate["id"] in ("S", "G9/10") and gate["ok"]:
+                gate["ok"] = False
+                gate["note"] = "證據過期(dashboard 執行期間工作樹變了)"
 
     stat = git(root, "diff", "--cached", "--shortstat").strip() or git(root, "diff", "--shortstat", f"{base}...HEAD").strip()
     context_name = (spec.get("meta") or {}).get("name", spec_path.parent.name)

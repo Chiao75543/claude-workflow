@@ -28,7 +28,7 @@ import pathlib
 import sys
 
 sys.path.insert(0, str(pathlib.Path(__file__).parent))
-from _common import evidence_dir, read_json, triage_findings, write_json  # noqa: E402
+from _common import evidence_dir, read_json, repo_root, triage_findings, write_json  # noqa: E402
 from _state import tree_fingerprint  # noqa: E402
 
 CLASSES = {"must_fix", "ask_user", "overbuilt", "style"}
@@ -57,7 +57,9 @@ def main(argv: list[str]) -> int:
     if len(argv) < 2:
         print(__doc__)
         return 2
-    ev = evidence_dir(pathlib.Path(argv[0]).resolve())
+    spec_path = pathlib.Path(argv[0]).resolve()
+    root = repo_root(spec_path.parent)
+    ev = evidence_dir(spec_path)
     verb = argv[1]
     state = load(ev)
     items = state["items"]
@@ -101,7 +103,7 @@ def main(argv: list[str]) -> int:
             return 2
         state.setdefault("dispatched", {})[gate] = {
             "at": datetime.datetime.now().astimezone().isoformat(timespec="seconds"),
-            "tree": tree_fingerprint(ev.parents[1]),
+            "tree": tree_fingerprint(root),
         }
         state["summary"] = summary(state)
         write_json(ev / "findings.json", state)

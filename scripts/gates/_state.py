@@ -24,15 +24,20 @@ def tree_fingerprint(root: pathlib.Path) -> str:
     with tempfile.TemporaryDirectory() as td:
         env = {**os.environ, "GIT_INDEX_FILE": str(pathlib.Path(td) / "index")}
 
-        def git(*args: str) -> subprocess.CompletedProcess:
-            return subprocess.run(["git", *args], cwd=root, env=env, capture_output=True, text=True)
+        def git(*args: str, allow_failure: bool = False) -> subprocess.CompletedProcess:
+            try:
+                result = subprocess.run(["git", *args], cwd=root, env=env, capture_output=True, text=True)
+            except OSError as exc:
+                raise RuntimeError(f"算不出工作樹指紋: git {args[0]}: {exc}") from exc
+            if result.returncode != 0 and not allow_failure:
+                detail = result.stderr.strip() or result.stdout.strip() or f"exit {result.returncode}"
+                raise RuntimeError(f"算不出工作樹指紋: git {args[0]}: {detail}")
+            return result
 
-        if git("rev-parse", "--verify", "-q", "HEAD").returncode == 0:
+        if git("rev-parse", "--verify", "-q", "HEAD", allow_failure=True).returncode == 0:
             git("read-tree", "HEAD")
         # 已追蹤的證據檔也要拿掉,不然它們留在 HEAD 的版本裡,commit 前後 tree 會不同
         git("rm", "-r", "-q", "--cached", "--ignore-unmatch", "--", *EXCLUDED)
         git("add", "-A", "--", ".", *[f":(exclude){p}" for p in EXCLUDED])
         tree = git("write-tree")
-        if tree.returncode != 0:
-            raise RuntimeError(f"算不出工作樹指紋: {tree.stderr.strip()}")
         return "tree:" + tree.stdout.strip()
