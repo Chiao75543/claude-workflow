@@ -31,7 +31,7 @@ sys.path.insert(0, str(pathlib.Path(__file__).parent))
 import _config  # noqa: E402
 from _common import (  # noqa: E402
     RED_MODES, SMOKE_MODES, Findings, evidence_dir, invalid_scenario_modes, load_spec,
-    read_json, scenario_ids_for_modes, scenarios, sha256, write_json,
+    read_json, scenario_ids_for_modes, scenarios, spec_test_sources, write_json,
 )
 from _state import tree_fingerprint  # noqa: E402
 
@@ -115,31 +115,27 @@ def matches_example(body: str, anchors: list[tuple[str, re.Pattern]],
                for _, key_rx, value_rx in boolean_signatures)
 
 
-def collect_tests(root: pathlib.Path, config: dict) -> list[dict]:
+def collect_tests(config: dict, sources: list[dict]) -> list[dict]:
     """[{file, sc, name, body}] —— body 是這條測試到下一條測試之間的文字。"""
     pattern = re.compile(config["tests"]["scenario_pattern"])
-    tests, seen = [], set()
-    for glob in config["tests"]["globs"]:
-        for path in sorted(root.glob(glob)):
-            if not path.is_file() or path in seen:
-                continue
-            seen.add(path)
-            text = path.read_text(errors="ignore")
-            matches = list(pattern.finditer(text))
-            for i, m in enumerate(matches):
-                end = matches[i + 1].start() if i + 1 < len(matches) else len(text)
-                line_end = text.find("\n", m.start())
-                line_end = line_end if line_end > 0 else end
-                # 描述字串不算 body:命名慣例會把 example 的值寫進名字,那不是斷言。
-                # 只剝到字串收尾的引號,單行測試的斷言還在。
-                quote = text.find('"', m.end())
-                body_start = quote + 1 if 0 <= quote < line_end else line_end
-                tests.append({
-                    "file": str(path.relative_to(root)),
-                    "sc": m.group(1),
-                    "name": text[m.start():line_end].strip()[:80],
-                    "body": strip_comments(text[body_start:end]),
-                })
+    tests = []
+    for source in sources:
+        text = source["text"]
+        matches = list(pattern.finditer(text))
+        for i, m in enumerate(matches):
+            end = matches[i + 1].start() if i + 1 < len(matches) else len(text)
+            line_end = text.find("\n", m.start())
+            line_end = line_end if line_end > 0 else end
+            # 描述字串不算 body:命名慣例會把 example 的值寫進名字,那不是斷言。
+            # 只剝到字串收尾的引號,單行測試的斷言還在。
+            quote = text.find('"', m.end())
+            body_start = quote + 1 if 0 <= quote < line_end else line_end
+            tests.append({
+                "file": source["rel"],
+                "sc": m.group(1),
+                "name": text[m.start():line_end].strip()[:80],
+                "body": strip_comments(text[body_start:end]),
+            })
     return tests
 
 
@@ -159,7 +155,10 @@ def main(argv: list[str]) -> int:
         f.error(sid, f"未知或缺少 mode {mode!r} —— 不能靜默略過測試審查")
 
     assert_re = re.compile(config["assert_pattern"])
-    tests = collect_tests(root, config)
+    test_sources, scope_source, scope_errors = spec_test_sources(root, spec_path, config)
+    for message in scope_errors:
+        f.error("測試範圍", message)
+    tests = collect_tests(config, test_sources)
     by_sc: dict[str, list[dict]] = {}
     for t in tests:
         by_sc.setdefault(t["sc"], []).append(t)
@@ -168,6 +167,8 @@ def main(argv: list[str]) -> int:
         sid = sc.get("id")
         if sc.get("mode") not in RED_MODES:
             continue
+        if not by_sc.get(sid):
+            f.error(str(sid), "沒有任何本 spec 測試引用這條 Scenario")
         examples = [e for e in (sc.get("examples") or []) if isinstance(e, dict)]
         example_anchors = [anchors_of(e) for e in examples]
         example_boolean_signatures = [boolean_signatures_of(e) for e in examples]
@@ -222,9 +223,10 @@ def main(argv: list[str]) -> int:
         "mechanical_only": "--mechanical-only" in argv,
         "at": datetime.datetime.now().astimezone().isoformat(timespec="seconds"),
         "tests": len(tests),
+        "scope_source": scope_source,
         "reviewed_modes": sorted(RED_MODES),
         "deferred_smoke": deferred_smoke,
-        "files": {rel: sha256(root / rel) for rel in files},
+        "files": {source["rel"]: source["sha256"] for source in test_sources if source["rel"] in files},
         "tree": tree_fingerprint(root),
         "errors": [f"{w}: {m}" for w, m in f.errors],
         "warnings": [f"{w}: {m}" for w, m in f.warnings],

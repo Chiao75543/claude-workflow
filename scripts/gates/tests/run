@@ -123,10 +123,13 @@ def freeze(root: pathlib.Path, tests: list[str] | None = None) -> None:
     ev.mkdir(exist_ok=True)
     (ev / "spec.hash").write_text(
         "sha256:" + hashlib.sha256(spec.read_bytes()).hexdigest() + "  specs/demo/spec.yaml\n")
-    lines = []
-    for rel in tests or []:
-        lines.append("sha256:" + hashlib.sha256((root / rel).read_bytes()).hexdigest() + f"  {rel}\n")
-    (ev / "tests.hash").write_text("".join(lines))
+    # tests=None 表示只建立 spec freeze；S7½ 審查前不應偽造一個空的 tests.hash。
+    # 要測「空凍結清單」的 fail-closed 行為時，呼叫端明確傳 []。
+    if tests is not None:
+        lines = []
+        for rel in tests:
+            lines.append("sha256:" + hashlib.sha256((root / rel).read_bytes()).hexdigest() + f"  {rel}\n")
+        (ev / "tests.hash").write_text("".join(lines))
 
 
 # ---------------------------------------------------------------- spec-lint
@@ -484,6 +487,70 @@ def test_traceability(tmp: pathlib.Path) -> None:
     code, out = run_gate("traceability", "specs/demo/spec.yaml", cwd=root)
     check("測試引用不存在的 Scenario → 擋", code == 1 and "SC-777" in out, out[:160])
 
+    # 不同 spec 可以合法重用 SC-id；已凍結的 tests.hash 才是本 spec 的測試邊界。
+    root = build("trace-spec-scope", '@Test("SC-001 a")\n@Test("SC-002 b")\n')
+    (root / "tests" / "OtherTests.swift").write_text(
+        '@Test("SC-001b other")\n@Test("SC-777 other orphan")\n')
+    freeze(root, ["tests/T.swift"])
+    code, out = run_gate("traceability", "specs/demo/spec.yaml", cwd=root)
+    check("traceability 只掃本 spec 凍結測試，不受其他 spec 的 SC-id 汙染",
+          code == 0 and "SC-001b" not in out and "SC-777" not in out, out[:260])
+
+    root = build("trace-spec-scope-missing", '@Test("SC-001 a")\n')
+    (root / "tests" / "OtherTests.swift").write_text('@Test("SC-002 other spec")\n')
+    freeze(root, ["tests/T.swift"])
+    code, out = run_gate("traceability", "specs/demo/spec.yaml", cwd=root)
+    check("其他 spec 的同號測試不能掩蓋本 spec 真正缺測",
+          code == 1 and "SC-002" in out, out[:260])
+
+    root = build("trace-red-input-scope", '@Test("SC-001 a")\n@Test("SC-002 b")\n')
+    (root / "tests" / "OtherTests.swift").write_text('@Test("SC-777 other")\n')
+    (root / "specs/demo/evidence/red-inputs.json").write_text(json.dumps([
+        {"layer": "domain", "tests": ["tests/T.swift"]},
+    ]))
+    code, out = run_gate("traceability", "specs/demo/spec.yaml", cwd=root)
+    check("traceability 在 freeze 前以 red-inputs 界定本 spec 測試",
+          code == 0 and "evidence/red-inputs.json" in out and "SC-777" not in out, out[:260])
+
+    root = build("trace-empty-scope", '@Test("SC-001 a")\n@Test("SC-002 b")\n')
+    freeze(root, [])
+    code, out = run_gate("traceability", "specs/demo/spec.yaml", cwd=root)
+    check("traceability 遇到空 tests.hash 要 fail closed，不退回全域 globs",
+          code == 1 and "是空的" in out and "不能退回全域" in out, out[:260])
+
+    root = build("trace-symlink-manifest", '@Test("SC-001 a")\n@Test("SC-002 b")\n')
+    outside_hash = tmp / "outside-tests.hash"
+    outside_hash.write_text("sha256:" + "0" * 64 + "  tests/T.swift\n")
+    (root / "specs/demo/evidence/tests.hash").symlink_to(outside_hash)
+    code, out = run_gate("traceability", "specs/demo/spec.yaml", cwd=root)
+    check("tests.hash 是外部符號連結要 fail closed，不讀取或 fallback",
+          code == 1 and "tests.hash 無法安全讀取" in out, out[:260])
+
+    root = build("trace-dangling-manifest", '@Test("SC-001 a")\n@Test("SC-002 b")\n')
+    (root / "specs/demo/evidence/tests.hash").symlink_to(tmp / "missing-tests.hash")
+    code, out = run_gate("traceability", "specs/demo/spec.yaml", cwd=root)
+    check("tests.hash 是 dangling symlink 仍要 fail closed，不 fallback",
+          code == 1 and "tests.hash 無法安全讀取" in out, out[:260])
+
+    root = build("trace-intermediate-symlink", '@Test("SC-001 a")\n@Test("SC-002 b")\n')
+    outside_tests = tmp / "outside-tests"
+    outside_tests.mkdir()
+    (outside_tests / "T.swift").write_text('@Test("SC-001 a")\n@Test("SC-002 b")\n')
+    (root / "linked-tests").symlink_to(outside_tests, target_is_directory=True)
+    freeze(root, ["linked-tests/T.swift"])
+    code, out = run_gate("traceability", "specs/demo/spec.yaml", cwd=root)
+    check("tests.hash 的中間目錄是外部 symlink 要 fail closed",
+          code == 1 and "測試檔無法安全讀取" in out, out[:260])
+
+    root = build("trace-mixed-empty-red-inputs", '@Test("SC-001 a")\n@Test("SC-002 b")\n')
+    (root / "specs/demo/evidence/red-inputs.json").write_text(json.dumps([
+        {"layer": "domain", "tests": ["tests/T.swift"]},
+        {"layer": "data", "tests": []},
+    ]))
+    code, out = run_gate("traceability", "specs/demo/spec.yaml", cwd=root)
+    check("red-inputs 混入空 tests list 要 fail closed",
+          code == 1 and "tests 必須是非空路徑 list" in out, out[:260])
+
     root = make_repo(tmp / "trace-comment")
     (root / "Tests").mkdir()
     (root / "Tests" / "T.swift").write_text('@Test("SC-001 a")\nfunc a() {}\n// SC-002 另外處理,先不寫\n')
@@ -763,6 +830,48 @@ def test_test_review(tmp: pathlib.Path) -> None:
     check("test-review.json 記下每個測試檔的指紋",
           "Tests/DemoTests.swift" in review.get("files", {}) and review["files"]["Tests/DemoTests.swift"].startswith("sha256:"),
           str(review.get("files")))
+
+    # pipeline globs 是 repo-wide；tests.hash 才界定這份 spec 已凍結且受審的測試。
+    root = repo("tr-spec-scope", good)
+    (root / "Tests" / "OtherSpecTests.swift").write_text(
+        '@Test("SC-001 other") func x() { #expect(value == .wrong) }\n'
+        '@Test("SC-002 other") func y() { #expect(value == .wrong) }\n')
+    freeze(root, ["Tests/DemoTests.swift"])
+    code, out = run_gate("test-review", "specs/demo/spec.yaml", cwd=root)
+    review = json.loads((root / "specs/demo/evidence/test-review.json").read_text())
+    check("test-review 只審本 spec 凍結測試，不把其他 spec 同號測試算進來",
+          code == 0 and set(review.get("files", {})) == {"Tests/DemoTests.swift"}, out[:360])
+
+    root = repo("tr-spec-scope-missing", good.splitlines()[0] + "\n")
+    (root / "Tests" / "OtherSpecTests.swift").write_text(good.splitlines()[1] + "\n")
+    freeze(root, ["Tests/DemoTests.swift"])
+    code, out = run_gate("test-review", "specs/demo/spec.yaml", cwd=root)
+    check("其他 spec 的同號 example 不能掩蓋本 spec 真正缺測",
+          code == 1 and "SC-002 example #1" in out, out[:360])
+
+    root = repo("tr-red-input-scope", good)
+    (root / "Tests" / "OtherSpecTests.swift").write_text(
+        '@Test("SC-001 other") func x() { #expect(value == .wrong) }\n')
+    (root / "specs/demo/evidence/red-inputs.json").write_text(json.dumps([
+        {"layer": "viewmodel", "tests": ["Tests/DemoTests.swift"]},
+    ]))
+    code, out = run_gate("test-review", "specs/demo/spec.yaml", cwd=root)
+    review = json.loads((root / "specs/demo/evidence/test-review.json").read_text())
+    check("test-review 在 freeze 前以 red-inputs 界定本 spec 測試",
+          code == 0 and review.get("scope_source") == "evidence/red-inputs.json"
+          and set(review.get("files", {})) == {"Tests/DemoTests.swift"}, out[:360])
+
+    root = repo("tr-empty-scope", good)
+    freeze(root, [])
+    code, out = run_gate("test-review", "specs/demo/spec.yaml", cwd=root)
+    check("test-review 遇到空 tests.hash 要 fail closed，不退回全域 globs",
+          code == 1 and "是空的" in out and "不能退回全域" in out, out[:360])
+
+    anchorless = VALID_SPEC.replace("out: {returns: empty_list}", "out: {items: []}")
+    root = repo("tr-anchorless-missing", good.splitlines()[1] + "\n", spec=anchorless)
+    code, out = run_gate("test-review", "specs/demo/spec.yaml", cwd=root)
+    check("沒有可搜尋 anchor 的 RED Scenario 仍必須有本 spec 測試",
+          code == 1 and "SC-001" in out and "沒有任何本 spec 測試" in out, out[:360])
 
     root = repo("tr-noassert", good.replace("{ #expect(process(0) == .emptyList) }", "{ _ = process(0) // emptyList }"))
     code, out = run_gate("test-review", "specs/demo/spec.yaml", cwd=root)
