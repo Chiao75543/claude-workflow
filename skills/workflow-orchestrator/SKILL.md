@@ -111,7 +111,9 @@ digraph workflow {
   s9a [shape=box, label="S9a 腳本關卡 G0–G7"];
   s9b [shape=box, label="S9b smoke\n真的入口跑一次"];
   s9c [shape=box, label="S9c 付費審查 G9/G10\n四類分流 · loop 計數"];
+  precommit [shape=box, label="S9d pre-commit dashboard\n候選樹可提交，不可推送"];
   s10 [shape=box, label="S10 commit"];
+  delivery [shape=box, label="S10½ delivery dashboard\n批准快照已 commit 且乾淨"];
   s11 [shape=box, label="S11 自動推 + 開 PR\n證據表貼成留言"];
   s12 [shape=box, label="S12 CI 獨立重跑\n(ci: none 就跳過)"];
   s13a [shape=diamond, label="⏸ PR 上有「需要你決定」\n才叫你"];
@@ -126,8 +128,9 @@ digraph workflow {
   s9a -> s8 [label="沒過"];
   s9b -> s8 [label="沒過(不派審查)"];
   s9c -> s8 [label="must_fix / overbuilt(loop 數)"];
-  s9c -> s10 [label="乾淨或只剩 ask_user"];
-  s10 -> s11 -> s12 -> s13a -> s13 -> done;
+  s9c -> precommit [label="乾淨或只剩 ask_user"];
+  precommit -> s10 [label="全綠，候選快照已 stage"];
+  s10 -> delivery -> s11 -> s12 -> s13a -> s13 -> done;
   s12 -> s8 [label="CI 紅:自己拉 log 修"];
 }
 ```
@@ -221,6 +224,8 @@ wt="$(git worktree list --porcelain \
 
 批准後**必須存下快照** `evidence/spec.approved.yaml` ——
 沒有快照就無從判斷後續改動要不要重新批准。
+批准是 owner 的流程事實；機器只能驗證快照是否已被 commit 錨定。
+只有 staged 的快照是 `pending_commit`，**不是「已批准」的證據**。
 
 ### S6 定稿凍結
 
@@ -334,7 +339,15 @@ runner log、錄影、截圖或產物)。缺 Scenario、缺 example、`ok:false`
 | `style` | 記下,不動 |
 
 `loop` 會在第 3 次 `fix` 拒絕(parked)、解過又出現時拒絕(flipflop)—— 那時停下來,
-不是換個方式再修。`findings check` 乾淨(或只剩 `ask_user`)才進 S10。
+不是換個方式再修。`findings check` 乾淨(或只剩 `ask_user`)後，將這次 commit 的內容（含
+`evidence/spec.approved.yaml`）stage，再跑：
+
+```bash
+scripts/gates/dashboard specs/{name}/spec.yaml --pre-commit
+```
+
+`--pre-commit` 只回答「候選樹能否 commit」；快照 staged 時只標記 `pending_commit`，絕不表示
+owner 批准，也絕不允許 auto-push。這關全綠才進 S10。
 
 ### S10 Commit
 
@@ -348,10 +361,19 @@ Scenarios: SC-001, SC-002, ...
 AI-assisted: claude
 ```
 
+commit 後必須立即重跑預設（delivery）dashboard：
+
+```bash
+scripts/gates/dashboard specs/{name}/spec.yaml
+```
+
+只有 owner 批准快照存在 `HEAD` 且工作樹對該檔乾淨時，才是 `approval_anchor: committed`。
+新快照未 commit、或已 commit 快照之後又被修改，delivery 關卡都必須 fail closed。
+
 ### S11 自動推 + 開 PR + 證據表貼成留言
 
 ```bash
-scripts/gates/dashboard specs/{name}/spec.yaml     # 最後一行:自動推:可以 / 不行(原因)
+scripts/gates/dashboard specs/{name}/spec.yaml     # commit 後的嚴格 delivery 裁決
 git push -u origin "feat/${branch_name}"           # 只推功能分支;整合分支永遠不直推
 gh pr create --base {INTEGRATION_BRANCH} --body-file <(scripts/gates/pr-comment specs/{name}/spec.yaml)
 # 或 glab mr create --description "$(scripts/gates/pr-comment …)"

@@ -41,3 +41,37 @@ def tree_fingerprint(root: pathlib.Path) -> str:
         git("add", "-A", "--", ".", *[f":(exclude){p}" for p in EXCLUDED])
         tree = git("write-tree")
         return "tree:" + tree.stdout.strip()
+
+
+def index_fingerprint(root: pathlib.Path) -> str:
+    """實際 index candidate 的內容指紋，同樣排除 evidence。
+
+    先讓真實 index 產生 tree，再在臨時 index 移除 evidence；不會改動使用者的 index。
+    """
+    try:
+        candidate = subprocess.run(
+            ["git", "write-tree"], cwd=root, capture_output=True, text=True
+        )
+    except OSError as exc:
+        raise RuntimeError(f"算不出 index 指紋: git write-tree: {exc}") from exc
+    if candidate.returncode != 0:
+        detail = candidate.stderr.strip() or candidate.stdout.strip() or f"exit {candidate.returncode}"
+        raise RuntimeError(f"算不出 index 指紋: git write-tree: {detail}")
+
+    with tempfile.TemporaryDirectory() as td:
+        env = {**os.environ, "GIT_INDEX_FILE": str(pathlib.Path(td) / "index")}
+
+        def git(*args: str) -> subprocess.CompletedProcess:
+            try:
+                result = subprocess.run(["git", *args], cwd=root, env=env, capture_output=True, text=True)
+            except OSError as exc:
+                raise RuntimeError(f"算不出 index 指紋: git {args[0]}: {exc}") from exc
+            if result.returncode != 0:
+                detail = result.stderr.strip() or result.stdout.strip() or f"exit {result.returncode}"
+                raise RuntimeError(f"算不出 index 指紋: git {args[0]}: {detail}")
+            return result
+
+        git("read-tree", candidate.stdout.strip())
+        git("rm", "-r", "-q", "--cached", "--ignore-unmatch", "--", *EXCLUDED)
+        tree = git("write-tree")
+        return "tree:" + tree.stdout.strip()

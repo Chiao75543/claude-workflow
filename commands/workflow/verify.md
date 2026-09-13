@@ -15,7 +15,10 @@ tags: [workflow, verify, gates]
    每條 finding 用 `findings add` 收,實跑重現 → `set confirmed` / `set void`(停在 proposed 算沒處理完)
 4. `must_fix` / `overbuilt` → `scripts/gates/loop fix F-n` → 修 → 重跑 G0–G7 + 重現 → `loop resolved`
 5. `ask_user` **不修**,留給 PR 留言問人;`style` 記下不動
-6. `scripts/gates/findings check` 乾淨(或只剩 ask_user)→ 進 S10
+6. `scripts/gates/findings check` 乾淨(或只剩 ask_user)後，stage 這次 commit 的完整內容（含
+   `evidence/spec.approved.yaml`），再跑 `scripts/gates/dashboard specs/{name}/spec.yaml --pre-commit`
+7. pre-commit 全綠才進 S10；它只允許 commit，絕不允許 auto-push。commit 後立即重跑不帶
+   `--pre-commit` 的 delivery dashboard，只有已 commit 且乾淨的批准快照才可推送
 
 **注意**
 
@@ -27,3 +30,4 @@ tags: [workflow, verify, gates]
   被拒絕就停,交給 PR 留言的「需要你決定」;人答了用 `loop decided F-n ship|hold|respec` 記,那是唯一的解除方式。
   換 id 再修會被 `findings add`(同 repro)與 `loop`(幽靈 id)雙雙拒收。
 - 做到哪算夠 = 批准的 examples。審查者發現例子外的 bug 是 `ask_user`,不是叫實作者修。
+- staged 的批准快照只是 `pending_commit`，不能當成 owner 批准證據。

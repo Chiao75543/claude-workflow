@@ -14,7 +14,11 @@
 另外寫一份 evidence/dashboard.json 給 pr-comment 用,並在最後一行說「能不能自動推」——
 全綠、smoke 過、零待決事項才能;不然就是 PR 上要有「需要你決定」。
 
-用法: dashboard <spec.yaml> [--base main] [-o evidence/dashboard.html]
+用法: dashboard <spec.yaml> [--base main] [--pre-commit] [-o evidence/dashboard.html]
+
+`--pre-commit` 只回答「目前內容可不可以 commit」：新／更新的批准快照必須已在 index，
+且工作樹不得再有另一版；它不會宣稱快照已有外部錨定，也永遠不會允許 auto-push。
+commit 後必須再跑一次沒有此旗標的 delivery dashboard，確認 HEAD 內有乾淨快照才可推。
 """
 
 from __future__ import annotations
@@ -24,6 +28,7 @@ import html
 import json
 import pathlib
 import re
+import stat
 import subprocess
 import sys
 
@@ -32,7 +37,7 @@ import _config  # noqa: E402
 from _common import (  # noqa: E402
     evidence_dir, integration_branch, load_spec, read_json, scenario_ids, triage_findings, write_json,
 )
-from _state import tree_fingerprint  # noqa: E402
+from _state import index_fingerprint, tree_fingerprint  # noqa: E402
 
 # 型別宣告。要吃得下常見寫法,否則最該檢查的東西反而隱形:
 #   @MainActor final class XViewModel / actor XService / data class / sealed class / object
@@ -58,15 +63,83 @@ def git(root: pathlib.Path, *args: str) -> str:
         return ""
 
 
+def git_required(root: pathlib.Path, label: str, *args: str) -> str:
+    """安全關卡使用的 Git 讀取；錯誤不能被當成空集合。"""
+    try:
+        result = subprocess.run(["git", *args], cwd=root, capture_output=True, text=True, errors="replace")
+    except (OSError, subprocess.CalledProcessError) as exc:
+        detail = getattr(exc, "stderr", None) or str(exc)
+        raise RuntimeError(f"{label} Git 執行失敗: {detail}") from exc
+    if result.returncode != 0:
+        detail = result.stderr.strip() or result.stdout.strip() or f"exit {result.returncode}"
+        raise RuntimeError(f"{label} Git 執行失敗: {detail}")
+    return result.stdout
+
+
+def approval_anchor_snapshot(root: pathlib.Path, approved: pathlib.Path) -> tuple[str, tuple]:
+    """回傳狀態與不可變 mode/blob token，供裁決前後重驗。"""
+    root_abs = root.absolute()
+    approved_abs = approved.absolute()
+    rel_path = approved_abs.relative_to(root_abs)
+    cursor = root_abs
+    for part in rel_path.parts:
+        cursor = cursor / part
+        if cursor.is_symlink():
+            raise RuntimeError(f"approval path 不得是 symlink: {rel_path}")
+    if not approved_abs.exists() or not stat.S_ISREG(approved_abs.lstat().st_mode):
+        raise RuntimeError(f"approval path 不是一般檔案: {rel_path}")
+
+    rel = rel_path.as_posix()
+    head_line = git_required(root, "approval committed", "ls-tree", "HEAD", "--", rel).strip()
+    index_lines = git_required(root, "approval index", "ls-files", "--stage", "--", rel).splitlines()
+    head_entry = head_line.split("\t", 1)[0].split() if head_line else []
+    index_entries = [line.split("\t", 1)[0].split() for line in index_lines if line]
+    if len(index_entries) > 1 or (index_entries and index_entries[0][2] != "0"):
+        raise RuntimeError(f"approval index 存在衝突 stage: {rel}")
+    head_mode = head_entry[0] if len(head_entry) >= 3 else None
+    head_blob = head_entry[2] if len(head_entry) >= 3 else None
+    index_mode = index_entries[0][0] if index_entries else None
+    index_blob = index_entries[0][1] if index_entries else None
+    if head_mode not in (None, "100644") or index_mode not in (None, "100644"):
+        raise RuntimeError(f"approval snapshot 必須是一般非執行檔: {rel}")
+    worktree_blob = git_required(
+        root, "approval worktree", "hash-object", f"--path={rel}", "--", rel
+    ).strip()
+    token = (rel, head_mode, head_blob, index_mode, index_blob, worktree_blob)
+    if head_blob and index_blob == head_blob and worktree_blob == index_blob:
+        return "committed", token
+    if index_blob and index_blob != head_blob and worktree_blob == index_blob:
+        return "pending_commit", token
+    return "unstaged", token
+
+
+def approval_anchor_state(root: pathlib.Path, approved: pathlib.Path) -> str:
+    """committed / pending_commit / unstaged；pending 絕不等於 owner approval。"""
+    return approval_anchor_snapshot(root, approved)[0]
+
+
 def in_reach_scope(root: pathlib.Path, rel: str, globs: list[str]) -> bool:
     return any(pathlib.Path(root, rel).match(g) or rel.startswith(g.split("*")[0]) for g in globs)
 
 
 def check_reachability(root: pathlib.Path, base: str, config: dict) -> list[dict]:
     """G7:新增的型別有沒有人建構它。缺席類問題唯一的機械防線。"""
-    added = [p for p in git(root, "diff", "--name-only", "--diff-filter=A", f"{base}...HEAD").split("\n") if p]
-    if not added:  # 尚未 commit 的情況
-        added = [p for p in git(root, "diff", "--cached", "--name-only", "--diff-filter=A").split("\n") if p]
+    merge_base = git_required(root, "reachability base", "merge-base", base, "HEAD").strip()
+    committed = {
+        p for p in git_required(
+            root, "committed reachability diff", "diff", "--name-only", "--diff-filter=A",
+            f"{merge_base}...HEAD",
+        ).splitlines() if p
+    }
+    # index 要和 integration merge-base 比，不是和 HEAD 比；這樣同時涵蓋分支已 commit
+    # 與目前 staged 的完整候選樹。set 聯集會去掉兩個視角都列到的同一路徑。
+    staged = {
+        p for p in git_required(
+            root, "staged reachability diff", "diff", "--cached", "--name-only", "--diff-filter=A",
+            merge_base,
+        ).splitlines() if p
+    }
+    added = sorted(committed | staged)
     globs = config["reachability"]["globs"] or []
     in_scope = {p for p in added if in_reach_scope(root, p, globs)}
 
@@ -76,16 +149,11 @@ def check_reachability(root: pathlib.Path, base: str, config: dict) -> list[dict
     # **建構點只能在產品程式碼裡。** 測試檔、markdown、註解都不算 ——
     # 每個型別都有規格測試會 Name(),把測試算進來的話 G7 幾乎必然通過,
     # 那它就完全失去存在意義(對抗審查實證)。
-    tracked = [t for t in git(root, "ls-files").split("\n") if t]
+    tracked = [t for t in git_required(root, "reachability files", "ls-files").splitlines() if t]
     production = {t for t in tracked if in_reach_scope(root, t, globs)}
     contents: dict[str, str] = {}
     for rel in production:
-        path = root / rel
-        if path.is_file() and path.stat().st_size < 2_000_000:
-            try:
-                contents[rel] = path.read_text(errors="ignore")
-            except OSError:
-                pass
+        contents[rel] = git_required(root, f"reachability blob {rel}", "show", f":{rel}")
 
     results = []
     for rel in sorted(in_scope):
@@ -176,11 +244,18 @@ def main(argv: list[str]) -> int:
     root = spec_path.resolve().parents[2]
     spec = load_spec(spec_path)
     config = _config.load(root)
+    pre_commit = "--pre-commit" in argv
     # base 預設跟 pipeline.yaml 的 integration_branch;寫死 main 的話,整合分支叫 develop 的專案
     # `git diff main...HEAD` 出錯回空 → G3「沒有變更的檔案」G7「0 個新型別」靜默變綠(對抗審查實證)。
-    base = argv[argv.index("--base") + 1] if "--base" in argv else integration_branch(root)
-    base_ok = subprocess.run(["git", "rev-parse", "--verify", "-q", f"{base}^{{commit}}"], cwd=root,
-                             capture_output=True).returncode == 0
+    configured_base = integration_branch(root)
+    requested_base = argv[argv.index("--base") + 1] if "--base" in argv else configured_base
+    base = configured_base
+    base_matches_config = requested_base == configured_base
+    base_ok = base_matches_config and subprocess.run(
+        ["git", "rev-parse", "--verify", "-q", f"{base}^{{commit}}"], cwd=root, capture_output=True
+    ).returncode == 0
+    base_problem = (f"--base {requested_base} 不等於設定的整合分支 {configured_base}"
+                    if not base_matches_config else f"找不到整合分支 {base}")
     ev = evidence_dir(spec_path)
     here = pathlib.Path(__file__).parent
 
@@ -194,24 +269,47 @@ def main(argv: list[str]) -> int:
     # 指紋不符時,由 spec-diff 判定是「要重新批准的行為改變」還是「事實修正」。
     # 沒有批准快照就無從判斷 —— 那本身是個問題,要講出來。
     approved = ev / "spec.approved.yaml"
-    if approved.exists():
-        # evidence/ 全部是 AI 可寫的。唯一不在 AI 手裡的錨點是 git 歷史:
-        # 批准快照必須 commit,之後任何改動才會在 diff 裡被人看見。
-        rel_approved = str(approved.resolve().relative_to(root.resolve()))
-        tracked = git(root, "ls-files", "--error-unmatch", rel_approved).strip() != ""
-        dirty = git(root, "status", "--porcelain", "--", rel_approved).strip() != ""
-        if not tracked or dirty:
+    approval_anchor = "missing"
+    approval_anchor_token = None
+    anchor_ready = False
+    if approved.exists() or approved.is_symlink():
+        try:
+            approval_anchor, approval_anchor_token = approval_anchor_snapshot(root, approved)
+        except (RuntimeError, ValueError) as exc:
+            approval_anchor = "git_error"
+            anchor_error = str(exc)
+        anchor_ready = approval_anchor == "committed" or (
+            pre_commit and approval_anchor == "pending_commit"
+        )
+        if approval_anchor == "pending_commit" and pre_commit:
             attention.append({
-                "tag": "無外部錨定", "title": "批准快照沒有 commit",
-                "body": "evidence/ 底下每個檔案 AI 都能重寫。spec.approved.yaml 一定要在批准當下 commit,"
-                        "之後對它的任何改動才會出現在 git diff 裡被人看見。現在它"
-                        + ("還沒被 git 追蹤。" if not tracked else "有未提交的改動。"),
+                "tag": "待提交錨定", "title": "批准快照已進 index，等待 commit 錨定",
+                "body": "這只證明待提交內容與工作樹一致，不證明 owner 曾批准。"
+                        "owner 的真實批准仍是 S5 前置條件；commit 後還要跑嚴格 delivery dashboard。",
+            })
+        elif not anchor_ready:
+            title = ("批准快照必須 stage，且工作樹要與 index 一致" if pre_commit
+                     else "無外部錨定：批准快照未 commit 或有修改")
+            attention.append({
+                "tag": "無外部錨定", "title": title,
+                "body": "一般 delivery 只接受 HEAD 已包含且工作樹乾淨的 spec.approved.yaml。"
+                        + (f" Git 檢查失敗：{anchor_error}" if approval_anchor == "git_error" else ""),
             })
         diff_ok, diff_out = run([str(here / "spec-diff"), str(spec_path)], root)
         factual = [ln.strip() for ln in diff_out.splitlines() if "事實修正" in ln]
-        gates.append({"id": "G1/2", "what": "規格與測試沒被偷改", "ok": frozen_ok and diff_ok,
-                      "note": "指紋比對" if frozen_ok else
-                              ("規格有改,但只是事實修正" if diff_ok else "規格有行為改變 → 要重新批准")})
+        if approval_anchor == "pending_commit" and pre_commit:
+            g12_note = "批准快照待 commit 錨定"
+        elif approval_anchor != "committed":
+            g12_note = "批准快照未錨定"
+        elif frozen_ok:
+            g12_note = "指紋比對"
+        elif diff_ok:
+            g12_note = "規格有改,但只是事實修正"
+        else:
+            g12_note = "規格有行為改變 → 要重新批准"
+        gates.append({"id": "G1/2", "what": "規格與測試沒被偷改",
+                      "ok": frozen_ok and diff_ok and anchor_ready,
+                      "note": g12_note})
         if not diff_ok:
             attention.append({
                 "tag": "要重新批准", "title": "規格的行為契約改過了",
@@ -268,7 +366,7 @@ def main(argv: list[str]) -> int:
         gates.append({"id": "G3", "what": "lint(變更的檔案)", "ok": False,
                       "note": "specs/pipeline.yaml 沒設 lint"})
     elif not base_ok:
-        gates.append({"id": "G3", "what": "lint(變更的檔案)", "ok": False, "note": f"找不到整合分支 {base}"})
+        gates.append({"id": "G3", "what": "lint(變更的檔案)", "ok": False, "note": base_problem})
     elif not changed:
         gates.append({"id": "G3", "what": "lint(變更的檔案)", "ok": True, "note": "沒有變更的檔案"})
     else:
@@ -316,12 +414,17 @@ def main(argv: list[str]) -> int:
                       "note": "specs/pipeline.yaml 沒設 reachability.globs"})
     elif not base_ok:
         reach, unreachable = [], []
-        gates.append({"id": "G7", "what": "新增的東西到得了", "ok": False, "note": f"找不到整合分支 {base}"})
+        gates.append({"id": "G7", "what": "新增的東西到得了", "ok": False, "note": base_problem})
     else:
-        reach = check_reachability(root, base, config)
-        unreachable = [r for r in reach if not r["sites"]]
-        gates.append({"id": "G7", "what": "新增的東西到得了", "ok": not unreachable,
-                      "note": f"{len(reach)} 個新型別 · {len(unreachable)} 個沒有建構點"})
+        try:
+            reach = check_reachability(root, base, config)
+            unreachable = [r for r in reach if not r["sites"]]
+            gates.append({"id": "G7", "what": "新增的東西到得了", "ok": not unreachable,
+                          "note": f"{len(reach)} 個新型別 · {len(unreachable)} 個沒有建構點"})
+        except RuntimeError as exc:
+            reach, unreachable = [], []
+            gates.append({"id": "G7", "what": "新增的東西到得了", "ok": False,
+                          "note": str(exc)[:120]})
     for item in unreachable:
         attention.append({
             "tag": "到不了", "title": f"{item['symbol']} 沒有任何建構點",
@@ -331,6 +434,17 @@ def main(argv: list[str]) -> int:
 
     # smoke —— 功能不對其他免談。證據要新鮮:工作樹指紋對不上就是過期。
     current_tree = tree_fingerprint(root)
+    candidate_index_tree = None
+    if pre_commit:
+        try:
+            candidate_index_tree = index_fingerprint(root)
+            index_matches_worktree = candidate_index_tree == current_tree
+            index_note = "index 與工作樹一致" if index_matches_worktree else "index 與工作樹不一致"
+        except RuntimeError as exc:
+            index_matches_worktree = False
+            index_note = str(exc)[:120]
+        gates.append({"id": "P", "what": "待提交樹已實際驗證", "ok": index_matches_worktree,
+                      "note": index_note})
     smoke = read_json(ev / "smoke.json")
     scripts_green = all(g["ok"] for g in gates)
     if not smoke:
@@ -410,11 +524,46 @@ def main(argv: list[str]) -> int:
 
     # 前面逐關判斷可能要花時間；在產出裁決前再確認一次，避免工作樹在第一次取樣後改變，
     # 卻讓舊 smoke 與審查指紋一起被當成目前狀態。輸出 evidence 本身不在指紋內。
-    if tree_fingerprint(root) != current_tree:
+    latest_tree = tree_fingerprint(root)
+    if latest_tree != current_tree:
         for gate in gates:
             if gate["id"] in ("S", "G9/10") and gate["ok"]:
                 gate["ok"] = False
                 gate["note"] = "證據過期(dashboard 執行期間工作樹變了)"
+    if pre_commit:
+        try:
+            latest_index_tree = index_fingerprint(root)
+            candidate_stable = latest_tree == current_tree and latest_index_tree == latest_tree
+        except RuntimeError:
+            candidate_stable = False
+        if not candidate_stable:
+            for gate in gates:
+                if gate["id"] == "P":
+                    gate["ok"] = False
+                    gate["note"] = "index 與工作樹不一致，或 dashboard 期間已變動"
+
+    # approval 在 evidence 目錄，刻意不進入上面兩種全樹指紋。因此必須獨立重驗，
+    # 防 lint/test 或並行程序在初次驗證後替換、重新 stage 快照。
+    if approval_anchor_token is not None:
+        try:
+            latest_anchor, latest_anchor_token = approval_anchor_snapshot(root, approved)
+            anchor_still_ready = latest_anchor == "committed" or (
+                pre_commit and latest_anchor == "pending_commit"
+            )
+            anchor_stable = latest_anchor_token == approval_anchor_token and anchor_still_ready
+            approval_anchor = latest_anchor
+        except (RuntimeError, ValueError):
+            approval_anchor = "git_error"
+            anchor_stable = False
+        if not anchor_stable:
+            for gate in gates:
+                if gate["id"] == "G1/2":
+                    gate["ok"] = False
+                    gate["note"] = "批准快照在 dashboard 執行期間變了"
+            attention.append({
+                "tag": "無外部錨定", "title": "批准快照在 dashboard 執行期間變了",
+                "body": "初次驗證的 mode/blob 與裁決前不同；必須重新產生證據與審查。",
+            })
 
     stat = git(root, "diff", "--cached", "--shortstat").strip() or git(root, "diff", "--shortstat", f"{base}...HEAD").strip()
     context_name = (spec.get("meta") or {}).get("name", spec_path.parent.name)
@@ -422,6 +571,8 @@ def main(argv: list[str]) -> int:
         "name": context_name,
         "branch": git(root, "rev-parse", "--abbrev-ref", "HEAD").strip(),
         "scale": stat or "—",
+        "phase": "pre-commit" if pre_commit else "delivery",
+        "approval_anchor": approval_anchor,
         "gates": gates, "attention": attention, "screenshots": shots,
     }
     # 命中率紀錄:哪道關擋過東西、擋了幾次,才有數據決定哪道關值得留。
@@ -445,13 +596,17 @@ def main(argv: list[str]) -> int:
     for a in attention:
         a["decision"] = a["tag"] in DECISION_TAGS
     decisions = [a for a in attention if a["decision"]]
-    context["auto_push_ok"] = all_green and not decisions and bool(config.get("auto_push", True))
+    context["auto_push_ok"] = (
+        not pre_commit and all_green and not decisions and bool(config.get("auto_push", True))
+    )
     write_json(ev / "dashboard.json", context)
 
     for g in gates:
         print(f"  {'✓' if g['ok'] else '✘'} {g['id']:<6} {g['what']:<22} {g['note']}")
     print(f"  → {out_path}")
-    if context["auto_push_ok"]:
+    if pre_commit and all_green:
+        verdict = "不行(pre-commit: commit 後須重跑 delivery dashboard)"
+    elif context["auto_push_ok"]:
         verdict = "可以"
     elif not all_green:
         verdict = "不行(有關卡沒過)"

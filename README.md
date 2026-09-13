@@ -41,7 +41,9 @@ S8  實作 GREEN        green-writer(opus):只做 examples 涵蓋的事
 S9a 腳本關卡 G0–G7
 S9b smoke             真的入口跑一次;沒過不派審查
 S9c 付費審查 G9/G10   四類分流,loop 腳本數次數
+S9d pre-commit 證據表  候選快照已 stage 才能 commit;絕不自動推
 S10 commit
+S10½ delivery 證據表   批准快照已 commit 且乾淨才可推
 S11 自動推 + 開 PR    證據表貼成留言;有「需要你決定」才叫你
 S12 CI 獨立重跑       ci: none 就跳過
 S13 ⏸ 你按 merge
@@ -224,7 +226,7 @@ scripts/gates/tests/mutate     # 測試自己有沒有牙齒
 ## 這條線本身是怎麼驗證的
 
 設計不是推理出來的。它在一個真實的 iOS 專案上跑完一個完整功能
-(規格 → 59 條測試 → 實作 → 關卡 → 證據表 → commit),
+(規格 → 59 條測試 → 實作 → 關卡 → pre-commit 證據表 → commit → delivery 證據表),
 過程中撞出**九個設計缺陷**並全部修正,包括:
 
 - 「實作前就綠 = 假測試」會誤判純值型別 → 改成書面豁免 + 機械條件
