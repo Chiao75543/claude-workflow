@@ -20,26 +20,18 @@ sys.path.insert(0, str(pathlib.Path(__file__).parent))
 import _config  # noqa: E402
 from _common import (  # noqa: E402
     MANUAL_MODES, RED_MODES, SMOKE_MODES, Findings, invalid_scenario_modes, load_spec,
-    scenario_ids, scenario_ids_for_modes,
+    scenario_ids, scenario_ids_for_modes, spec_test_sources,
 )
 
 
-def collect_test_ids(root: pathlib.Path, config: dict) -> dict[str, set[str]]:
+def collect_test_ids(config: dict, sources: list[dict]) -> dict[str, set[str]]:
     """回傳 {SC-id: {檔案相對路徑}}。"""
     pattern = re.compile(config["tests"]["scenario_pattern"])
     found: dict[str, set[str]] = {}
-    seen: set[pathlib.Path] = set()
-    for glob in config["tests"]["globs"]:
-        for path in root.glob(glob):
-            if not path.is_file() or path in seen:
-                continue
-            seen.add(path)
-            try:
-                text = path.read_text(errors="ignore")
-            except OSError:
-                continue
-            for match in pattern.finditer(text):
-                found.setdefault(match.group(1), set()).add(str(path.relative_to(root)))
+    for source in sources:
+        text = source["text"]
+        for match in pattern.finditer(text):
+            found.setdefault(match.group(1), set()).add(source["rel"])
     return found
 
 
@@ -60,7 +52,10 @@ def main(argv: list[str]) -> int:
     expected = scenario_ids_for_modes(spec, RED_MODES)
     deferred_smoke = scenario_ids_for_modes(spec, SMOKE_MODES)
     manual = scenario_ids_for_modes(spec, MANUAL_MODES)
-    in_tests = collect_test_ids(root, config)
+    test_sources, scope_source, scope_errors = spec_test_sources(root, spec_path.resolve(), config)
+    for message in scope_errors:
+        f.error("測試範圍", message)
+    in_tests = collect_test_ids(config, test_sources)
 
     for sid in sorted(expected - set(in_tests)):
         f.error(sid, "規格有這條 Scenario,但沒有任何測試引用它")
@@ -73,6 +68,7 @@ def main(argv: list[str]) -> int:
 
     print(f"  規格 {len(declared)} 條 Scenario(RED {len(expected)} · smoke {len(deferred_smoke)}"
           f" · 人工 {len(manual)}) · RED 測試涵蓋 {len(set(in_tests) & expected)} 條")
+    print(f"  測試範圍 {len(test_sources)} 檔 · {scope_source}")
     return f.report("traceability")
 
 

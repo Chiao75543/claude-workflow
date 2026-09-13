@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import pathlib
 import re
+import stat
 import subprocess
 import sys
 
@@ -212,3 +214,144 @@ def write_json(path: pathlib.Path, payload) -> None:
 
 def read_json(path: pathlib.Path):
     return json.loads(path.read_text()) if path.exists() else None
+
+
+def _safe_read_repo_file(root: pathlib.Path, rel: str) -> tuple[bytes | None, str, str]:
+    """Read a repo-relative regular file through anchored, no-follow dirfds.
+
+    Returns (payload, status, detail), where status is ok/missing/error.  Walking
+    each component with openat prevents a parent directory from being swapped to
+    an external symlink between a containment check and the actual read.
+    """
+    rel_path = pathlib.Path(rel)
+    if not rel or rel_path.is_absolute() or ".." in rel_path.parts:
+        return None, "error", "路徑必須是 repo 內的相對路徑"
+    nofollow = getattr(os, "O_NOFOLLOW", None)
+    directory = getattr(os, "O_DIRECTORY", None)
+    nonblock = getattr(os, "O_NONBLOCK", 0)
+    if nofollow is None or directory is None:
+        return None, "error", "平台不支援安全的 O_NOFOLLOW/O_DIRECTORY 讀取"
+
+    current_fd = None
+    file_fd = None
+    try:
+        current_fd = os.open(root, os.O_RDONLY | directory | nofollow)
+        for part in rel_path.parts[:-1]:
+            next_fd = os.open(part, os.O_RDONLY | directory | nofollow, dir_fd=current_fd)
+            os.close(current_fd)
+            current_fd = next_fd
+        file_fd = os.open(rel_path.parts[-1], os.O_RDONLY | nofollow | nonblock, dir_fd=current_fd)
+        info = os.fstat(file_fd)
+        if not stat.S_ISREG(info.st_mode):
+            return None, "error", "不是一般檔案"
+        chunks = []
+        while True:
+            chunk = os.read(file_fd, 1024 * 1024)
+            if not chunk:
+                break
+            chunks.append(chunk)
+        return b"".join(chunks), "ok", ""
+    except FileNotFoundError as exc:
+        return None, "missing", str(exc)
+    except OSError as exc:
+        return None, "error", str(exc)
+    finally:
+        if file_fd is not None:
+            os.close(file_fd)
+        if current_fd is not None:
+            os.close(current_fd)
+
+
+def spec_test_sources(root: pathlib.Path, spec_path: pathlib.Path, config: dict) -> tuple[list[dict], str, list[str]]:
+    """Read the test files owned by one spec exactly once.
+
+    Repository-wide globs are only a legacy discovery fallback.  Once RED inputs or
+    a frozen tests.hash exists, those exact paths define this spec's review and
+    traceability boundary; otherwise another spec reusing SC-001 can contaminate it.
+    """
+    ev = evidence_dir(spec_path)
+    frozen = ev / "tests.hash"
+    red_inputs = ev / "red-inputs.json"
+    raw_paths: list[str] = []
+    errors: list[str] = []
+    root_resolved = root.resolve()
+    frozen_rel = str(frozen.relative_to(root_resolved))
+    red_inputs_rel = str(red_inputs.relative_to(root_resolved))
+    frozen_payload, frozen_status, frozen_detail = _safe_read_repo_file(root_resolved, frozen_rel)
+
+    if frozen_status != "missing":
+        source = "evidence/tests.hash"
+        if frozen_status == "error":
+            errors.append(f"{source} 無法安全讀取: {frozen_detail}")
+        else:
+            try:
+                lines = frozen_payload.decode().splitlines() if frozen_payload is not None else []
+            except UnicodeDecodeError as exc:
+                lines = []
+                errors.append(f"{source} 無法讀取: {exc}")
+            for line_no, line in enumerate(lines, 1):
+                if not line.strip():
+                    continue
+                parts = line.split(None, 1)
+                if len(parts) != 2 or not re.fullmatch(r"sha256:[0-9a-f]{64}", parts[0]):
+                    errors.append(f"{source}:{line_no} 格式不合法")
+                    continue
+                raw_paths.append(parts[1].strip())
+        if not raw_paths and not errors:
+            errors.append(f"{source} 是空的，不能退回全域 globs")
+    else:
+        red_payload, red_status, red_detail = _safe_read_repo_file(root_resolved, red_inputs_rel)
+        if red_status == "missing":
+            red_payload = None
+        source = "evidence/red-inputs.json"
+        if red_status == "error":
+            entries = None
+            errors.append(f"{source} 無法安全讀取: {red_detail}")
+        elif red_status == "ok":
+            try:
+                entries = json.loads(red_payload)
+            except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+                entries = None
+                errors.append(f"{source} 無法讀取: {exc}")
+        else:
+            entries = None
+
+    if frozen_status == "missing" and red_status != "missing":
+        source = "evidence/red-inputs.json"
+        if not isinstance(entries, list):
+            if not errors:
+                errors.append(f"{source} 最外層必須是 list")
+        else:
+            for index, entry in enumerate(entries, 1):
+                tests = entry.get("tests") if isinstance(entry, dict) else None
+                if (not isinstance(tests, list) or not tests
+                        or not all(isinstance(rel, str) and rel.strip() for rel in tests)):
+                    errors.append(f"{source} 第 {index} 筆 tests 必須是非空路徑 list")
+                    continue
+                raw_paths.extend(rel.strip() for rel in tests)
+            if not raw_paths and not errors:
+                errors.append(f"{source} 沒有任何測試路徑，不能退回全域 globs")
+    elif frozen_status == "missing" and red_status == "missing":
+        source = "pipeline tests.globs (legacy fallback)"
+        for glob in config["tests"]["globs"]:
+            for path in sorted(root.glob(glob)):
+                if path.is_file():
+                    raw_paths.append(str(path.relative_to(root)))
+
+    sources = []
+    seen_rel: set[str] = set()
+    for rel in raw_paths:
+        if rel in seen_rel:
+            continue
+        seen_rel.add(rel)
+        payload, status, detail = _safe_read_repo_file(root_resolved, rel)
+        if status != "ok" or payload is None:
+            errors.append(f"{source} 測試檔無法安全讀取: {rel}: {detail}")
+            continue
+        sources.append({
+            "path": root_resolved / rel,
+            "rel": rel,
+            "text": payload.decode(errors="ignore"),
+            "sha256": "sha256:" + hashlib.sha256(payload).hexdigest(),
+        })
+    return sources, source, errors
