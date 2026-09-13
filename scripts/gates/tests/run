@@ -16,6 +16,7 @@
 from __future__ import annotations
 
 import json
+import os
 import pathlib
 import shutil
 import subprocess
@@ -981,6 +982,9 @@ def test_loop(tmp: pathlib.Path) -> None:
 
 def test_findings(tmp: pathlib.Path) -> None:
     """四類分流:沒重現的不收、ask_user 要有問句、ask_user 不能直接 fixed。"""
+    sys.path.insert(0, str(GATES))
+    from _state import tree_fingerprint  # noqa: E402
+
     root = make_repo(tmp / "findings")
     spec = "specs/demo/spec.yaml"
     code, out = run_gate("findings", spec, "add", "--id", "F-1", "--gate", "G10", "--class", "must_fix",
@@ -1015,9 +1019,33 @@ def test_findings(tmp: pathlib.Path) -> None:
     check("全處理完 → OK", code == 0 and "findings: OK" in out, out[:300])
     state = json.loads((root / "specs/demo/evidence/findings.json").read_text())
     check("summary 是提出→作廢→證實", state.get("summary") == {"proposed": 2, "void": 0, "confirmed": 2}, str(state.get("summary")))
-    code, out = run_gate("findings", spec, "dispatched", "--gate", "G9", cwd=root)
+    nested = root / "nested" / "caller"
+    nested.mkdir(parents=True)
+    code, out = run_gate("findings", str(root / spec), "dispatched", "--gate", "G9", cwd=nested)
     state = json.loads((root / "specs/demo/evidence/findings.json").read_text())
-    check("dispatched 記下派過了 + 工作樹指紋", code == 0 and state["dispatched"]["G9"]["tree"].startswith("tree:"), str(state.get("dispatched")))
+    check("從 repo 子目錄 dispatch 仍記下真實 repo root 的工作樹指紋",
+          code == 0 and state["dispatched"]["G9"]["tree"] == tree_fingerprint(root),
+          str(state.get("dispatched")))
+
+    fingerprint_root = make_repo(tmp / "fingerprint-command-failure")
+    commit_base(fingerprint_root)
+    state_module = sys.modules["_state"]
+    real_run = subprocess.run
+    for failed_command in ("read-tree", "rm", "add", "write-tree"):
+        def fail_one_git_command(cmd, *args, _failed=failed_command, **kwargs):
+            if len(cmd) > 1 and cmd[0] == "git" and cmd[1] == _failed:
+                return subprocess.CompletedProcess(cmd, 1, "", f"synthetic {_failed} failure")
+            return real_run(cmd, *args, **kwargs)
+
+        failed_closed = False
+        state_module.subprocess.run = fail_one_git_command
+        try:
+            tree_fingerprint(fingerprint_root)
+        except RuntimeError:
+            failed_closed = True
+        finally:
+            state_module.subprocess.run = real_run
+        check(f"tree fingerprint 的 git {failed_command} 失敗 → fail closed", failed_closed)
 
 
 def test_smoke(tmp: pathlib.Path) -> None:
@@ -1202,6 +1230,84 @@ def test_dashboard_gating_order(tmp: pathlib.Path) -> None:
     check("pr-comment 全乾淨 → 標題是「全乾淨」", code == 0 and "全乾淨" in out and "需要你決定" not in out, out[:300])
     code, _ = run_gate("pr-comment", spec, "--check", cwd=root)
     check("pr-comment --check 全乾淨 → 0", code == 0)
+
+    def review_ready(name: str) -> pathlib.Path:
+        case_root = repo(name)
+        run_gate("test-review", spec, cwd=case_root)
+        freeze(case_root, ["Tests/DemoTests.swift"])
+        run_gate("smoke", spec, cwd=case_root)
+        dispatched(case_root)
+        return case_root
+
+    for missing_gate in ("G9", "G10"):
+        root = review_ready(f"order-missing-{missing_gate.lower()}")
+        findings_path = root / "specs/demo/evidence/findings.json"
+        state = json.loads(findings_path.read_text())
+        state["dispatched"].pop(missing_gate)
+        findings_path.write_text(json.dumps(state))
+        code, out = run_gate("dashboard", spec, cwd=root)
+        review_line = next(ln for ln in out.splitlines() if "G9/10" in ln)
+        check(f"只缺 {missing_gate} dispatch → fail closed",
+              code == 1 and "✘" in review_line and "沒有派過" in review_line and missing_gate in review_line,
+              review_line.strip())
+
+    malformed_cases = (
+        ("scalar-record", "G9", "legacy"),
+        ("missing-tree", "G10", {}),
+        ("non-string", "G9", {"tree": 123}),
+        ("bad-prefix", "G10", {"tree": "sha1:" + "0" * 40}),
+        ("non-hex", "G9", {"tree": "tree:" + "z" * 40}),
+        ("bad-length", "G10", {"tree": "tree:" + "0" * 41}),
+    )
+    for name, gate, bad_record in malformed_cases:
+        root = review_ready(f"order-malformed-{name}")
+        findings_path = root / "specs/demo/evidence/findings.json"
+        state = json.loads(findings_path.read_text())
+        state["dispatched"][gate] = bad_record
+        findings_path.write_text(json.dumps(state))
+        code, out = run_gate("dashboard", spec, cwd=root)
+        review_line = next(ln for ln in out.splitlines() if "G9/10" in ln)
+        check(f"{gate} dispatch {name} → fail closed",
+              code == 1 and "✘" in review_line and "無效" in review_line and gate in review_line,
+              review_line.strip())
+
+    for stale_gate in ("G9", "G10"):
+        root = review_ready(f"order-stale-{stale_gate.lower()}")
+        findings_path = root / "specs/demo/evidence/findings.json"
+        state = json.loads(findings_path.read_text())
+        state["dispatched"][stale_gate]["tree"] = "tree:" + "0" * 40
+        findings_path.write_text(json.dumps(state))
+        code, out = run_gate("dashboard", spec, cwd=root)
+        review_line = next(ln for ln in out.splitlines() if "G9/10" in ln)
+        check(f"只有 {stale_gate} dispatch 過期 → fail closed",
+              code == 1 and "✘" in review_line and "過期" in review_line and stale_gate in review_line,
+              review_line.strip())
+
+    root = review_ready("order-tree-changed-during-dashboard")
+    wrapper_dir = tmp / "dashboard-git-wrapper"
+    wrapper_dir.mkdir()
+    wrapper = wrapper_dir / "git"
+    real_git = shutil.which("git")
+    marker = wrapper_dir / "mutated"
+    target = root / "ChangedDuringDashboard.txt"
+    wrapper.write_text(
+        "#!/usr/bin/env python3\n"
+        "import os, pathlib, subprocess, sys\n"
+        f"proc = subprocess.run([{real_git!r}, *sys.argv[1:]])\n"
+        f"marker = pathlib.Path({str(marker)!r})\n"
+        "if os.environ.get('GIT_INDEX_FILE') and sys.argv[1:] == ['write-tree'] and not marker.exists():\n"
+        "    marker.write_text('mutated')\n"
+        f"    pathlib.Path({str(target)!r}).write_text('changed after first snapshot\\n')\n"
+        "raise SystemExit(proc.returncode)\n")
+    wrapper.chmod(0o755)
+    original_path = os.environ.get("PATH", "")
+    os.environ["PATH"] = str(wrapper_dir) + os.pathsep + original_path
+    try:
+        code, out = run_gate("dashboard", spec, cwd=root)
+    finally:
+        os.environ["PATH"] = original_path
+    check("dashboard 裁決期間工作樹改變 → freshness fail closed",
+          code == 1 and "dashboard 執行期間工作樹變了" in out, out[-500:])
 
     (root / "Tests" / "DemoTests.swift").write_text((root / "Tests" / "DemoTests.swift").read_text() + "// touched\n")
     code, out = run_gate("dashboard", spec, cwd=root)
