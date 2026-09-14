@@ -1,0 +1,958 @@
+meta:
+  name: workflow-autonomy
+  ticket: null
+  capability: workflow-orchestration
+  change_type: MODIFIED
+  draft_version: 5
+
+why: |
+  當 Owner 核准功能規格與工程界線後，規格範圍內的實作、review 修正、驗證、
+  證據整理與功能分支交付應由 pipeline 持續完成。現行流程仍可能為純工程修正
+  重複詢問，或在測試已綠時留下未提交證據。這次補上可機械驗證的授權、修復、
+  證據與狀態契約；產品行為、平台權限與人工 merge 邊界不變。
+
+what:
+  changes:
+    - 新增 autonomy version 1 的 engine-neutral 專案設定
+    - 新增規格範圍內修復計畫與阻擋分類的 machine-readable ledger
+    - 凍結測試修正必須重新獨立審查、擷取 RED 並重新凍結
+    - 最終證據必須存在於 Git index 或 HEAD，不能只存在工作目錄
+    - 狀態需記錄 stage、下一步、交付與回報是否送達
+    - mode 6b 可在 red-inputs 內使用不經 shell 的 static-command runner
+    - 既有 finding 只在同一重現於新版本再失敗時以原 ID 重開
+  non_goals:
+    - 不自動修改產品行為或驗收條件
+    - 不新增依賴、擴大資料或系統權限
+    - 不繞過平台拒絕、安全提示或人工核准
+    - 不自動 merge 或直接 push 整合分支
+    - 不統一 Claude 與 Codex 的實際模型名稱或工具能力
+    - 不提供 OS 層 filesystem confinement；未經 gates 的 writer 仍由既有 sandbox／平台權限約束
+
+impact:
+  files:
+    - scripts/gates/_common.py
+    - scripts/gates/_config.py
+    - scripts/gates/_state.py
+    - scripts/gates/config-check
+    - scripts/gates/autonomy
+    - scripts/gates/evidence-check
+    - scripts/gates/findings
+    - scripts/gates/freeze-check
+    - scripts/gates/loop
+    - scripts/gates/runs
+    - scripts/gates/dashboard
+    - scripts/gates/pr-comment
+    - scripts/gates/red-capture
+    - scripts/gates/test-review
+    - scripts/gates/traceability
+    - scripts/gates/tests/run
+    - scripts/gates/tests/mutate
+    - commands/workflow/init.md
+    - commands/workflow/test.md
+    - commands/workflow/implement.md
+    - commands/workflow/verify.md
+    - commands/workflow/dashboard.md
+    - commands/workflow/runs.md
+    - agents/green-writer.md
+    - agents/test-reviewer.md
+    - agents/code-adversary.md
+    - skills/workflow-orchestrator/SKILL.md
+    - skills/workflow-orchestrator/PIPELINE.md
+    - skills/workflow-orchestrator/references/spec-template.yaml
+  call_sites: |
+    全 repository 搜尋 _config.load、status.json、red-inputs.json、test-review.json、
+    dashboard.json、auto_push_ok 與 workflow stage 指令。producer→consumer 固定為：
+    autonomy plan/complete/verify-tests 寫 autonomy.json，autonomy check、dashboard、verify 與
+    orchestrator 讀；evidence-check 讀 delivery/red/smoke/hash 並由 verify、pr-comment、runs delivery
+    使用；runs --set 是 status.json 唯一 writer，各 workflow command、dashboard 與 runs list 讀；
+    static entry 由 red-capture 執行，test-review、traceability、freeze-check 讀 checks/tests/hash；
+    finding revalidation 由 findings/loop 寫，dashboard 與 G9/G10 dispatch 讀。共用 snapshot 與
+    atomic JSON helper 由 _state.py/_common.py 提供。MindEY 接入由另一 worktree 負責，本變更只
+    提供向後相容 shared contract。
+  risks:
+    - evidence-check 啟用時會揭露原本未追蹤或被 ignore 的證據，專案需明確加入 index
+    - static-command 會執行 repository 內宣告的 argv，仍受既有工作目錄權限與平台政策約束
+
+design: |
+  specs/pipeline.yaml 只新增可選的 autonomy.version。version 0 保留既有行為；version 1
+  啟用一致的 ledger、交付證據與狀態契約。模型設定保留 draft、review、build 三個邏輯
+  角色，由 Claude 或 Codex 自己映射，不在 gates 內硬編 vendor model id。
+
+  scripts/gates/autonomy 的固定語法為：
+  `autonomy <spec> plan --expect-generation N --id ID --kind KIND --file PATH... [--summary TEXT]`、
+  `autonomy <spec> complete --expect-generation N --id ID --evidence PATH...`、
+  `autonomy <spec> verify-tests --expect-generation N --id ID`、`autonomy <spec> check`。
+  examples 的 in 代表 fixture 中由 gate 自 Git/artifact 讀到的狀態，不是允許 caller 傳入
+  approved/current/fresh 布林旗標；正式 CLI 只接受此處列出的參數。
+  每次操作只在完整驗證後原子寫入 evidence/autonomy.json schema version 1，stdout 輸出同一筆
+  canonical JSON；失敗不得部分寫入。repair 欄位固定為 id、kind、status、files、spec_hash、
+  scope_sources、blocked_on、reason、plan_version、baseline_entries、baseline_worktree_token、evidence、
+  planned_at、completed_at。
+
+  plan 不接受 approved/current/fresh 之類的 caller 布林值，只讀 HEAD 中已 commit 的 approval anchor；
+  index-only candidate 固定回 pending_commit，不能當成已批准。anchor 包含 evidence/spec.approved.yaml、
+  spec.hash 與 approval.json；approval.json 記錄 schema_version、source、source_ref、
+  approved_spec_sha256、approved_at。source 只允許 owner_chat、owner_api；source_ref 必須是非空 opaque
+  reference。approval storage、commit 與 tree OID 由 gate 現場從 Git 推導，不寫入 approval.json，避免
+  artifact 對包含自己的 tree/commit 形成自我參照。approved_at 不作時效
+  推論，freshness 僅表示 hash 與被檢查 snapshot 一致。若 owner 要求強身分保證，必須在後續版本新增
+  signature bytes、algorithm、key id 與 trust root；本版不得只用 external_signature 標籤冒充驗章。
+  gate 驗證三者內容與 HEAD snapshot 一致並在裁決前重算 token，但 repository 腳本
+  無法驗證 source_ref 真由 owner 產生，這是必須由 owner 接受或改採外部簽章的 assurance gap。
+  scope 是 impact.files 的精確 repo-relative 路徑、專案
+  tests.globs，或該 spec 的 evidence 目錄；空 files、任一越界、絕對路徑、`..`、既有 symlink
+  component 或混合合法／非法清單會整筆拒絕。不存在的新檔只有精確列在 impact.files 才可 plan。
+  plan 是可稽核的程序授權，不是 OS filesystem capability；orchestrator 在每次實際寫入前必須重跑
+  plan/check 的同一 source tree、對目標逐段 lstat 並拒絕當下可見的 symlink。此檢查只提供稽核與
+  fail-closed 判定，不宣稱消除 lstat→writer open 的競態，也不取代既有 sandbox。寫入後 complete
+  比對 plan 保存的 baseline_entries 與目前 snapshot；除了 gate-owned autonomy.json 與該次 CLI
+  明列、且必須位於該 spec evidence 目錄內的 evidence paths，其餘新增／修改／刪除的 path 都必須是
+  repair.files 子集。任何繞過這組 CLI
+  的 writer 不得宣稱受 autonomy 保護。
+
+  autonomy.json schema version 1 記錄 repair plan。
+  implementation、review_fix、evidence、format 只有在 approved spec impact、專案測試 glob
+  或該 spec evidence 目錄內才可持續；frozen_test 必須走獨立 test-review、RED 與 tests.hash
+  重建；product_change 與 permission 直接形成 owner 或 permission blocker。
+  autonomy.json 頂層固定為 schema_version:1、generation、spec_hash、repairs、history、updated_at；
+  generation 是從 1 開始的整數，每次成功 mutation 加 1。repair kind 只允許 implementation、
+  review_fix、evidence、format、frozen_test、product_change、permission；status 只允許 planned、
+  complete、blocked、rejected。scope_sources item 固定為 path 與 source（impact、test_glob、evidence）。
+  hash 一律 `sha256:<64 lowercase hex>`，時間一律含 offset 的 RFC3339 seconds。repair 另保存
+  baseline_entries 與 baseline_worktree_token：在 plan 寫 ledger 前，對
+  `git ls-files -co --exclude-standard` 的非 symlink regular files保存依 path 排序的
+  `{path, mode, sha256}` 完整 entries，token 是其 canonical digest；complete 用 entries 逐 path 求 delta，
+  ignored path 與 `.git` 不在此程序稽核承諾內。plan_version 等於 request_sha256；request canonical JSON
+  只含 id、kind、排序去重的 files、summary 與已固定 anchor 的 spec_hash，不含 expect-generation、
+  scope_sources 或時間。evidence item 固定為 path、sha256、bytes、tree_token；
+  complete 只接受該 spec evidence 目錄內的 canonical regular paths，從固定 Git snapshot 讀 CLI 提供的
+  paths 並生成這些欄位；空檔、目錄外、symlink、snapshot 漂移、hash 漂移或 plan_version 不符都拒絕。
+  schema 合法的 plan
+  無論 planned、blocked 或 rejected 都追加 audit record；CLI/schema 錯誤不寫。
+  complete 只接受目前 plan_version 的 planned 非 frozen_test repair；相同 evidence 重複 complete 是
+  idempotent 0 且不新增 history，unknown id、錯誤狀態、舊 plan version 或不同 evidence 皆為 1。
+  check 對 version 1 的空 ledger、planned/rejected/blocked repair 或失效 completion 回 1；只有至少一筆
+  repair 且全部有效 complete 才回 0。frozen_test 只能由 verify-tests 結案。
+
+  autonomy stdout result 固定為 schema_version、operation、status、reason、exit_code、written、
+  generation、expected_generation、actual_generation、repair、may_continue、evidence_saved、
+  test_contract_rebuilt、idempotent、blocked_on、bypass_attempted、required_action；不適用的 nullable
+  欄位明確為 null。repair 是上述完整 repair object
+  或 null。ledger history item 固定為 generation、operation、repair_id、request_sha256、result_status、
+  reason、recorded_at；request_sha256 由 canonical CLI request 產生。
+
+  autonomy 與 status 均在單一 lock 內 read-validate-write。autonomy 驗證順序固定為 CLI/schema →
+  固定並驗證 approval source tree/anchor → 計算 canonical mutation → 已存在且 canonical mutation
+  （排除 expect-generation）完全相同的 idempotent replay → generation CAS → scope/repair transition →
+  frozen artifact precedence。idempotent replay 直接回原結果與目前 generation、不寫 history；status
+  不提供 idempotent replay，順序固定為 CLI/schema → generation CAS → semantic validation，每次成功
+  update 都加一代。其餘 --expect-generation 不同時回
+  `{status: conflict, expected_generation, actual_generation, written: false}` 與 exit 1。重複 repair ID
+  若 canonical request 完全相同則 idempotent 0，不同 request 則 1 且不覆寫。
+  讀 HEAD 時以開始 commit/tree OID 固定內容，並在 atomic rename 前重讀 HEAD；OID 改變即回
+  snapshot_drift 且不寫，避免 approval/scope 驗證與 ledger commit 間的 TOCTOU。
+
+  frozen_test 的順序固定為：舊 tests.hash → review-dispatch.json 與 test-review.agent.json（由
+  orchestrator 記錄 writer task id、reviewer task id、completion ref 與 tree token；兩者必須不同）→
+  agent review 列出變更前後
+  test SHA-256、writer_id、assertion_weakened=false）→ 重新執行 red-capture 產生含目前 spec hash、
+  test SHA-256 與 tree token 的 red.json → 完整 test-review 產生同一批 SHA-256 的 test-review.json →
+  最後才由 `freeze-check <spec> --replace-tests-hash <review-token>` 寫新 tests.hash。verify-tests
+  只讀並交叉比對這些 artifact，不自行重算或
+  改寫 hash；任何缺件、同人、舊 token、弱化、只重打 hash 或裁決前漂移都維持 planned 並回 1。
+  多項錯誤同時存在時依 missing_artifact、invalid_independent_review、assertion_weakened、
+  stale_red_evidence、tests_hash_mismatch、snapshot_drift 的順序回第一個 reason；examples 各自隔離
+  單一失敗，以免測試依賴未定義的錯誤覆蓋順序。
+  core 只能驗證記錄的 task id/token 相異與一致，不能驗證平台身分未被偽造；這是第二個 owner
+  必須接受或要求平台簽章的 assurance gap。
+  review-dispatch 與 agent artifact schema version 1 各自固定記錄 writer_task_ref、reviewer_task_ref、
+  completion_ref、tree_token、created_at；test-review.json 另含 status、before_tests、after_tests、
+  assertion_weakened、reviewed_examples、review_token 與 reviewed_at。review_token 是
+  SHA-256(canonical JSON of dispatch refs, tree_token, before_tests, after_tests, assertion_weakened,
+  reviewed_examples)，freeze-check 只接受與目前 artifacts 重算值相同的 token。before_tests/after_tests 是依 path 排序的
+  `{path, sha256}` 非空陣列；reviewed_examples 是依 Scenario 排序的 `{scenario, examples}` 非空陣列。
+
+  scripts/gates/evidence-check 從同一 Git snapshot 內的 manifest、red.json、smoke.json、hash 與
+  它們引用的檔案建立非空 final delivery set。--index 在開始與裁決前固定重驗 index tree；
+  --commit 固定並重驗 HEAD OID。只接受同一 snapshot 內的非空一般檔；missing、empty、stale、
+  repo 外、symlink、不同 snapshot 或 Git 失敗都逐檔 fail closed。--index 只要求 delivery set
+  與 worktree 相符；--commit 只要求 delivery set 與 HEAD 相符，不以其他 WIP 阻止補證據 commit。
+  manifest 固定為 evidence/delivery.json schema version 1，欄位是 schema_version、spec_hash、
+  approval_commit、approval_tree、files；approval_commit/approval_tree 由 Git 找到包含核准三件組的
+  committed anchor，不寫回 approval artifact 本身。每個 files item 有 path、sha256 與 source；files 不列 delivery.json 或 status.json，
+  這兩個 root 由 checker 額外納入 final set，避免自我參照。source 只允許 spec、approval、freeze、
+  red、review、smoke、finding、autonomy、dashboard。final set 必含 manifest、status、spec、approval
+  artifacts、所有適用 gate 的 root evidence與其引用檔。committed evidence token 是
+  SHA-256(canonical JSON of manifest-declared path/blob pairs)，不包含 manifest/status；checker 仍驗證
+  manifest/status 與 payload 同在被指定的 index/HEAD snapshot。輸出固定為 schema_version、status、
+  reason、exit_code、storage、snapshot、token、files、invalid_files、delivery_ready；files item 固定為
+  path、sha256、source、bytes，invalid_files item 固定為 path、reason。零 files 失敗；多重錯誤以 path
+  排序且每個 path 只列首個
+  優先原因：outside_repo、symlink_or_nonregular、missing、empty、snapshot_mismatch、hash_mismatch。
+
+  runs status schema version 1 固定記錄 schema_version、generation、pipeline_state、stage、
+  next_step、blocked_on、delivery、report 與 updated_at。stage 是 null 或 `S0`–`S10`；next_step 是 null
+  或非空單行字串；blocked_on 是 null、owner、permission、platform 或 gate。pipeline_state 只允許 running、waiting、
+  blocked、complete；delivery.state 只允許 local、committed、pr_open、merged；report.state 只允許
+  pending、sent、denied。pr_open 必須有 URL ref，merged 必須有 commit ref；partial update 保留
+  未指定欄位，unknown 值整筆不寫。report denied 只代表回報通道失敗，不改本地 pipeline_state；
+  repair_kind=permission 只表示完成必要執行步驟的權限被拒。
+  `runs --set <spec> --expect-generation N` 後可帶 --pipeline-state、--stage、--next-step、--blocked-on、
+  --delivery-state、--delivery-ref、--report-state、--report-reason、--committed-evidence-token；至少一項。
+  每次更新以 generation compare-and-swap 原子落盤；舊 status 缺欄位時保守讀為 schema_version=0、
+  generation=0、pipeline_state=waiting、stage=null、next_step=null、blocked_on=null、
+  delivery={state: local, ref: null, validation: null}、report={state: pending, reason: null}、updated_at=null。
+  delivery=committed/pr_open 時 runs 必須在目前 HEAD 直接重跑 evidence-check --commit，比對 caller token
+  後把 checker 回傳的 snapshot/token 寫入 delivery.validation；pr_open 另須有 URL ref。token 綁定
+  payload blobs 而非 status 本身，所以後續只更新 status 的 commit 不會自我參照；最終 evidence-check
+  仍須證明相同 payload 與新版 status 同在交付 HEAD，不能只信 caller 宣告。
+  初次由 legacy status 升級時 caller 必須 expect generation 0，成功後寫 schema version 1、generation 1；
+  compare-and-swap 失敗與 autonomy 相同，回 conflict、written:false 與 exit 1。
+  runs stdout result 固定為完整 status record 加上 status、reason、exit_code、written、
+  expected_generation、actual_generation、owner_merge_required、retry_via_other_channel；不適用欄位為 null。
+
+  6b static-command 是 red-inputs 的 per-entry runner override。它以 argv list 執行且不經 shell，
+  exit 1 且輸出 STATIC_ASSERTION 才是 true RED；exit 0 是實作前已通過，其他 exit 是 error，
+  timeout 是 hang。entry 使用 runner、argv、timeout_seconds、tests 與 checks；每個 check 使用
+  scenario 與 1-based examples。每個 approved example 都要有 check，tests 內的 checker 與依賴檔
+  仍需獨立審查、逐 example traceability 與 hash 凍結。marker 必須是 stdout 或 stderr 中
+  大小寫精確、行首為 `STATIC_ASSERTION:` 的完整行；timeout 會終止 process group 並保存 partial log。
+  argv 必須是非空字串陣列、timeout_seconds 是正整數、cwd 固定 repo root；unknown runner、空 argv、
+  非法 example index 或重複／錯誤 Scenario 是 schema error。tests 必須涵蓋 argv 內 repo script 及其
+  repo-local manifest imports；無法機械界定依賴時拒絕並要求明列後由 test-review 驗證。
+  每個 static red result 固定記錄 schema_version、scenario、example、argv、timeout_seconds、exit_code、
+  stdout_path、stderr_path、failure_class、marker_lines、red_valid、started_at、finished_at、tree_token；
+  red.json 頂層固定為 schema_version、spec_hash、runner_results、status、generated_at，runner_results
+  依 Scenario/example 排序。stdout/stderr 一律分檔保存原始 bytes，不把合併輸出冒充原始 log。
+
+  所有新增或擴充的 gate 都支援 `--help`（exit 0）與 `--schema`（exit 0 並輸出完整 canonical JSON
+  Schema）；正式執行不得接受 schema 未列出的參數。所有 CLI 統一以 0 表示操作成功或 check 通過，
+  1 表示 schema 合法但版本不支援、已記錄 blocker、契約或執行結果不通過，2 表示命令列、JSON/YAML
+  或欄位型別不合法。examples 的 out 是完整 canonical stdout／落盤結果的必要 projection：省略欄位
+  表示該 example 不額外斷言，`null` 則表示完整結果中必須明確為 null；完整欄位集合以 design 與
+  `--schema` 為準。
+
+  findings 的固定語法為：
+  `findings add <spec> --id ID --kind KIND --check CHECK --location LOCATION --repro-json PATH`、
+  `findings revalidate <spec> --id ID`、`loop <spec>`。repro-json schema version 1 固定記錄 argv、
+  path_indices、cwd、stdin_sha256、environment、inputs；path_indices 是不重複的 0-based argv index，
+  environment 只允許 spec 宣告的非秘密 key/value，inputs 是依名稱
+  排序的 `{name, sha256}`。revalidate 必須從 ledger 讀 repro-json，在固定 snapshot 實際執行 argv，
+  caller 不得傳 identity_current/repro_fails 布林值。
+  finding canonical identity 是 SHA-256(canonical JSON)，JSON 含 spec name、Scenario/gate、kind、check、
+  canonical location 與完整 semantic repro（argv、cwd、stdin_sha256、environment、inputs）。kind/check
+  是非空穩定 identifier；location 是 repo-relative `path:line` 或 `none`。只有 repro-json schema 明列為
+  path 的 cwd 與 argv path_indices 會正規化為 repo-relative，其他 argv token byte-for-byte 保留順序；
+  JSON key sorted、UTF-8 無空白。執行時的 platform metadata 與當前 snapshot token 是 revalidation
+  context，不改 identity；標題也不是 identity。
+  同 identity 不得換 ID 或重置 fixes；不同 identity 不得覆寫既有 ID。保留 MAX_FIXES=2、第三次 parked、
+  fixed 後同 identity 在當前 snapshot 再失敗時以原 ID reappear→flipflop，以及 G9/G10 最多重派一次。
+  無法界定影響範圍時 full rerun 指 G0–G7、smoke、G9 與 G10，不得寫沿用 PASS。
+
+  `evidence-check <spec> --index|--commit` 與 `runs --set` stdout 都是完整結果 JSON。
+  SC-039/046 由正式 `scripts/gates/tests/run` 在暫存 Git repository 直接呼叫 config-check、autonomy、
+  red-capture、test-review、traceability、freeze-check、evidence-check 與 runs，不得 stub/mock；逐步保存
+  argv、stdout JSON、exit、index tree OID 與不同的 HEAD commit OID。它會實際 runs --set，但不執行
+  network、push、PR 或 merge；pr_ready 只代表本地契約可交付。命令表中的
+  `<token-from-prior-command>` 由 harness 解析上一個 evidence-check 的 token 後代入；保存的 argv 必須是
+  完整展開值，不能把 placeholder 寫進 evidence。
+  SC-046 的 v0 oracle 由 approval source_tree 取出基準 scripts，在成對的乾淨 temp repo 對相同 fixture
+  依序執行 config-check、red-capture、test-review、traceability、freeze-check、findings、loop、dashboard
+  與 runs；逐 command 比對 exit、normalized stdout/stderr 與 Git/file side effects。只正規化 temp root
+  絕對路徑與 RFC3339 timestamp，不忽略其他差異。candidate 在 version 0 不得建立 autonomy/delivery ledger；
+  基準 command 不存在的新 gate 只測其 version 0 inert/no-write 契約，不能拿新輸出冒充 baseline 相容。
+
+requirements:
+  - id: REQ-000
+    statement: Pipeline SHALL 對 autonomy contract 做明確版本協商且不改變 version 0 行為
+    completeness:
+      empty_boundary: [SC-021]
+      error_path: [SC-023, SC-040]
+      concurrency: "N/A — config-check 對單一 pipeline.yaml 做唯讀驗證"
+      illegal_state: [SC-023, SC-040]
+      authorization: "N/A — 版本檢查不授予工程或產品修改權"
+      data_migration: [SC-021, SC-022]
+    scenarios:
+      - id: SC-021
+        mode: 6b
+        given: {autonomy_key: absent_or_version_zero, existing_swift_flow: configured}
+        when: check_config
+        then: {status: passed, effective_version: 0, legacy_behavior_preserved: true, exit_code: 0}
+        examples:
+          - in: {autonomy_key_present: false}
+            out: {status: passed, effective_version: 0, legacy_behavior_preserved: true, exit_code: 0}
+          - in: {autonomy: {version: 0}}
+            out: {status: passed, effective_version: 0, legacy_behavior_preserved: true, exit_code: 0}
+
+      - id: SC-022
+        mode: 6b
+        given: {autonomy_version: 1, existing_models: [draft, review, build]}
+        when: check_config
+        then: {status: passed, effective_version: 1, models: {draft: fable, review: fable, build: opus}, exit_code: 0}
+        examples:
+          - in: {autonomy: {version: 1}, models: {draft: fable, review: fable, build: opus}}
+            out: {status: passed, effective_version: 1, models: {draft: fable, review: fable, build: opus}, exit_code: 0}
+
+      - id: SC-023
+        mode: 6b
+        given: {autonomy_version: unsupported_integer}
+        when: check_config
+        then: {status: rejected, reason: unsupported_autonomy_version, exit_code: 1}
+        examples:
+          - in: {autonomy: {version: 2}}
+            out: {status: rejected, reason: unsupported_autonomy_version, exit_code: 1}
+
+      - id: SC-040
+        mode: 6b
+        given: {autonomy_value_or_version_type: invalid}
+        when: check_config
+        then: {status: rejected, reason: invalid_autonomy_schema, exit_code: 2}
+        examples:
+          - in: {autonomy: null}
+            out: {status: rejected, reason: invalid_autonomy_schema, exit_code: 2}
+          - in: {autonomy: {version: one}}
+            out: {status: rejected, reason: invalid_autonomy_schema, exit_code: 2}
+
+  - id: REQ-001
+    statement: Pipeline SHALL 將核准規格內的工程修正與需要新決策的變更可靠分流
+    completeness:
+      empty_boundary: [SC-024]
+      error_path: [SC-002, SC-003, SC-004, SC-024, SC-025, SC-027, SC-041, SC-047, SC-050, SC-051, SC-056, SC-057, SC-058, SC-059]
+      concurrency: [SC-051]
+      illegal_state: [SC-002, SC-024, SC-025, SC-027, SC-041, SC-047, SC-050, SC-051, SC-056, SC-057, SC-058, SC-059]
+      authorization: [SC-003, SC-004]
+      data_migration: "N/A — version 0 ledger 不搬移，version 1 首次使用時建立新檔"
+    scenarios:
+      - id: SC-001
+        mode: 6b
+        given: {autonomy_version: 1, repair_kind: approved_engineering, files: approved_scope}
+        when: plan_repair
+        then: {status: planned, blocked_on: null, may_continue: true, exit_code: 0}
+        examples:
+          - in: {expect_generation: 0, id: R-001, kind: review_fix, files: [scripts/gates/autonomy]}
+            out: {status: planned, blocked_on: null, may_continue: true, exit_code: 0}
+          - in: {expect_generation: 0, id: R-002, kind: implementation, files: [scripts/gates/evidence-check]}
+            out: {status: planned, blocked_on: null, may_continue: true, exit_code: 0}
+          - in: {expect_generation: 0, id: R-003, kind: evidence, files: [specs/workflow-autonomy/evidence/red.json]}
+            out: {status: planned, blocked_on: null, may_continue: true, exit_code: 0}
+          - in: {expect_generation: 0, id: R-004, kind: format, files: [scripts/gates/tests/run]}
+            out: {status: planned, blocked_on: null, may_continue: true, exit_code: 0}
+
+      - id: SC-002
+        mode: 6b
+        given: {autonomy_version: 1, repair_kind: review_fix, files: outside_approved_scope}
+        when: plan_repair
+        then: {status: rejected, reason: outside_approved_scope, exit_code: 1}
+        examples:
+          - in: {expect_generation: 0, id: R-001, kind: review_fix, files: [unrelated/Product.swift]}
+            out: {status: rejected, reason: outside_approved_scope, exit_code: 1}
+          - in: {expect_generation: 0, id: R-001, kind: review_fix, files: [scripts/gates/autonomy, unrelated/Product.swift]}
+            out: {status: rejected, reason: outside_approved_scope, exit_code: 1}
+          - in: {expect_generation: 0, id: R-001, kind: review_fix, files: [../outside.py]}
+            out: {status: rejected, reason: outside_approved_scope, exit_code: 1}
+          - in: {expect_generation: 0, id: R-001, kind: review_fix, files: [/tmp/outside.py]}
+            out: {status: rejected, reason: outside_approved_scope, exit_code: 1}
+
+      - id: SC-003
+        mode: 6b
+        given: {autonomy_version: 1, repair_kind: product_change}
+        when: plan_repair
+        then: {status: blocked, blocked_on: owner, may_continue: false, exit_code: 1}
+        examples:
+          - in: {expect_generation: 0, id: R-001, kind: product_change, files: [specs/workflow-autonomy/spec.yaml], summary: change_expected_output}
+            out: {status: blocked, blocked_on: owner, may_continue: false, exit_code: 1}
+
+      - id: SC-004
+        mode: 6b
+        given: {autonomy_version: 1, repair_kind: permission}
+        when: plan_repair
+        then: {status: blocked, blocked_on: permission, bypass_attempted: false, exit_code: 1}
+        examples:
+          - in: {expect_generation: 0, id: R-001, kind: permission, files: [scripts/gates/tests/run], summary: required_test_command_permission_denied}
+            out: {status: blocked, blocked_on: permission, bypass_attempted: false, exit_code: 1}
+
+      - id: SC-024
+        mode: 6b
+        given: {autonomy_version: 1, approved_snapshot: missing, repair_kind: implementation}
+        when: plan_repair
+        then: {status: rejected, reason: missing_approved_snapshot, may_continue: false, exit_code: 1}
+        examples:
+          - in: {expect_generation: 0, id: R-001, kind: implementation, files: [scripts/gates/autonomy], fixture_approved_snapshot: missing}
+            out: {status: rejected, reason: missing_approved_snapshot, may_continue: false, exit_code: 1}
+
+      - id: SC-025
+        mode: 6b
+        given: {autonomy_version: 1, approved_snapshot: present, current_spec_hash: drifted}
+        when: plan_repair
+        then: {status: rejected, reason: spec_hash_mismatch, may_continue: false, exit_code: 1}
+        examples:
+          - in: {expect_generation: 0, id: R-001, kind: review_fix, files: [scripts/gates/autonomy], fixture_spec_hash: drifted}
+            out: {status: rejected, reason: spec_hash_mismatch, may_continue: false, exit_code: 1}
+
+      - id: SC-026
+        mode: 6b
+        given: {repair_status: planned, evidence: present_nonempty, plan_version: current}
+        when: complete_repair
+        then: {status: complete, evidence_saved: true, exit_code: 0}
+        examples:
+          - in: {expect_generation: 2, id: R-001, evidence: [specs/workflow-autonomy/evidence/repro.log], fixture_plan_version: current}
+            out: {status: complete, evidence_saved: true, exit_code: 0}
+
+      - id: SC-027
+        mode: 6b
+        given: {repair_status: planned, evidence: missing_empty_or_stale}
+        when: complete_repair
+        then: {status: rejected, reason: invalid_completion_evidence, exit_code: 1}
+        examples:
+          - in: {expect_generation: 2, id: R-001, evidence: [specs/workflow-autonomy/evidence/empty.log], fixture_evidence: empty}
+            out: {status: rejected, reason: invalid_completion_evidence, exit_code: 1}
+
+      - id: SC-028
+        mode: 6b
+        given: {all_repairs: complete, active_blockers: empty}
+        when: check_autonomy
+        then: {status: passed, may_continue: true, exit_code: 0}
+        examples:
+          - in: {repairs: [{id: R-001, status: complete}], blockers: []}
+            out: {status: passed, may_continue: true, exit_code: 0}
+
+      - id: SC-041
+        mode: 6b
+        given: {repairs: planned_or_blocked, active_blocker: owner_or_permission}
+        when: check_autonomy
+        then: {status: blocked, may_continue: false, exit_code: 1}
+        examples:
+          - in: {repairs: [{id: R-001, status: blocked, blocked_on: owner}]}
+            out: {status: blocked, may_continue: false, exit_code: 1}
+          - in: {repairs: [{id: R-002, status: planned, blocked_on: null}]}
+            out: {status: blocked, may_continue: false, exit_code: 1}
+
+      - id: SC-047
+        mode: 6b
+        given: {complete_request: unknown_id_wrong_state_old_version_or_changed_evidence}
+        when: complete_repair
+        then: {status: rejected, reason: invalid_repair_transition, written: false, exit_code: 1}
+        examples:
+          - in: {expect_generation: 2, id: R-999, evidence: [specs/workflow-autonomy/evidence/repro.log], fixture_existing_ids: [R-001]}
+            out: {status: rejected, reason: invalid_repair_transition, written: false, exit_code: 1}
+          - in: {expect_generation: 2, id: R-001, evidence: [specs/workflow-autonomy/evidence/repro.log], fixture_current_status: blocked}
+            out: {status: rejected, reason: invalid_repair_transition, written: false, exit_code: 1}
+          - in: {expect_generation: 2, id: R-001, evidence: [specs/workflow-autonomy/evidence/repro.log], fixture_plan_version: stale}
+            out: {status: rejected, reason: invalid_repair_transition, written: false, exit_code: 1}
+          - in: {expect_generation: 2, id: R-001, evidence: [specs/workflow-autonomy/evidence/other.log], fixture_existing_completion_evidence: [specs/workflow-autonomy/evidence/repro.log]}
+            out: {status: rejected, reason: invalid_repair_transition, written: false, exit_code: 1}
+
+      - id: SC-050
+        mode: 6b
+        given: {repair_id: existing, canonical_request: identical}
+        when: plan_repair
+        then: {status: planned, idempotent: true, generation: unchanged, exit_code: 0}
+        examples:
+          - in: {expect_generation: 0, id: R-001, kind: review_fix, files: [scripts/gates/autonomy], fixture_existing_request: identical}
+            out: {status: planned, idempotent: true, generation: 1, exit_code: 0}
+
+      - id: SC-056
+        mode: 6b
+        given: {repair_id: existing, canonical_request: changed}
+        when: plan_repair
+        then: {status: rejected, reason: repair_id_conflict, written: false, generation: unchanged, exit_code: 1}
+        examples:
+          - in: {expect_generation: 1, id: R-001, kind: implementation, files: [scripts/gates/evidence-check], fixture_existing_request: different}
+            out: {status: rejected, reason: repair_id_conflict, written: false, generation: 1, exit_code: 1}
+
+      - id: SC-057
+        mode: 6b
+        given: {required_file_argument: absent}
+        when: plan_repair
+        then: {status: rejected, reason: invalid_cli, written: false, exit_code: 2}
+        examples:
+          - in: {argv: [plan, --expect-generation, "0", --id, R-001, --kind, review_fix]}
+            out: {status: rejected, reason: invalid_cli, written: false, exit_code: 2}
+
+      - id: SC-051
+        mode: 6b
+        given: {stored_generation: 3, expected_generation: 2}
+        when: plan_repair
+        then: {status: conflict, expected_generation: 2, actual_generation: 3, written: false, exit_code: 1}
+        examples:
+          - in: {expect_generation: 2, id: R-002, kind: implementation, files: [scripts/gates/autonomy], fixture_actual_generation: 3}
+            out: {status: conflict, expected_generation: 2, actual_generation: 3, written: false, exit_code: 1}
+
+      - id: SC-058
+        mode: 6b
+        given: {baseline_path: preexisting_dirty, path_changes_again_after_plan: true, path_outside_repair_files: true}
+        when: complete_repair
+        then: {status: rejected, reason: changed_path_outside_repair, written: false, exit_code: 1}
+        examples:
+          - in: {expect_generation: 1, id: R-001, evidence: [specs/workflow-autonomy/evidence/repro.log], fixture_preexisting_dirty_path: docs/preexisting.md, fixture_mutate_after_plan: true}
+            out: {status: rejected, reason: changed_path_outside_repair, written: false, exit_code: 1}
+
+      - id: SC-059
+        mode: 6b
+        given: {evidence_path: outside_spec_evidence_directory}
+        when: complete_repair
+        then: {status: rejected, reason: invalid_completion_evidence, written: false, exit_code: 1}
+        examples:
+          - in: {expect_generation: 1, id: R-001, evidence: [unrelated/changed.py]}
+            out: {status: rejected, reason: invalid_completion_evidence, written: false, exit_code: 1}
+
+  - id: REQ-002
+    statement: Pipeline SHALL 保留凍結測試並只允許具新審查與 RED 證據的測試修正
+    completeness:
+      empty_boundary: [SC-005]
+      error_path: [SC-005, SC-007, SC-029, SC-030, SC-042, SC-052, SC-053]
+      concurrency: "N/A — tests.hash 與 review evidence 都位於單一 feature worktree"
+      illegal_state: [SC-005, SC-007, SC-029, SC-030, SC-042, SC-052, SC-053]
+      authorization: "N/A — 測試修正受核准 spec 與獨立 reviewer 約束，不新增外部權限"
+      data_migration: "N/A — 舊 tests.hash 不轉換，修正時明確重建"
+    scenarios:
+      - id: SC-005
+        mode: 6b
+        given: {repair_kind: frozen_test, review: missing, red: missing, refreeze: missing}
+        when: complete_repair
+        then: {status: rejected, required_action: verify_tests, exit_code: 1}
+        examples:
+          - in: {expect_generation: 1, id: R-001, kind: frozen_test, action: complete, evidence: [review.json]}
+            out: {status: rejected, required_action: verify_tests, exit_code: 1}
+          - in: {expect_generation: 1, id: R-001, fixture_review: missing, fixture_red: fresh, fixture_tests_hash: current}
+            out: {status: rejected, required_action: verify_tests, exit_code: 1}
+          - in: {expect_generation: 1, id: R-001, fixture_review: pass, fixture_red: missing, fixture_tests_hash: current}
+            out: {status: rejected, required_action: verify_tests, exit_code: 1}
+          - in: {expect_generation: 1, id: R-001, fixture_review: pass, fixture_red: fresh, fixture_tests_hash: missing}
+            out: {status: rejected, required_action: verify_tests, exit_code: 1}
+
+      - id: SC-006
+        mode: 6b
+        given: {repair_kind: frozen_test, review: independent_pass, red: fresh_pass, refreeze: current}
+        when: verify_tests
+        then: {status: complete, test_contract_rebuilt: true, exit_code: 0}
+        examples:
+          - in: {expect_generation: 1, id: R-001, fixture_review: independent_pass, fixture_assertion: preserved, fixture_red: fresh, fixture_tests_hash: current}
+            out: {status: complete, test_contract_rebuilt: true, exit_code: 0}
+
+      - id: SC-007
+        mode: 6b
+        given: {repair_kind: frozen_test, review: blocking_finding}
+        when: verify_tests
+        then: {status: rejected, test_contract_rebuilt: false, exit_code: 1}
+        examples:
+          - in: {expect_generation: 1, id: R-001, fixture_review: blocking, fixture_assertion: preserved}
+            out: {status: rejected, test_contract_rebuilt: false, exit_code: 1}
+
+      - id: SC-029
+        mode: 6b
+        given: {repair_kind: frozen_test, review: independent_pass, red: stale, refreeze: current}
+        when: verify_tests
+        then: {status: rejected, reason: stale_red_evidence, test_contract_rebuilt: false, exit_code: 1}
+        examples:
+          - in: {expect_generation: 1, id: R-001, fixture_review: independent_pass, fixture_red: stale, fixture_tests_hash: current}
+            out: {status: rejected, reason: stale_red_evidence, test_contract_rebuilt: false, exit_code: 1}
+
+      - id: SC-030
+        mode: 6b
+        given: {repair_kind: frozen_test, review: same_actor}
+        when: verify_tests
+        then: {status: rejected, reason: invalid_independent_review, test_contract_rebuilt: false, exit_code: 1}
+        examples:
+          - in: {expect_generation: 1, id: R-001, fixture_review: same_actor, fixture_assertion: preserved}
+            out: {status: rejected, reason: invalid_independent_review, test_contract_rebuilt: false, exit_code: 1}
+
+      - id: SC-042
+        mode: 6b
+        given: {repair_kind: frozen_test, review: independent_pass, assertion: weakened}
+        when: verify_tests
+        then: {status: rejected, reason: assertion_weakened, test_contract_rebuilt: false, exit_code: 1}
+        examples:
+          - in: {expect_generation: 1, id: R-001, fixture_review: independent_pass, fixture_assertion: weakened}
+            out: {status: rejected, reason: assertion_weakened, test_contract_rebuilt: false, exit_code: 1}
+
+      - id: SC-052
+        mode: 6b
+        given: {repair_kind: frozen_test, reviewed_tests_hash: differs_from_refreeze}
+        when: verify_tests
+        then: {status: rejected, reason: tests_hash_mismatch, test_contract_rebuilt: false, exit_code: 1}
+        examples:
+          - in: {expect_generation: 1, id: R-001, fixture_review: independent_pass, fixture_red: fresh, fixture_tests_hash: mismatched}
+            out: {status: rejected, reason: tests_hash_mismatch, test_contract_rebuilt: false, exit_code: 1}
+
+      - id: SC-053
+        mode: 6b
+        given: {repair_kind: frozen_test, verified_snapshot: drifts_before_decision}
+        when: verify_tests
+        then: {status: rejected, reason: snapshot_drift, test_contract_rebuilt: false, exit_code: 1}
+        examples:
+          - in: {expect_generation: 1, id: R-001, fixture_review: independent_pass, fixture_red: fresh, fixture_tests_hash: current, fixture_final_snapshot: drifted}
+            out: {status: rejected, reason: snapshot_drift, test_contract_rebuilt: false, exit_code: 1}
+
+  - id: REQ-003
+    statement: Pipeline SHALL 驗證正式證據已進入 Git index 或 commit 且內容未漂移
+    completeness:
+      empty_boundary: [SC-043]
+      error_path: [SC-008, SC-009, SC-011, SC-031, SC-043]
+      concurrency: "N/A — index 與 HEAD 檢查針對目前 feature worktree 的單一 Git 狀態"
+      illegal_state: [SC-009, SC-011, SC-031, SC-043]
+      authorization: "N/A — 只讀 Git object/index，不變更權限或繞過 ignore"
+      data_migration: "N/A — 不改舊 evidence 內容，只在交付前驗證"
+    scenarios:
+      - id: SC-008
+        mode: 6b
+        given: {red_logs: 4, worktree_files: present, git_index: absent, ignored: true}
+        when: check_index_evidence
+        then: {status: failed, exit_code: 1}
+        examples:
+          - in: {files: [domain.log, data.log, view.log, integration.log], tracked: false}
+            out: {status: failed, files: [], invalid_files: [{path: data.log, reason: missing}, {path: domain.log, reason: missing}, {path: integration.log, reason: missing}, {path: view.log, reason: missing}], exit_code: 1}
+
+      - id: SC-009
+        mode: 6b
+        given: {tests_hash: frozen, formatter_ran_after_freeze: true}
+        when: verify_frozen_tests
+        then: {status: failed, reason: fingerprint_mismatch, exit_code: 1}
+        examples:
+          - in: {frozen_hash: before_format, current_hash: after_format}
+            out: {status: failed, reason: fingerprint_mismatch, exit_code: 1}
+
+      - id: SC-010
+        mode: 6b
+        given: {evidence: nonempty, git_index: current}
+        when: check_index_evidence
+        then: {status: passed, storage: index, exit_code: 0}
+        examples:
+          - in: {tracked: true, index_matches_worktree: true}
+            out: {status: passed, storage: index, exit_code: 0}
+
+      - id: SC-011
+        mode: 6b
+        given: {gates: green, evidence: index_only, head_commit: missing_evidence}
+        when: check_committed_evidence
+        then: {status: failed, delivery_ready: false, exit_code: 1}
+        examples:
+          - in: {gates_green: true, evidence_in_head: false}
+            out: {status: failed, delivery_ready: false, exit_code: 1}
+
+      - id: SC-012
+        mode: 6b
+        given: {evidence: nonempty, head_commit: current, worktree: unchanged}
+        when: check_committed_evidence
+        then: {status: passed, delivery_ready: true, exit_code: 0}
+        examples:
+          - in: {evidence_in_head: true, head_matches_worktree: true}
+            out: {status: passed, delivery_ready: true, exit_code: 0}
+
+      - id: SC-031
+        mode: 6b
+        given: {evidence_reference: missing_empty_stale_or_outside_repo}
+        when: check_delivery_evidence
+        then: {status: failed, invalid_files: [{path: requested_path, reason: invalid_reason}], exit_code: 1}
+        examples:
+          - in: {path: specs/workflow-autonomy/evidence/missing.log, exists: false}
+            out: {status: failed, invalid_files: [{path: specs/workflow-autonomy/evidence/missing.log, reason: missing}], exit_code: 1}
+          - in: {path: specs/workflow-autonomy/evidence/empty.log, bytes: 0}
+            out: {status: failed, invalid_files: [{path: specs/workflow-autonomy/evidence/empty.log, reason: empty}], exit_code: 1}
+          - in: {path: specs/workflow-autonomy/evidence/stale.log, fingerprint_current: false}
+            out: {status: failed, invalid_files: [{path: specs/workflow-autonomy/evidence/stale.log, reason: hash_mismatch}], exit_code: 1}
+          - in: {path: ../outside.log, inside_repo: false}
+            out: {status: failed, invalid_files: [{path: ../outside.log, reason: outside_repo}], exit_code: 1}
+          - in: {path: specs/workflow-autonomy/evidence/link.log, fixture_file_type: symlink}
+            out: {status: failed, invalid_files: [{path: specs/workflow-autonomy/evidence/link.log, reason: symlink_or_nonregular}], exit_code: 1}
+          - in: {path: specs/workflow-autonomy/evidence/drift.log, fixture_snapshot_changed_before_decision: true}
+            out: {status: failed, invalid_files: [{path: specs/workflow-autonomy/evidence/drift.log, reason: snapshot_mismatch}], exit_code: 1}
+
+      - id: SC-043
+        mode: 6b
+        given: {final_delivery_set: empty}
+        when: check_delivery_evidence
+        then: {status: failed, reason: empty_delivery_set, exit_code: 1}
+        examples:
+          - in: {manifest_files: [], referenced_files: []}
+            out: {status: failed, reason: empty_delivery_set, exit_code: 1}
+
+  - id: REQ-004
+    statement: Pipeline SHALL 記錄可查詢的執行、阻擋、回報與交付狀態
+    completeness:
+      empty_boundary: [SC-013]
+      error_path: [SC-032, SC-048]
+      concurrency: "N/A — 每個 feature spec 使用獨立 status.json，其他 task 不被同檔阻擋"
+      illegal_state: [SC-032, SC-048]
+      authorization: [SC-014, SC-015]
+      data_migration: "N/A — 舊 status.json 讀取時缺欄位採保守預設"
+    scenarios:
+      - id: SC-013
+        mode: 6b
+        given: {status_schema: 1, pipeline_state: running}
+        when: set_status
+        then: {schema_version: 1, generation: 1, pipeline_state: running, stage: S8, next_step: run_tests, blocked_on: null, delivery: {state: local, ref: null}, report: {state: pending, reason: null}, exit_code: 0}
+        examples:
+          - in: {expect_generation: 0, pipeline_state: running, stage: S8, next_step: run_tests, delivery_state: local, report_state: pending, fixture_status_schema: legacy_or_absent}
+            out: {schema_version: 1, generation: 1, pipeline_state: running, stage: S8, next_step: run_tests, blocked_on: null, delivery: {state: local, ref: null}, report: {state: pending, reason: null}, exit_code: 0}
+
+      - id: SC-014
+        mode: 6b
+        given: {pipeline_state: running, report_send: denied, source_result: retained}
+        when: set_status
+        then: {pipeline_state: running, blocked_on: null, delivery: {state: local, ref: null}, report: {state: denied, reason: platform_denied}, retry_via_other_channel: false, exit_code: 0}
+        examples:
+          - in: {expect_generation: 4, pipeline_state: running, blocked_on: null, report_state: denied, report_reason: platform_denied}
+            out: {pipeline_state: running, blocked_on: null, delivery: {state: local, ref: null}, report: {state: denied, reason: platform_denied}, retry_via_other_channel: false, exit_code: 0}
+
+      - id: SC-015
+        mode: 6b
+        given: {delivery: pr_open, merge_policy: manual}
+        when: set_delivery_status
+        then: {delivery: {state: pr_open, ref: "https://github.example/pull/17"}, owner_merge_required: true, exit_code: 0}
+        examples:
+          - in: {expect_generation: 5, delivery_state: pr_open, delivery_ref: "https://github.example/pull/17", fixture_committed_evidence_token: generated_from_payload, fixture_token_matches_head: true}
+            out: {delivery: {state: pr_open, ref: "https://github.example/pull/17"}, owner_merge_required: true, exit_code: 0}
+
+      - id: SC-032
+        mode: 6b
+        given: {status_update: unknown_state_or_pr_open_without_ref}
+        when: set_status
+        then: {status: rejected, reason: invalid_status_schema, written: false, exit_code: 2}
+        examples:
+          - in: {expect_generation: 1, pipeline_state: flying, delivery_state: local}
+            out: {status: rejected, reason: invalid_status_schema, written: false, exit_code: 2}
+          - in: {expect_generation: 1, pipeline_state: waiting, delivery_state: pr_open, delivery_ref: null}
+            out: {status: rejected, reason: invalid_status_schema, written: false, exit_code: 2}
+
+      - id: SC-048
+        mode: 6b
+        given: {stored_generation: 6, expected_generation: 5}
+        when: set_status
+        then: {status: conflict, expected_generation: 5, actual_generation: 6, written: false, exit_code: 1}
+        examples:
+          - in: {expect_generation: 5, pipeline_state: waiting, fixture_actual_generation: 6}
+            out: {status: conflict, expected_generation: 5, actual_generation: 6, written: false, exit_code: 1}
+
+  - id: REQ-005
+    statement: Pipeline SHALL 讓 mode 6b 使用可稽核的非 Swift static command 擷取 true RED
+    completeness:
+      empty_boundary: [SC-016]
+      error_path: [SC-017, SC-018, SC-019, SC-033, SC-034, SC-054, SC-055]
+      concurrency: "N/A — static checks 依序執行並各自產生獨立 log"
+      illegal_state: [SC-017, SC-018, SC-019, SC-033, SC-034, SC-054, SC-055]
+      authorization: "N/A — 只執行 repository red-inputs 明列的 argv，不使用 shell"
+      data_migration: "N/A — 未指定 per-entry runner 的既有 Swift 證據格式維持不變"
+    scenarios:
+      - id: SC-016
+        mode: 6b
+        given: {runner: static-command, exit_code: 1, marker: STATIC_ASSERTION}
+        when: capture_red
+        then: {failure_class: assertion, red_valid: true, gate_exit_code: 0}
+        examples:
+          - in: {argv: [python3, checker.py], exit_code: 1, output: "STATIC_ASSERTION: expected blocked"}
+            out: {failure_class: assertion, red_valid: true, gate_exit_code: 0}
+
+      - id: SC-017
+        mode: 6b
+        given: {runner: static-command, exit_code: 0}
+        when: capture_red
+        then: {failure_class: passed, red_valid: false, gate_exit_code: 1}
+        examples:
+          - in: {argv: [python3, checker.py], exit_code: 0}
+            out: {failure_class: passed, red_valid: false, gate_exit_code: 1}
+
+      - id: SC-018
+        mode: 6b
+        given: {runner: static-command, exit_code: 2}
+        when: capture_red
+        then: {failure_class: error, red_valid: false, gate_exit_code: 1}
+        examples:
+          - in: {argv: [python3, checker.py], exit_code: 2}
+            out: {failure_class: error, red_valid: false, gate_exit_code: 1}
+
+      - id: SC-019
+        mode: 6b
+        given: {runner: static-command, approved_examples: 2, declared_checks: 1}
+        when: capture_red
+        then: {status: failed, reason: missing_example_check, gate_exit_code: 1}
+        examples:
+          - in: {approved_examples: [1, 2], checked_examples: [1]}
+            out: {status: failed, reason: missing_example_check, gate_exit_code: 1}
+
+      - id: SC-020
+        mode: 6b
+        given: {runner: swift_testing, per_entry_override: absent}
+        when: capture_red
+        then: {legacy_parser_used: true, behavior_preserved: true, gate_exit_code: 0}
+        examples:
+          - in: {pipeline_runner: swift_testing, entry_runner: null}
+            out: {legacy_parser_used: true, behavior_preserved: true, gate_exit_code: 0}
+
+      - id: SC-033
+        mode: 6b
+        given: {runner: static-command, command_state: timeout}
+        when: capture_red
+        then: {failure_class: hang, red_valid: false, gate_exit_code: 1}
+        examples:
+          - in: {argv: [python3, checker.py], timeout_seconds: 1, timed_out: true}
+            out: {failure_class: hang, red_valid: false, gate_exit_code: 1}
+
+      - id: SC-034
+        mode: 6b
+        given: {runner: static-command, checks: missing_duplicate_or_unknown_scenario}
+        when: capture_red
+        then: {status: rejected, reason: invalid_static_schema, gate_exit_code: 2}
+        examples:
+          - in: {argv: [], timeout_seconds: 30, checks: []}
+            out: {status: rejected, reason: invalid_static_schema, gate_exit_code: 2}
+          - in: {approved_examples: [1, 2], checked_examples: [1, 1]}
+            out: {status: rejected, reason: invalid_static_schema, gate_exit_code: 2}
+          - in: {approved_scenarios: [SC-016], checked_scenarios: [SC-999]}
+            out: {status: rejected, reason: invalid_static_schema, gate_exit_code: 2}
+          - in: {approved_examples: [1], checked_examples: [0]}
+            out: {status: rejected, reason: invalid_static_schema, gate_exit_code: 2}
+
+      - id: SC-035
+        mode: 6b
+        given: {runner: static-command, checker_and_dependencies: reviewed_traced_and_frozen}
+        when: verify_static_contract
+        then: {test_review: passed, traceability: passed, tests_hash_current: true, exit_code: 0}
+        examples:
+          - in: {tests: [checker.py, policy.json], checks: [{scenario: SC-016, examples: [1]}]}
+            out: {test_review: passed, traceability: passed, tests_hash_current: true, exit_code: 0}
+
+      - id: SC-054
+        mode: 6b
+        given: {runner: static-command, exit_code: 1, marker: malformed_or_absent}
+        when: capture_red
+        then: {failure_class: error, red_valid: false, gate_exit_code: 1}
+        examples:
+          - in: {argv: [python3, checker.py], exit_code: 1, output: "prefix STATIC_ASSERTION: not-at-line-start"}
+            out: {failure_class: error, red_valid: false, gate_exit_code: 1}
+          - in: {argv: [python3, checker.py], exit_code: 1, output: "static_assertion: wrong-case"}
+            out: {failure_class: error, red_valid: false, gate_exit_code: 1}
+
+      - id: SC-055
+        mode: 6b
+        given: {runner: static-command, repo_dependency: undeclared}
+        when: verify_static_contract
+        then: {status: rejected, reason: undeclared_static_dependency, gate_exit_code: 1}
+        examples:
+          - in: {argv: [python3, checker.py], tests: [checker.py], fixture_manifest_imports: [policy.json]}
+            out: {status: rejected, reason: undeclared_static_dependency, gate_exit_code: 1}
+
+  - id: REQ-006
+    statement: Pipeline SHALL 沿用既有 finding 身分與收斂計數且只在當前反證成立時重開
+    completeness:
+      empty_boundary: [SC-036]
+      error_path: [SC-037, SC-038, SC-045, SC-049]
+      concurrency: "N/A — finding ledger 由現有 loop 對單一 spec 依序更新"
+      illegal_state: [SC-037, SC-044, SC-045, SC-049]
+      authorization: "N/A — 不改 MAX_FIXES、finding 類別或 owner decided 邊界"
+      data_migration: "N/A — 沿用既有 finding ID 與 history，不建立新版平行 ledger"
+    scenarios:
+      - id: SC-036
+        mode: 6b
+        given: {finding_status: fixed, inputs_hash: unchanged, repro_result: passing}
+        when: plan_revalidation
+        then: {finding_status: fixed, action: preserve, fixes: 1, exit_code: 0}
+        examples:
+          - in: {id: F-7, fixture_ledger_status: fixed, fixture_fixes: 1, fixture_repro_exit: 0}
+            out: {id: F-7, status: fixed, action: preserve, fixes: 1, exit_code: 0}
+
+      - id: SC-037
+        mode: 6b
+        given: {finding_status: fixed, current_version_repro: failing}
+        when: plan_revalidation
+        then: {finding_id_reused: true, action: reappear, result: flipflop, fixes: 1, exit_code: 1}
+        examples:
+          - in: {id: F-7, fixture_ledger_status: fixed, fixture_fixes: 1, fixture_repro_exit: 1}
+            out: {id: F-7, finding_id_reused: true, action: reappear, result: flipflop, fixes: 1, exit_code: 1}
+
+      - id: SC-038
+        mode: 6b
+        given: {affected_scope: cannot_be_bounded}
+        when: plan_revalidation
+        then: {required_action: full_rerun, gates: [G0-G7, smoke, G9, G10], may_claim_pass: false, exit_code: 1}
+        examples:
+          - in: {changed_files: [scripts/gates/_common.py], dependency_map: unknown}
+            out: {required_action: full_rerun, gates: [G0-G7, smoke, G9, G10], may_claim_pass: false, exit_code: 1}
+
+      - id: SC-044
+        mode: 6b
+        given: {existing_finding: F-7, same_identity: true, title_or_requested_id_changed: true}
+        when: add_finding
+        then: {status: rejected, canonical_id: F-7, fixes_preserved: true, exit_code: 1}
+        examples:
+          - in: {requested_id: F-99, canonical_id: F-7, identity_same: true, title_changed: true}
+            out: {status: rejected, canonical_id: F-7, fixes_preserved: true, exit_code: 1}
+
+      - id: SC-045
+        mode: 6b
+        given: {loop_limit_or_redispatch_limit: reached}
+        when: advance_review_loop
+        then: {status: blocked, owner_decision_required: true, exit_code: 1}
+        examples:
+          - in: {id: F-7, fixes: 2, requested_action: fix}
+            out: {id: F-7, status: parked, fixes: 2, owner_decision_required: true, exit_code: 1}
+          - in: {gate: G10, prior_redispatches: 1, requested_action: redispatch}
+            out: {gate: G10, status: blocked, prior_redispatches: 1, owner_decision_required: true, exit_code: 1}
+
+      - id: SC-049
+        mode: 6b
+        given: {requested_id: existing, canonical_identity: different}
+        when: add_finding
+        then: {status: rejected, reason: finding_id_conflict, existing_finding_preserved: true, exit_code: 1}
+        examples:
+          - in: {requested_id: F-7, fixture_existing_identity: identity_a, fixture_requested_identity: identity_b}
+            out: {status: rejected, reason: finding_id_conflict, existing_finding_preserved: true, exit_code: 1}
+
+  - id: REQ-007
+    statement: Pipeline SHALL 在不使用 Simulator 的暫存 Git repository 證明完整 autonomy 交付序列
+    completeness:
+      empty_boundary: "N/A — 端到端驗收需要一份非空核准 scope；空 scope 已由 SC-024 fail closed"
+      error_path: "N/A — 各步失敗反例由 REQ-001 至 REQ-005 個別 Scenario 覆蓋"
+      concurrency: "N/A — fixture 在單一暫存 repository 依序執行"
+      illegal_state: "N/A — 非法中間狀態由各正式 CLI 的反例逐步覆蓋"
+      authorization: "N/A — fixture 只建立本機 commit，不 push、開 PR 或 merge"
+      data_migration: [SC-046]
+    scenarios:
+      - id: SC-039
+        mode: 6b
+        given: {temporary_git_repo: clean, autonomy_version: 1, approved_scope: present}
+        when: run_delivery_sequence
+        then: {plan: planned, repair: complete, verify: passed, index_check: passed, commit_check: passed, ledger_schema: 1, status_schema: 1, index_tree_oid_valid: true, head_commit_oid_valid: true, oids_distinct: true, pr_ready: true, remote_actions: [], exit_code: 0}
+        examples:
+          - in:
+              commands:
+                - "scripts/gates/config-check ."
+                - "scripts/gates/autonomy specs/workflow-autonomy/spec.yaml plan --expect-generation 0 --id R-001 --kind implementation --file scripts/gates/autonomy"
+                - "scripts/gates/autonomy specs/workflow-autonomy/spec.yaml complete --expect-generation 1 --id R-001 --evidence specs/workflow-autonomy/evidence/repro.log"
+                - "scripts/gates/autonomy specs/workflow-autonomy/spec.yaml check"
+                - "scripts/gates/red-capture specs/workflow-autonomy/spec.yaml"
+                - "scripts/gates/test-review specs/workflow-autonomy/spec.yaml"
+                - "scripts/gates/traceability specs/workflow-autonomy/spec.yaml"
+                - "scripts/gates/freeze-check specs/workflow-autonomy/spec.yaml"
+                - "scripts/gates/runs --set specs/workflow-autonomy/spec.yaml --expect-generation 0 --pipeline-state complete --stage S10 --next-step commit --delivery-state local"
+                - "git add -- specs/pipeline.yaml specs/workflow-autonomy"
+                - "scripts/gates/evidence-check specs/workflow-autonomy/spec.yaml --index"
+                - "git -c user.name=WorkflowFixture -c user.email=fixture@example.invalid commit -m workflow-autonomy-fixture"
+                - "scripts/gates/evidence-check specs/workflow-autonomy/spec.yaml --commit"
+                - "scripts/gates/runs --set specs/workflow-autonomy/spec.yaml --expect-generation 1 --next-step pr_ready --delivery-state committed --committed-evidence-token <token-from-prior-command>"
+                - "git add -- specs/workflow-autonomy/evidence/status.json"
+                - "scripts/gates/evidence-check specs/workflow-autonomy/spec.yaml --index"
+                - "git -c user.name=WorkflowFixture -c user.email=fixture@example.invalid commit --amend --no-edit"
+                - "scripts/gates/evidence-check specs/workflow-autonomy/spec.yaml --commit"
+            out: {plan: planned, repair: complete, verify: passed, index_check: passed, commit_check: passed, ledger_schema: 1, status_schema: 1, index_tree_oid_valid: true, head_commit_oid_valid: true, oids_distinct: true, pr_ready: true, remote_actions: [], exit_code: 0}
+
+      - id: SC-046
+        mode: 6b
+        given: {temporary_git_repo: clean, autonomy_version: 0, legacy_red_input: swift_testing}
+        when: run_legacy_delivery_sequence
+        then: {legacy_parser_used: true, autonomy_ledger_created: false, legacy_status_readable: true, exit_code: 0}
+        examples:
+          - in:
+              autonomy: {version: 0}
+              runner: swift-testing
+              per_entry_override: null
+              oracle_sequence: design_v0_fixed_nine_commands
+            out: {legacy_parser_used: true, autonomy_ledger_created: false, legacy_status_readable: true, baseline_commands_compared: 9, unapproved_differences: 0, exit_code: 0}
+
+tasks:
+  - {done: false, text: "規格審查與批准快照"}
+  - {done: false, text: "先寫 autonomy、evidence、status 與 static 6b RED 測試"}
+  - {done: false, text: "獨立審查測試並凍結"}
+  - {done: false, text: "實作 gates 與狀態契約"}
+  - {done: false, text: "完整 gate、mutation、端到端交付驗證"}
+  - {done: false, text: "更新文件、commit、push、PR 與 review comments"}

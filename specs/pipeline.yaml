@@ -1,0 +1,24 @@
+runner: static-command
+autonomy:
+  version: 1
+tests:
+  globs:
+    - scripts/gates/tests/run
+    - scripts/gates/tests/mutate
+  scenario_pattern: 'check\(\s*"(SC-\d+[a-z]?)'
+reachability:
+  globs:
+    - scripts/gates/*
+lint: "git diff --check --"
+test: "scripts/gates/tests/run"
+smoke: "scripts/gates/tests/run"
+smoke_timeout: 600
+integration_branch: main
+auto_push: true
+ci: none
+rules_files:
+  - AGENTS.md
+models:
+  draft: fable
+  review: fable
+  build: opus
