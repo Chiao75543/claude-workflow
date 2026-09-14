@@ -11,5 +11,7 @@
    index-only candidate fail closed 為 `pending_commit`。
 2. approval artifact 不保存自己的 storage/tree/commit；gate 從 Git 現場推導並在裁決前重驗 HEAD。
 3. delivery manifest 可記錄既有 approval anchor 的 commit/tree，因該 anchor 先於 manifest，沒有自我參照。
+4. static-command runner 採 direct assertion RED → 最小 runner → 正式 red-capture self-hosted RED；兩份
+   證據都保留，解決 runner 無法在尚不存在時用自己擷取 RED 的 bootstrap，不接受 parser error 冒充 RED。
 
 此變更收緊核准證據，不改 Owner 已核准的 examples；依 `spec-diff` 規則不需重新 S5。
