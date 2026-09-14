@@ -13,5 +13,7 @@
 3. delivery manifest 可記錄既有 approval anchor 的 commit/tree，因該 anchor 先於 manifest，沒有自我參照。
 4. static-command runner 採 direct assertion RED → 最小 runner → 正式 red-capture self-hosted RED；兩份
    證據都保留，解決 runner 無法在尚不存在時用自己擷取 RED 的 bootstrap，不接受 parser error 冒充 RED。
+5. SC-035 與 SC-046 是實跑已綠的既有相容性基準，新增具體 `red_exempt_reason`；不得為了追求全紅而
+   先破壞現行 test-review/traceability/freeze 或 version 0 行為。其餘 83 個 examples 仍必須 assertion RED。
 
 此變更收緊核准證據，不改 Owner 已核准的 examples；依 `spec-diff` 規則不需重新 S5。

@@ -224,6 +224,11 @@ design: |
   stdout_path、stderr_path、failure_class、marker_lines、red_valid、started_at、finished_at、tree_token；
   red.json 頂層固定為 schema_version、spec_hash、runner_results、status、generated_at，runner_results
   依 Scenario/example 排序。stdout/stderr 一律分檔保存原始 bytes，不把合併輸出冒充原始 log。
+  static-command runner 本身有不可避免的 self-host bootstrap：先由既有 `scripts/gates/tests/run` 直接
+  執行 runner contract tests，保存其 assertion failure 原始輸出與 exit；只允許接著實作可執行 argv、
+  timeout/process-group、marker 與 per-example schema 的最小 runner。runner 可用後，必須立刻由正式
+  red-capture 對同一批 frozen-candidate tests 重新擷取 self-hosted RED；direct bootstrap 與 self-hosted
+  logs、argv、exit、test hashes 必須同時存在且一致，否則不得進 S7½。parser missing/crash/error 仍不算 RED。
 
   所有新增或擴充的 gate 都支援 `--help`（exit 0）與 `--schema`（exit 0 並輸出完整 canonical JSON
   Schema）；正式執行不得接受 schema 未列出的參數。所有 CLI 統一以 0 表示操作成功或 check 通過，
@@ -805,6 +810,7 @@ requirements:
 
       - id: SC-035
         mode: 6b
+        red_exempt_reason: 既有 test-review、traceability 與 freeze-check 已能證明此相容性基準；本變更不得刻意破壞後再修回
         given: {runner: static-command, checker_and_dependencies: reviewed_traced_and_frozen}
         when: verify_static_contract
         then: {test_review: passed, traceability: passed, tests_hash_current: true, exit_code: 0}
@@ -938,6 +944,7 @@ requirements:
 
       - id: SC-046
         mode: 6b
+        red_exempt_reason: version 0 必須與 approval-source baseline 相同；既有行為已綠正是此回歸案例的必要前提
         given: {temporary_git_repo: clean, autonomy_version: 0, legacy_red_input: swift_testing}
         when: run_legacy_delivery_sequence
         then: {legacy_parser_used: true, autonomy_ledger_created: false, legacy_status_readable: true, exit_code: 0}

@@ -1,6 +1,6 @@
 {
   "stage": "S7",
-  "label": "approval anchor 已 commit；static-command 先做 direct RED bootstrap，再 self-hosted RED",
+  "label": "Owner 已核准 SC-035/046 RED 豁免；重建 83 RED + 2 exempt GREEN 證據",
   "blocked_on": null,
-  "updated_at": "2026-09-14T19:53:53+08:00"
+  "updated_at": "2026-09-14T23:56:42+08:00"
 }

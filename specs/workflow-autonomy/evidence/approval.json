@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "source": "owner_chat",
-  "source_ref": "current task owner reply: 同意; 2026-09-14 Asia/Taipei",
-  "approved_spec_sha256": "sha256:cc49118955a0481737c9a1fc7dcbffea7f9ed245e16b6e7d183f84fae824bd0b",
-  "approved_at": "2026-09-14T19:29:12+08:00"
+  "source_ref": "coordinator task owner reply: 同意 SC-035/SC-046 red_exempt_reason; 2026-09-14 Asia/Taipei",
+  "approved_spec_sha256": "sha256:f6155fb78460585ea3412653253497cc8603cbf5a7a0dc3ef35e7940a50a66bf",
+  "approved_at": "2026-09-14T23:56:42+08:00"
 }

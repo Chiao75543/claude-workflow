@@ -810,6 +810,7 @@ requirements:
 
       - id: SC-035
         mode: 6b
+        red_exempt_reason: 既有 test-review、traceability 與 freeze-check 已能證明此相容性基準；本變更不得刻意破壞後再修回
         given: {runner: static-command, checker_and_dependencies: reviewed_traced_and_frozen}
         when: verify_static_contract
         then: {test_review: passed, traceability: passed, tests_hash_current: true, exit_code: 0}
@@ -943,6 +944,7 @@ requirements:
 
       - id: SC-046
         mode: 6b
+        red_exempt_reason: version 0 必須與 approval-source baseline 相同；既有行為已綠正是此回歸案例的必要前提
         given: {temporary_git_repo: clean, autonomy_version: 0, legacy_red_input: swift_testing}
         when: run_legacy_delivery_sequence
         then: {legacy_parser_used: true, autonomy_ledger_created: false, legacy_status_readable: true, exit_code: 0}
