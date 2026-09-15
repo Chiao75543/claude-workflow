@@ -174,7 +174,9 @@ design: |
 
   scripts/gates/evidence-check 從同一 Git snapshot 內的 manifest、red.json、smoke.json、hash 與
   它們引用的檔案建立非空 final delivery set。--index 在開始與裁決前固定重驗 index tree；
-  --commit 固定並重驗 HEAD OID。只接受同一 snapshot 內的非空一般檔；missing、empty、stale、
+  --commit 固定並重驗 HEAD OID。只接受同一 snapshot 內的一般檔，且除 red.json runner_results
+  明確引用的 `static-red/*.stdout.log`／`*.stderr.log` 可忠實保存為 0 bytes 外都必須非空；這項窄例外
+  仍須納入 final set 並以 SHA-256/bytes 做 byte-exact 驗證，不得套用到其他 evidence。missing、empty、stale、
   repo 外、symlink、不同 snapshot 或 Git 失敗都逐檔 fail closed。--index 只要求 delivery set
   與 worktree 相符；--commit 只要求 delivery set 與 HEAD 相符，不以其他 WIP 阻止補證據 commit。
   manifest 固定為 evidence/delivery.json schema version 1，欄位是 schema_version、spec_hash、
@@ -918,7 +920,7 @@ requirements:
         mode: 6b
         given: {temporary_git_repo: clean, autonomy_version: 1, approved_scope: present}
         when: run_delivery_sequence
-        then: {plan: planned, repair: complete, verify: passed, index_check: passed, commit_check: passed, ledger_schema: 1, status_schema: 1, index_tree_oid_valid: true, head_commit_oid_valid: true, oids_distinct: true, pr_ready: true, remote_actions: [], exit_code: 0}
+        then: {plan: planned, repair: complete, verify: passed, index_check: passed, commit_check: passed, empty_static_stream_included: true, empty_static_stream_byte_exact: true, ledger_schema: 1, status_schema: 1, index_tree_oid_valid: true, head_commit_oid_valid: true, oids_distinct: true, pr_ready: true, remote_actions: [], exit_code: 0}
         examples:
           - in:
               commands:
@@ -940,7 +942,7 @@ requirements:
                 - "scripts/gates/evidence-check specs/workflow-autonomy/spec.yaml --index"
                 - "git -c user.name=WorkflowFixture -c user.email=fixture@example.invalid commit --amend --no-edit"
                 - "scripts/gates/evidence-check specs/workflow-autonomy/spec.yaml --commit"
-            out: {plan: planned, repair: complete, verify: passed, index_check: passed, commit_check: passed, ledger_schema: 1, status_schema: 1, index_tree_oid_valid: true, head_commit_oid_valid: true, oids_distinct: true, pr_ready: true, remote_actions: [], exit_code: 0}
+            out: {plan: planned, repair: complete, verify: passed, index_check: passed, commit_check: passed, empty_static_stream_included: true, empty_static_stream_byte_exact: true, ledger_schema: 1, status_schema: 1, index_tree_oid_valid: true, head_commit_oid_valid: true, oids_distinct: true, pr_ready: true, remote_actions: [], exit_code: 0}
 
       - id: SC-046
         mode: 6b

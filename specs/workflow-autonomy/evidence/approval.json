@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "source": "owner_chat",
-  "source_ref": "coordinator task owner reply: 同意 SC-035/SC-046 red_exempt_reason; 2026-09-14 Asia/Taipei",
-  "approved_spec_sha256": "sha256:f6155fb78460585ea3412653253497cc8603cbf5a7a0dc3ef35e7940a50a66bf",
-  "approved_at": "2026-09-14T23:56:42+08:00"
+  "source_ref": "owner reply relayed from task 01a09035-e9bf-72d3-9054-3d27215a47e8: 好，沒問題，那你現在趕快處理 workflow 吧; scoped to the previously stated empty static stream exception; 2026-09-15 Asia/Taipei",
+  "approved_spec_sha256": "sha256:fe5a28c60d24f65f0ef4eb8c512c969f2e378fbb33327a2498f88bed58b364a6",
+  "approved_at": "2026-09-15T09:30:00+08:00"
 }

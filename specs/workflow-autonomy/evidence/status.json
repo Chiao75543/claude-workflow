@@ -1,6 +1,6 @@
 {
-  "stage": "S7",
-  "label": "Owner 已核准 SC-035/046 RED 豁免；重建 83 RED + 2 exempt GREEN 證據",
+  "stage": "S5",
+  "label": "Owner 已核准 SC-039 empty static stream 窄例外；待重建 RED 與測試審查",
   "blocked_on": null,
-  "updated_at": "2026-09-14T23:56:42+08:00"
+  "updated_at": "2026-09-15T09:30:00+08:00"
 }
