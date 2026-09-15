@@ -1,0 +1,313 @@
+#!/usr/bin/env python3
+"""Validate a Codex lean-pipeline assessment and print its conditional route.
+
+Usage: scripts/codex/route <assessment.yaml> [--profile PATH] [--json]
+Exit codes: 0 routed, 2 invalid/unknown assessment or invalid profile.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import pathlib
+import sys
+from typing import Any
+
+try:
+    import yaml
+except ImportError:  # pragma: no cover - environment error is reported to the caller
+    print("route: BLOCKED\n  - 缺少 PyYAML，無法解析 YAML", file=sys.stderr)
+    raise SystemExit(2)
+
+
+HERE = pathlib.Path(__file__).resolve()
+REPO_ROOT = HERE.parents[2]
+DEFAULT_PROFILE = REPO_ROOT / "profiles" / "codex-lean.yaml"
+
+EXPECTED_STAGES = (
+    ("direction", "定方向"),
+    ("codex_work", "Codex 完成工作"),
+    ("auto_verify", "自動驗證"),
+    ("owner_merge", "使用者按 merge"),
+)
+RISK_FLAGS = (
+    "permissions",
+    "privacy",
+    "payments",
+    "irreversible_data",
+    "critical_security",
+    "core_entrypoint",
+)
+ASSESSMENT_KEYS = {
+    "version",
+    "request",
+    "complexity",
+    "spec_ambiguity",
+    "external_dependency",
+    "new_permission",
+    "ui_change",
+    "uncertainties",
+    "risks",
+    "basis",
+}
+BASIS_KEYS = {"scope", "risk"}
+INTERRUPTS = {
+    "approved-behavior-must-change",
+    "new-permission",
+    "external-dependency",
+    "irreversible-operation",
+    "undefined-major-security-privacy-payment-data-loss-risk",
+    "same-problem-failed-after-two-fixes",
+    "fixed-problem-recurred",
+    "merge",
+}
+
+
+class Invalid(ValueError):
+    pass
+
+
+def load_yaml(path: pathlib.Path, kind: str) -> dict[str, Any]:
+    try:
+        value = yaml.safe_load(path.read_text())
+    except FileNotFoundError as exc:
+        raise Invalid(f"找不到{kind}: {path}") from exc
+    except (OSError, yaml.YAMLError) as exc:
+        raise Invalid(f"{kind}不是可讀的 YAML: {exc}") from exc
+    if not isinstance(value, dict):
+        raise Invalid(f"{kind}頂層必須是 mapping")
+    return value
+
+
+def exact_keys(value: dict[str, Any], expected: set[str], where: str) -> None:
+    missing = sorted(expected - set(value))
+    unknown = sorted(set(value) - expected)
+    if missing:
+        raise Invalid(f"{where} 缺少欄位: {', '.join(missing)}")
+    if unknown:
+        raise Invalid(f"{where} 有未知欄位: {', '.join(unknown)}")
+
+
+def string_list(value: Any, where: str) -> list[str]:
+    if not isinstance(value, list) or any(not isinstance(item, str) or not item for item in value):
+        raise Invalid(f"{where} 必須是非空字串的 list")
+    return value
+
+
+def validate_profile(profile: dict[str, Any]) -> None:
+    meta = profile.get("profile")
+    if not isinstance(meta, dict) or meta.get("id") != "codex-lean" or meta.get("version") != 1:
+        raise Invalid("profile 必須是 codex-lean v1")
+
+    stages = profile.get("visible_stages")
+    if not isinstance(stages, list):
+        raise Invalid("visible_stages 必須是 list")
+    actual = tuple(
+        (item.get("id"), item.get("label")) if isinstance(item, dict) else (None, None)
+        for item in stages
+    )
+    if actual != EXPECTED_STAGES:
+        raise Invalid("使用者可見 stage 必須且只能依序為四個既定 stage")
+
+    routing = profile.get("routing")
+    if not isinstance(routing, dict):
+        raise Invalid("routing 必須是 mapping")
+    if routing.get("assessment_version") != 1:
+        raise Invalid("routing.assessment_version 必須是 1")
+    if routing.get("complexity_values") != ["quick", "complex"]:
+        raise Invalid("complexity_values 必須是 quick/complex")
+    if routing.get("required_risk_flags") != list(RISK_FLAGS):
+        raise Invalid("required_risk_flags 不可遺漏、改名或重新排序")
+    if routing.get("high_risk_flags") != list(RISK_FLAGS):
+        raise Invalid("high_risk_flags 必須涵蓋全部既定高風險類別")
+    if routing.get("spec_reader_when") != ["spec_ambiguity", "complex"]:
+        raise Invalid("spec-reader 只能由歧義或複雜度啟用")
+    if routing.get("spec_oracle_when") != "high_risk":
+        raise Invalid("spec-oracle 只能由高風險啟用")
+
+    checks = profile.get("checks")
+    if not isinstance(checks, dict) or set(checks) != {stage[0] for stage in EXPECTED_STAGES}:
+        raise Invalid("checks 必須完整掛在四個可見 stage 底下")
+    for stage_id, _ in EXPECTED_STAGES:
+        entry = checks[stage_id]
+        if not isinstance(entry, dict) or "always" not in entry:
+            raise Invalid(f"checks.{stage_id} 缺少 always")
+        string_list(entry["always"], f"checks.{stage_id}.always")
+        if "conditional" in entry:
+            string_list(entry["conditional"], f"checks.{stage_id}.conditional")
+        if set(entry) - {"always", "conditional"}:
+            raise Invalid(f"checks.{stage_id} 含未知欄位")
+
+    always_checks = {
+        stage_id: set(checks[stage_id]["always"])
+        for stage_id, _ in EXPECTED_STAGES
+    }
+    if any("spec-reader" in entries or "spec-oracle" in entries for entries in always_checks.values()):
+        raise Invalid("spec-reader/spec-oracle 不得成為固定檢查")
+    if not {
+        "behavior-contract-diff", "project-tests", "project-lint", "real-entry-smoke"
+    }.issubset(always_checks["auto_verify"]):
+        raise Invalid("auto_verify 不可移除契約、測試、lint 或真實入口 smoke")
+    if checks["direction"].get("conditional") != ["spec-reader"]:
+        raise Invalid("spec-reader 必須只掛在 direction 的條件式檢查")
+    if checks["auto_verify"].get("conditional") != ["smoke-screenshots", "spec-oracle"]:
+        raise Invalid("截圖與 spec-oracle 必須只掛在 auto_verify 的條件式檢查")
+
+    interrupt_map = profile.get("interrupts")
+    if not isinstance(interrupt_map, dict):
+        raise Invalid("interrupts 必須是 mapping")
+    if set(interrupt_map) != {"before_or_during_work", "final"}:
+        raise Invalid("interrupts 不可新增其他中斷類別")
+    flattened: list[str] = []
+    for key in ("before_or_during_work", "final"):
+        flattened.extend(string_list(interrupt_map.get(key), f"interrupts.{key}"))
+    if set(flattened) != INTERRUPTS or len(flattened) != len(INTERRUPTS):
+        raise Invalid("interrupts 必須且只能包含已核准的中斷條件")
+
+    shared = profile.get("shared_tools")
+    expected_tools = {
+        "collision_scan": "scripts/gates/scan-siblings",
+        "contract_lint": "scripts/gates/spec-lint",
+        "contract_diff": "scripts/gates/spec-diff",
+        "smoke": "scripts/gates/smoke",
+    }
+    if shared != expected_tools:
+        raise Invalid("shared_tools 必須引用既有 gate，不得複製或替換核心")
+
+    freeze = profile.get("freeze")
+    if not isinstance(freeze, dict) or freeze.get("mode") != "behavior-contract-only":
+        raise Invalid("freeze 只能保護使用者核准的行為契約")
+    protected = set(string_list(freeze.get("protected"), "freeze.protected"))
+    excluded = set(string_list(freeze.get("excluded"), "freeze.excluded"))
+    required_protected = {
+        "scenarios", "examples", "observable-behavior", "verification-mode", "coverage-regression"
+    }
+    if not required_protected.issubset(protected):
+        raise Invalid("freeze.protected 不可縮減核准行為的保護範圍")
+    if not {"why", "design", "tasks", "file-layout", "implementation-details"}.issubset(excluded):
+        raise Invalid("freeze.excluded 必須排除內部實作與安排")
+
+    assurance = profile.get("assurance")
+    if (not isinstance(assurance, dict)
+            or assurance.get("mutation_gate") != "unavailable_without_real_executor"):
+        raise Invalid("沒有真實 executor 時不得宣稱 mutation gate 可用")
+    if assurance.get("screenshots") != "part_of_smoke" or assurance.get("full_freeze") != "disabled":
+        raise Invalid("截圖必須併入 smoke，且不得啟用完整 freeze")
+
+
+def validate_assessment(value: dict[str, Any], profile: dict[str, Any]) -> None:
+    exact_keys(value, ASSESSMENT_KEYS, "assessment")
+    if value["version"] != profile["routing"]["assessment_version"]:
+        raise Invalid("assessment.version 與 profile 不相容")
+    if not isinstance(value["request"], str) or not value["request"].strip():
+        raise Invalid("assessment.request 不可為空")
+    if value["complexity"] not in profile["routing"]["complexity_values"]:
+        raise Invalid("assessment.complexity 必須是 quick 或 complex")
+    for key in ("spec_ambiguity", "external_dependency", "new_permission", "ui_change"):
+        if type(value[key]) is not bool:
+            raise Invalid(f"assessment.{key} 必須是 true/false")
+
+    uncertainties = value["uncertainties"]
+    if (not isinstance(uncertainties, list)
+            or any(not isinstance(item, str) or not item.strip() for item in uncertainties)):
+        raise Invalid("assessment.uncertainties 必須是字串 list；沒有未決項時填 []")
+    if uncertainties:
+        raise Invalid("仍有未決風險或範圍，必須先在「定方向」解決: " + "; ".join(uncertainties))
+
+    risks = value["risks"]
+    if not isinstance(risks, dict):
+        raise Invalid("assessment.risks 必須是 mapping")
+    exact_keys(risks, set(RISK_FLAGS), "assessment.risks")
+    for key in RISK_FLAGS:
+        if type(risks[key]) is not bool:
+            raise Invalid(f"assessment.risks.{key} 必須是 true/false")
+    if value["new_permission"] and not risks["permissions"]:
+        raise Invalid("new_permission=true 時 risks.permissions 也必須是 true")
+
+    basis = value["basis"]
+    if not isinstance(basis, dict):
+        raise Invalid("assessment.basis 必須是 mapping")
+    exact_keys(basis, BASIS_KEYS, "assessment.basis")
+    for key in BASIS_KEYS:
+        if not isinstance(basis[key], str) or len(basis[key].strip()) < 8:
+            raise Invalid(f"assessment.basis.{key} 必須留下可核對的判定依據")
+
+
+def route(assessment: dict[str, Any], profile: dict[str, Any]) -> dict[str, Any]:
+    high_risks = [key for key in RISK_FLAGS if assessment["risks"][key]]
+    reader = assessment["spec_ambiguity"] or assessment["complexity"] == "complex"
+    oracle = bool(high_risks)
+    track = "complex" if reader or oracle or assessment["external_dependency"] else "quick"
+
+    checks = {stage: list(profile["checks"][stage]["always"]) for stage, _ in EXPECTED_STAGES}
+    if reader:
+        checks["direction"].append("spec-reader")
+    if assessment["ui_change"]:
+        checks["auto_verify"].append("smoke-screenshots")
+    if oracle:
+        checks["auto_verify"].append("spec-oracle")
+
+    interrupts = []
+    if assessment["external_dependency"]:
+        interrupts.append("external-dependency")
+    if assessment["new_permission"]:
+        interrupts.append("new-permission")
+    if assessment["risks"]["irreversible_data"]:
+        interrupts.append("irreversible-operation")
+
+    return {
+        "schema_version": 1,
+        "profile": "codex-lean/v1",
+        "track": track,
+        "visible_stages": [{"id": stage, "label": label} for stage, label in EXPECTED_STAGES],
+        "conditional_tools": {"spec_reader": reader, "spec_oracle": oracle},
+        "high_risks": high_risks,
+        "interrupt_before_work": interrupts,
+        "checks": checks,
+        "assurance": profile["assurance"],
+    }
+
+
+def print_human(result: dict[str, Any]) -> None:
+    print(f"profile: {result['profile']}")
+    print(f"track: {result['track']}")
+    print("visible stages:")
+    for index, stage in enumerate(result["visible_stages"], 1):
+        print(f"  {index}. {stage['label']}")
+    tools = result["conditional_tools"]
+    print(f"spec-reader: {'RUN' if tools['spec_reader'] else 'SKIP'}")
+    print(f"spec-oracle: {'RUN' if tools['spec_oracle'] else 'SKIP'}")
+    if result["interrupt_before_work"]:
+        print("owner decision before work: " + ", ".join(result["interrupt_before_work"]))
+    else:
+        print("owner decision before work: none after behavior approval")
+    print("mutation gate: NOT CLAIMED (no real executor in this profile)")
+
+
+def main(argv: list[str]) -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("assessment", type=pathlib.Path)
+    parser.add_argument("--profile", type=pathlib.Path, default=DEFAULT_PROFILE)
+    parser.add_argument("--json", action="store_true")
+    args = parser.parse_args(argv)
+    try:
+        profile = load_yaml(args.profile.resolve(), "profile")
+        validate_profile(profile)
+        assessment = load_yaml(args.assessment.resolve(), "assessment")
+        validate_assessment(assessment, profile)
+        result = route(assessment, profile)
+    except Invalid as exc:
+        if args.json:
+            print(json.dumps({"schema_version": 1, "status": "blocked", "errors": [str(exc)]}, ensure_ascii=False))
+        else:
+            print(f"route: BLOCKED\n  - {exc}", file=sys.stderr)
+        return 2
+    if args.json:
+        print(json.dumps(result, ensure_ascii=False, sort_keys=True))
+    else:
+        print_human(result)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv[1:]))

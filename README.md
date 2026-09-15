@@ -2,6 +2,10 @@
 
 一條 spec-driven 的開發流水線,給 [Claude Code](https://claude.com/claude-code) 用。
 
+另提供同 repository、選配的 [Codex 四階段精簡 profile](docs/codex-lean-pipeline.md)：
+`定方向 → Codex 完成工作 → 自動驗證 → 使用者按 merge`。它重用既有 gate，
+不會取代下面的 Claude workflow。
+
 **目標:你不再讀程式碼,但你知道它是對的 —— 因為每一句「這是對的」都得跑得出來。**
 
 ---
