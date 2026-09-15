@@ -44,11 +44,43 @@ from _state import index_fingerprint, tree_fingerprint  # noqa: E402
 # 以及 Compose 的 @Composable fun XScreen(。
 ATTRS = r"(?:@[\w.]+(?:\([^)]*\))?\s+)*"
 MODS = r"(?:(?:public|private|fileprivate|internal|open|final|abstract|sealed|data|value|export|default)\s+)*"
-DECL = re.compile(rf"^\s*{ATTRS}{MODS}(?:struct|class|enum|actor|protocol|interface|object|record)\s+(\w+)", re.M)
+# G7 找的是「可被建構的產品型別」；enum case 用 `.case`，
+# protocol/interface 由具體型別實作，都不應硬找 `TypeName(`。
+DECL = re.compile(rf"^\s*{ATTRS}{MODS}(?:struct|class|actor|object|record)\s+(\w+)", re.M)
+ENUM_DECL = re.compile(
+    rf"^\s*{ATTRS}{MODS}enum\s+(\w+)(?:<[^{{}}\n]+>)?\s*(?::\s*([^{{\n]+))?\s*\{{", re.M
+)
+RAW_ENUM_TYPES = {
+    "String", "Character", "Int", "Int8", "Int16", "Int32", "Int64",
+    "UInt", "UInt8", "UInt16", "UInt32", "UInt64", "Float", "Double",
+}
 # 大寫開頭的 fun 是 Compose 畫面的慣例
 FUNC_DECL = re.compile(rf"^\s*{ATTRS}{MODS}fun\s+([A-Z]\w*)\s*\(", re.M)
 # file-local 的型別本來就不該對外可達,不是 G8 要問的問題
 PRIVATE = re.compile(rf"^\s*{ATTRS}(?:private|fileprivate)\s", re.M)
+
+
+def constructible_enum_names(text: str) -> list[str]:
+    """Swift raw-value enum 或本體有頂層 init 時，仍能以 TypeName(...) 建構。"""
+    names = []
+    for match in ENUM_DECL.finditer(text):
+        inherited = (match.group(2) or "").split(",", 1)[0].strip()
+        raw_type = inherited.rsplit(".", 1)[-1]
+        depth = 0
+        has_initializer = False
+        body_start = match.end()
+        for line in text[body_start:].splitlines():
+            if depth == 0 and re.match(
+                rf"^\s*{ATTRS}{MODS}init[?!]?(?:\s*<[^\n{{}}]+>)?\s*\(", line
+            ):
+                has_initializer = True
+                break
+            depth += line.count("{") - line.count("}")
+            if depth < 0:
+                break
+        if raw_type in RAW_ENUM_TYPES or has_initializer:
+            names.append(match.group(1))
+    return names
 
 
 # 這幾個標籤是「要人做決定」,其他的只是讓人知道。自動推只被前者擋。
@@ -162,14 +194,22 @@ def check_reachability(root: pathlib.Path, base: str, config: dict) -> list[dict
             continue
         # 檔案裡**每一個**對外型別都要檢查,不是只看第一個 ——
         # 常見寫法是一個檔案放 View + ViewModel,只看第一個等於主型別沒被檢查。
-        names = list(dict.fromkeys(DECL.findall(text) + FUNC_DECL.findall(text)))
+        enum_declarations = constructible_enum_names(text)
+        enum_names = set(enum_declarations)
+        names = list(dict.fromkeys(
+            DECL.findall(text) + enum_declarations + FUNC_DECL.findall(text)
+        ))
         for name in names:
             # file-local 的型別不是 G7 要問的問題(它本來就不該對外可達)
             decl_line = next((ln for ln in text.splitlines() if re.search(rf"\b{re.escape(name)}\b", ln)
-                              and (DECL.match(ln + "\n") or FUNC_DECL.match(ln + "\n"))), "")
+                              and (DECL.match(ln + "\n") or ENUM_DECL.match(ln + "\n")
+                                   or FUNC_DECL.match(ln + "\n"))), "")
             if PRIVATE.match(decl_line + "\n"):
                 continue
-            use = re.compile(rf"\b{re.escape(name)}\s*\(")
+            # Swift raw-value enum 也常透過 `TypeName.case` / `.allCases` 接線，
+            # 不只會出現 `TypeName(...)`。
+            use = (re.compile(rf"\b{re.escape(name)}\s*(?:\(|\.)")
+                   if name in enum_names else re.compile(rf"\b{re.escape(name)}\s*\("))
             sites = [other for other, body in contents.items()
                      if other != rel and use.search(body)]
             results.append({"file": rel, "symbol": name, "sites": sorted(sites)})

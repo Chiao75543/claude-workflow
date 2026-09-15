@@ -888,11 +888,22 @@ def test_reachability_hardening(tmp: pathlib.Path) -> None:
     # C3:認不得的宣告寫法
     (root / "App" / "Vm.swift").write_text("@MainActor final class ThingViewModel {\n    init() {}\n}\n")
     (root / "App" / "Svc.swift").write_text("actor ThingService {\n    init() {}\n}\n")
+    (root / "App" / "State.swift").write_text("enum ScreenState { case idle }\nprotocol Routable {}\n")
+    (root / "App" / "RawRoute.swift").write_text("enum RawRoute: String { case home }\n")
+    (root / "App" / "InitRoute.swift").write_text(
+        "enum InitRoute {\n    case home\n    init(value: Int) { self = .home }\n}\n")
+    (root / "App" / "FailableRoute.swift").write_text(
+        "enum FailableRoute {\n    case home\n    init?(value: Int) { self = .home }\n}\n")
+    (root / "App" / "GenericRoute.swift").write_text(
+        "enum GenericRoute {\n    case home\n    init<T>(value: T) { self = .home }\n}\n")
+    (root / "App" / "UsedRawRoute.swift").write_text("enum UsedRawRoute: String { case home }\n")
+    (root / "App" / "RawRouteConsumer.swift").write_text("let route = UsedRawRoute.home\n")
+    (root / "App" / "Contract.kt").write_text("interface RoutableContract {}\n")
     # private 是 file-local,不是 G8 要問的
     (root / "App" / "Helper.swift").write_text("private struct Helper {\n    init() {}\n}\n")
     subprocess.run(["git", "add", "-A"], cwd=root, check=True)
 
-    config = {"reachability": {"globs": ["App/**/*.swift"]}}
+    config = {"reachability": {"globs": ["App/**/*.swift", "App/**/*.kt"]}}
     by = {r["symbol"]: r["sites"] for r in module.check_reachability(root, "main", config)}
 
     check("測試檔與 markdown 不算建構點",
@@ -903,6 +914,16 @@ def test_reachability_hardening(tmp: pathlib.Path) -> None:
           "ThingViewModel" in by and not by["ThingViewModel"], str(sorted(by)))
     check("actor 認得出來",
           "ThingService" in by and not by["ThingService"], str(sorted(by)))
+    check("enum、protocol 與 interface 不拿建構語法誤判成到不了",
+          "ScreenState" not in by and "Routable" not in by and "RoutableContract" not in by,
+          str(sorted(by)))
+    check("有 raw value 或明確 init 的 Swift enum 仍是可建構型別",
+          "RawRoute" in by and not by["RawRoute"] and "InitRoute" in by and not by["InitRoute"]
+          and "FailableRoute" in by and not by["FailableRoute"]
+          and "GenericRoute" in by and not by["GenericRoute"],
+          str(sorted(by)))
+    check("可建構 enum 以 case/static member 接線也算真實 site",
+          by.get("UsedRawRoute") == ["App/RawRouteConsumer.swift"], str(by.get("UsedRawRoute")))
     check("private 型別跳過(file-local 本來就不對外可達)",
           "Helper" not in by, str(sorted(by)))
     check("有建構點的仍然判為到得了",
