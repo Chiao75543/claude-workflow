@@ -66,7 +66,8 @@ impact:
     orchestrator 讀；evidence-check 讀 delivery/red/smoke/hash 並由 verify、pr-comment、runs delivery
     使用；runs --set 是 status.json 唯一 writer，各 workflow command、dashboard 與 runs list 讀；
     static entry 由 red-capture 執行，test-review、traceability、freeze-check 讀 checks/tests/hash；
-    finding revalidation 由 findings/loop 寫，dashboard 與 G9/G10 dispatch 讀。共用 snapshot 與
+    finding revalidation 與 G9/G10 dispatch 結果由 findings/loop 寫，dashboard 讀；dispatch 必須區分
+    completed 與 denied，平台拒絕不得視為審查通過或改道重派。共用 snapshot 與
     atomic JSON helper 由 _state.py/_common.py 提供。MindEY 接入由另一 worktree 負責，本變更只
     提供向後相容 shared contract。
   risks:
@@ -181,12 +182,15 @@ design: |
   與 worktree 相符；--commit 只要求 delivery set 與 HEAD 相符，不以其他 WIP 阻止補證據 commit。
   manifest 固定為 evidence/delivery.json schema version 1，欄位是 schema_version、spec_hash、
   approval_commit、approval_tree、files；approval_commit/approval_tree 由 Git 找到包含核准三件組的
-  committed anchor，不寫回 approval artifact 本身。每個 files item 有 path、sha256 與 source；files 不列 delivery.json 或 status.json，
-  這兩個 root 由 checker 額外納入 final set，避免自我參照。source 只允許 spec、approval、freeze、
+  committed anchor，不寫回 approval artifact 本身。每個 files item 有 path、sha256 與 source；files 不列 delivery.json、status.json 或 dashboard.json，
+  這三個 root 由 checker 直接納入指定 index／HEAD snapshot 的 final set，避免 dashboard 驗證 manifest、
+  manifest 又綁 dashboard hash 的自我參照。source 只允許 spec、approval、freeze、
   red、review、smoke、finding、autonomy、dashboard。final set 必含 manifest、status、spec、approval
   artifacts、所有適用 gate 的 root evidence與其引用檔。committed evidence token 是
-  SHA-256(canonical JSON of manifest-declared path/blob pairs)，不包含 manifest/status；checker 仍驗證
-  manifest/status 與 payload 同在被指定的 index/HEAD snapshot。輸出固定為 schema_version、status、
+  SHA-256(canonical JSON of manifest-declared path/blob pairs)，不包含 manifest/status/dashboard；checker 仍驗證
+  manifest/status/dashboard 與 payload 同在被指定的 index/HEAD snapshot。`--pre-dashboard` 只供 dashboard
+  產生自身 artifact 前驗證同一 snapshot 的其他 final roots；一般 `--index`／`--commit` 仍要求 dashboard root。
+  輸出固定為 schema_version、status、
   reason、exit_code、storage、snapshot、token、files、invalid_files、delivery_ready；files item 固定為
   path、sha256、source、bytes，invalid_files item 固定為 path、reason。零 files 失敗；多重錯誤以 path
   排序且每個 path 只列首個
@@ -241,7 +245,10 @@ design: |
 
   findings 的固定語法為：
   `findings add <spec> --id ID --kind KIND --check CHECK --location LOCATION --repro-json PATH`、
-  `findings revalidate <spec> --id ID`、`loop <spec>`。repro-json schema version 1 固定記錄 argv、
+  `findings revalidate <spec> --id ID`、
+  `findings <spec> dispatched --gate G9|G10 --status completed|denied`、`loop <spec>`。dispatch record 固定保存
+  at、tree、status；只有 completed 可通過 dashboard，denied 代表平台拒絕且不得換 wording／channel 重派。
+  repro-json schema version 1 固定記錄 argv、
   path_indices、cwd、stdin_sha256、environment、inputs；path_indices 是不重複的 0-based argv index，
   environment 只允許 spec 宣告的非秘密 key/value，inputs 是依名稱
   排序的 `{name, sha256}`。revalidate 必須從 ledger 讀 repro-json，在固定 snapshot 實際執行 argv，
@@ -256,7 +263,9 @@ design: |
   fixed 後同 identity 在當前 snapshot 再失敗時以原 ID reappear→flipflop，以及 G9/G10 最多重派一次。
   無法界定影響範圍時 full rerun 指 G0–G7、smoke、G9 與 G10，不得寫沿用 PASS。
 
-  `evidence-check <spec> --index|--commit` 與 `runs --set` stdout 都是完整結果 JSON。
+  `evidence-check <spec> --index|--commit [--pre-dashboard]` 與 `runs --set` stdout 都是完整結果 JSON。
+  dashboard 在寫自身 artifact 前固定使用對應 snapshot 的 `--pre-dashboard` 驗證；寫完後必須由一般
+  evidence-check 把 dashboard 當 direct root 驗入 index／HEAD。runs 產生的 manifest 不收 dashboard hash。
   SC-039/046 由正式 `scripts/gates/tests/run` 在暫存 Git repository 直接呼叫 config-check、autonomy、
   red-capture、test-review、traceability、freeze-check、evidence-check 與 runs，不得 stub/mock；逐步保存
   argv、stdout JSON、exit、index tree OID 與不同的 HEAD commit OID。它會實際 runs --set，但不執行
@@ -920,7 +929,7 @@ requirements:
         mode: 6b
         given: {temporary_git_repo: clean, autonomy_version: 1, approved_scope: present}
         when: run_delivery_sequence
-        then: {plan: planned, repair: complete, verify: passed, index_check: passed, commit_check: passed, empty_static_stream_included: true, empty_static_stream_byte_exact: true, ledger_schema: 1, status_schema: 1, index_tree_oid_valid: true, head_commit_oid_valid: true, oids_distinct: true, pr_ready: true, remote_actions: [], exit_code: 0}
+        then: {plan: planned, repair: complete, verify: passed, index_check: passed, commit_check: passed, dashboard_root_created: true, findings_root_created: true, empty_static_stream_included: true, empty_static_stream_byte_exact: true, ledger_schema: 1, status_schema: 1, index_tree_oid_valid: true, head_commit_oid_valid: true, oids_distinct: true, pr_ready: true, remote_actions: [], exit_code: 0}
         examples:
           - in:
               commands:
@@ -932,17 +941,23 @@ requirements:
                 - "scripts/gates/test-review specs/workflow-autonomy/spec.yaml"
                 - "scripts/gates/traceability specs/workflow-autonomy/spec.yaml"
                 - "scripts/gates/freeze-check specs/workflow-autonomy/spec.yaml"
+                - "scripts/gates/smoke specs/workflow-autonomy/spec.yaml"
+                - "scripts/gates/findings specs/workflow-autonomy/spec.yaml dispatched --gate G9 --status completed"
+                - "scripts/gates/findings specs/workflow-autonomy/spec.yaml dispatched --gate G10 --status completed"
                 - "scripts/gates/runs --set specs/workflow-autonomy/spec.yaml --expect-generation 0 --pipeline-state complete --stage S10 --next-step commit --delivery-state local"
                 - "git add -- specs/pipeline.yaml specs/workflow-autonomy"
+                - "scripts/gates/dashboard specs/workflow-autonomy/spec.yaml --pre-commit"
+                - "git add -- specs/workflow-autonomy/evidence/dashboard.html specs/workflow-autonomy/evidence/dashboard.json"
                 - "scripts/gates/evidence-check specs/workflow-autonomy/spec.yaml --index"
                 - "git -c user.name=WorkflowFixture -c user.email=fixture@example.invalid commit -m workflow-autonomy-fixture"
                 - "scripts/gates/evidence-check specs/workflow-autonomy/spec.yaml --commit"
                 - "scripts/gates/runs --set specs/workflow-autonomy/spec.yaml --expect-generation 1 --next-step pr_ready --delivery-state committed --committed-evidence-token <token-from-prior-command>"
-                - "git add -- specs/workflow-autonomy/evidence/status.json"
+                - "scripts/gates/dashboard specs/workflow-autonomy/spec.yaml"
+                - "git add -- specs/workflow-autonomy/evidence/status.json specs/workflow-autonomy/evidence/dashboard.html specs/workflow-autonomy/evidence/dashboard.json"
                 - "scripts/gates/evidence-check specs/workflow-autonomy/spec.yaml --index"
                 - "git -c user.name=WorkflowFixture -c user.email=fixture@example.invalid commit --amend --no-edit"
                 - "scripts/gates/evidence-check specs/workflow-autonomy/spec.yaml --commit"
-            out: {plan: planned, repair: complete, verify: passed, index_check: passed, commit_check: passed, empty_static_stream_included: true, empty_static_stream_byte_exact: true, ledger_schema: 1, status_schema: 1, index_tree_oid_valid: true, head_commit_oid_valid: true, oids_distinct: true, pr_ready: true, remote_actions: [], exit_code: 0}
+            out: {plan: planned, repair: complete, verify: passed, index_check: passed, commit_check: passed, dashboard_root_created: true, findings_root_created: true, empty_static_stream_included: true, empty_static_stream_byte_exact: true, ledger_schema: 1, status_schema: 1, index_tree_oid_valid: true, head_commit_oid_valid: true, oids_distinct: true, pr_ready: true, remote_actions: [], exit_code: 0}
 
       - id: SC-046
         mode: 6b
