@@ -1,0 +1,103 @@
+profile:
+  id: codex-lean
+  version: 1
+
+# 這是唯一的使用者可見流程。條件式工具只能掛在這四個 stage 內，
+# 不得把 reader、oracle、修正迴圈或截圖另列成 stage。
+visible_stages:
+  - {id: direction, label: 定方向}
+  - {id: codex_work, label: Codex 完成工作}
+  - {id: auto_verify, label: 自動驗證}
+  - {id: owner_merge, label: 使用者按 merge}
+
+routing:
+  assessment_version: 1
+  complexity_values: [quick, complex]
+  required_risk_flags:
+    - permissions
+    - privacy
+    - payments
+    - irreversible_data
+    - critical_security
+    - core_entrypoint
+  high_risk_flags:
+    - permissions
+    - privacy
+    - payments
+    - irreversible_data
+    - critical_security
+    - core_entrypoint
+  spec_reader_when: [spec_ambiguity, complex]
+  spec_oracle_when: high_risk
+
+checks:
+  direction:
+    always:
+      - collision-scan
+      - scope-and-risk-assessment
+      - behavior-contract-lint
+      - owner-approves-observable-behavior
+      - approved-contract-snapshot
+    conditional:
+      - spec-reader
+  codex_work:
+    always:
+      - codex-native-plan
+      - codex-native-implementation
+      - codex-native-fix
+      - codex-native-review
+  auto_verify:
+    always:
+      - behavior-contract-diff
+      - project-tests
+      - project-lint
+      - real-entry-smoke
+    conditional:
+      - smoke-screenshots
+      - spec-oracle
+  owner_merge:
+    always:
+      - owner-merge
+
+shared_tools:
+  collision_scan: scripts/gates/scan-siblings
+  contract_lint: scripts/gates/spec-lint
+  contract_diff: scripts/gates/spec-diff
+  smoke: scripts/gates/smoke
+
+# v1 不使用會鎖住整份 spec 的 freeze-check；spec-diff 只保護 examples、
+# given/when/then、mode 與覆蓋收縮，why/design/tasks/檔案安排可自主調整。
+freeze:
+  mode: behavior-contract-only
+  protected:
+    - scenarios
+    - examples
+    - observable-behavior
+    - verification-mode
+    - coverage-regression
+  excluded:
+    - why
+    - design
+    - tasks
+    - file-layout
+    - implementation-details
+
+interrupts:
+  before_or_during_work:
+    - approved-behavior-must-change
+    - new-permission
+    - external-dependency
+    - irreversible-operation
+    - undefined-major-security-privacy-payment-data-loss-risk
+    - same-problem-failed-after-two-fixes
+    - fixed-problem-recurred
+  final:
+    - merge
+
+assurance:
+  mutation_gate: unavailable_without_real_executor
+  screenshots: part_of_smoke
+  full_freeze: disabled
+  red_green: not_a_visible_or_required_stage
+  shared_autonomy_adapter: pending_sibling_worktree
+  shared_evidence_adapter: pending_sibling_worktree

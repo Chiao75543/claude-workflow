@@ -1,0 +1,18 @@
+version: 1
+request: ""
+complexity: null # quick | complex
+spec_ambiguity: null # true | false
+external_dependency: null # true | false
+new_permission: null # true | false；只表示新增權限，不包含既有權限流程
+ui_change: null # true | false
+uncertainties: []
+risks:
+  permissions: null # true | false
+  privacy: null # true | false
+  payments: null # true | false
+  irreversible_data: null # true | false
+  critical_security: null # true | false
+  core_entrypoint: null # true | false
+basis:
+  scope: ""
+  risk: ""

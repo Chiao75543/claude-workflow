@@ -1,0 +1,194 @@
+#!/usr/bin/env python3
+"""Regression tests for the additive Codex lean profile and router."""
+
+from __future__ import annotations
+
+import json
+import pathlib
+import shutil
+import subprocess
+import tempfile
+
+import yaml
+
+
+HERE = pathlib.Path(__file__).resolve().parent
+REPO = HERE.parents[2]
+ROUTER = REPO / "scripts" / "codex" / "route"
+PROFILE = REPO / "profiles" / "codex-lean.yaml"
+TEMPLATE = REPO / "skills" / "codex-workflow" / "assets" / "assessment.yaml"
+RESULTS: list[tuple[bool, str, str]] = []
+
+
+def check(name: str, ok: bool, detail: str = "") -> None:
+    RESULTS.append((ok, name, detail))
+
+
+def base() -> dict:
+    return {
+        "version": 1,
+        "request": "調整既有說明文字並驗證真實入口",
+        "complexity": "quick",
+        "spec_ambiguity": False,
+        "external_dependency": False,
+        "new_permission": False,
+        "ui_change": False,
+        "uncertainties": [],
+        "risks": {
+            "permissions": False,
+            "privacy": False,
+            "payments": False,
+            "irreversible_data": False,
+            "critical_security": False,
+            "core_entrypoint": False,
+        },
+        "basis": {
+            "scope": "已檢查單一呼叫點與相鄰測試，沒有跨模組修改",
+            "risk": "不涉及權限、個資、金流、資料操作、資安或核心入口",
+        },
+    }
+
+
+def invoke(tmp: pathlib.Path, data: dict, profile: pathlib.Path = PROFILE) -> tuple[int, dict, str]:
+    path = tmp / "assessment.yaml"
+    path.write_text(yaml.safe_dump(data, allow_unicode=True, sort_keys=False))
+    proc = subprocess.run(
+        [str(ROUTER), str(path), "--profile", str(profile), "--json"],
+        capture_output=True,
+        text=True,
+    )
+    payload = json.loads(proc.stdout) if proc.stdout.strip() else {}
+    return proc.returncode, payload, proc.stderr
+
+
+def main() -> int:
+    with tempfile.TemporaryDirectory(prefix="codex-lean-tests-") as raw:
+        tmp = pathlib.Path(raw)
+
+        code, out, err = invoke(tmp, base())
+        check("quick assessment routes successfully", code == 0, err)
+        check("user-visible stages are exactly four", [s["id"] for s in out.get("visible_stages", [])]
+              == ["direction", "codex_work", "auto_verify", "owner_merge"], str(out))
+        check("quick path skips reader and oracle", out.get("conditional_tools")
+              == {"spec_reader": False, "spec_oracle": False}, str(out))
+        required = {"behavior-contract-diff", "project-tests", "project-lint", "real-entry-smoke"}
+        check("quick path keeps executable verification",
+              required.issubset(set(out.get("checks", {}).get("auto_verify", []))), str(out))
+        check("ordinary quick path does not interrupt after approval",
+              out.get("interrupt_before_work") == [], str(out))
+
+        case = base()
+        case["spec_ambiguity"] = True
+        code, out, _ = invoke(tmp, case)
+        check("ambiguous spec selects complex path and one reader", code == 0 and out.get("track") == "complex"
+              and out.get("conditional_tools") == {"spec_reader": True, "spec_oracle": False}, str(out))
+
+        case = base()
+        case["complexity"] = "complex"
+        code, out, _ = invoke(tmp, case)
+        check("complex scope selects reader without oracle", code == 0 and out.get("conditional_tools")
+              == {"spec_reader": True, "spec_oracle": False}, str(out))
+
+        for risk in base()["risks"]:
+            case = base()
+            case["risks"][risk] = True
+            code, out, _ = invoke(tmp, case)
+            check(f"high risk {risk} selects oracle", code == 0 and out.get("track") == "complex"
+                  and out.get("conditional_tools", {}).get("spec_oracle") is True, str(out))
+
+        case = base()
+        case["risks"]["permissions"] = True
+        code, out, _ = invoke(tmp, case)
+        check("existing permission flow does not imply a new-permission interrupt", code == 0
+              and out.get("interrupt_before_work") == [], str(out))
+
+        case = base()
+        case["risks"]["permissions"] = True
+        case["new_permission"] = True
+        code, out, _ = invoke(tmp, case)
+        check("new permission requires owner decision", code == 0
+              and out.get("interrupt_before_work") == ["new-permission"], str(out))
+
+        case = base()
+        case["new_permission"] = True
+        code, out, _ = invoke(tmp, case)
+        check("new permission without permission risk fails closed", code == 2
+              and out.get("status") == "blocked", str(out))
+
+        case = base()
+        case["external_dependency"] = True
+        code, out, _ = invoke(tmp, case)
+        check("external dependency routes complex and interrupts", code == 0 and out.get("track") == "complex"
+              and out.get("interrupt_before_work") == ["external-dependency"], str(out))
+
+        case = base()
+        case["ui_change"] = True
+        code, out, _ = invoke(tmp, case)
+        check("UI screenshot stays inside smoke stage", code == 0
+              and "smoke-screenshots" in out.get("checks", {}).get("auto_verify", [])
+              and len(out.get("visible_stages", [])) == 4, str(out))
+
+        case = base()
+        del case["risks"]["privacy"]
+        code, out, _ = invoke(tmp, case)
+        check("missing risk fails closed",
+              code == 2 and out.get("status") == "blocked" and "privacy" in str(out), str(out))
+
+        case = base()
+        case["risks"]["unknown_future_risk"] = False
+        code, out, _ = invoke(tmp, case)
+        check("unknown risk fails closed", code == 2 and out.get("status") == "blocked", str(out))
+
+        case = base()
+        case["uncertainties"] = ["尚未確認是否改到登入入口"]
+        code, out, _ = invoke(tmp, case)
+        check("uncertainty fails closed", code == 2 and out.get("status") == "blocked", str(out))
+
+        case = base()
+        case["spec_ambiguity"] = "false"
+        code, out, _ = invoke(tmp, case)
+        check("non-boolean routing input fails closed", code == 2 and out.get("status") == "blocked", str(out))
+
+        bad_profile = tmp / "bad-profile.yaml"
+        profile_data = yaml.safe_load(PROFILE.read_text())
+        profile_data["visible_stages"].append({"id": "review", "label": "額外審查"})
+        bad_profile.write_text(yaml.safe_dump(profile_data, allow_unicode=True, sort_keys=False))
+        code, out, _ = invoke(tmp, base(), bad_profile)
+        check("fifth visible stage is rejected", code == 2 and out.get("status") == "blocked", str(out))
+
+        profile_data = yaml.safe_load(PROFILE.read_text())
+        profile_data["routing"]["high_risk_flags"].remove("payments")
+        bad_profile.write_text(yaml.safe_dump(profile_data, allow_unicode=True, sort_keys=False))
+        code, out, _ = invoke(tmp, base(), bad_profile)
+        check("shrinking high-risk coverage is rejected", code == 2 and out.get("status") == "blocked", str(out))
+
+        template = yaml.safe_load(TEMPLATE.read_text())
+        code, out, _ = invoke(tmp, template)
+        check("unfilled assessment template fails closed", code == 2 and out.get("status") == "blocked", str(out))
+
+        profile_data = yaml.safe_load(PROFILE.read_text())
+        profile_data["checks"]["direction"]["always"].append("spec-reader")
+        bad_profile.write_text(yaml.safe_dump(profile_data, allow_unicode=True, sort_keys=False))
+        code, out, _ = invoke(tmp, base(), bad_profile)
+        check("reader cannot become an always-on stage check", code == 2 and out.get("status") == "blocked", str(out))
+
+        profile_data = yaml.safe_load(PROFILE.read_text())
+        profile_data["freeze"]["mode"] = "full"
+        bad_profile.write_text(yaml.safe_dump(profile_data, allow_unicode=True, sort_keys=False))
+        code, out, _ = invoke(tmp, base(), bad_profile)
+        check("full freeze is rejected", code == 2 and out.get("status") == "blocked", str(out))
+
+        copied_profile = tmp / "profile-copy.yaml"
+        shutil.copy2(PROFILE, copied_profile)
+        code, out, _ = invoke(tmp, base(), copied_profile)
+        check("profile is portable by explicit path", code == 0 and out.get("profile") == "codex-lean/v1", str(out))
+
+    passed = sum(1 for ok, _, _ in RESULTS if ok)
+    for ok, name, detail in RESULTS:
+        print(f"{'PASS' if ok else 'FAIL'} {name}" + (f" :: {detail[:240]}" if not ok and detail else ""))
+    print(f"\n{passed}/{len(RESULTS)} PASS")
+    return 0 if passed == len(RESULTS) else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
