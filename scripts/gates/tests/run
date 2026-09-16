@@ -944,6 +944,22 @@ def test_test_review(tmp: pathlib.Path) -> None:
     check("test-review 只審本 spec 凍結測試，不把其他 spec 同號測試算進來",
           code == 0 and set(review.get("files", {})) == {"Tests/DemoTests.swift"}, out[:360])
 
+    # 共用 fixture 檔沒有 @Test,但它承載 example 的字面值,凍結清單會收它。
+    # test-review.json 的 files 必須涵蓋整個凍結邊界,否則 dashboard 的 G2b
+    # (審過的 == 凍結的)對任何凍結 fixture 的規格必然失敗。
+    root = repo("tr-fixture-in-scope", good)
+    (root / "Tests" / "DemoFixtures.swift").write_text(
+        "enum DemoFixture {\n    static let emptyList: [String] = []\n}\n")
+    freeze(root, ["Tests/DemoTests.swift", "Tests/DemoFixtures.swift"])
+    code, out = run_gate("test-review", "specs/demo/spec.yaml", cwd=root)
+    review = json.loads((root / "specs/demo/evidence/test-review.json").read_text())
+    frozen = {
+        line.split("  ", 1)[1].strip()
+        for line in (root / "specs/demo/evidence/tests.hash").read_text().splitlines() if line.strip()
+    }
+    check("凍結清單含無 @Test 的 fixture 檔時,審查記錄仍涵蓋整個邊界(G2b 才對得起來)",
+          code == 0 and set(review.get("files", {})) == frozen, f"{sorted(review.get('files', {}))} vs {sorted(frozen)} | {out[:200]}")
+
     root = repo("tr-spec-scope-missing", good.splitlines()[0] + "\n")
     (root / "Tests" / "OtherSpecTests.swift").write_text(good.splitlines()[1] + "\n")
     freeze(root, ["Tests/DemoTests.swift"])

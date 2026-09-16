@@ -213,7 +213,6 @@ def main(argv: list[str]) -> int:
                     continue
                 (f.error if item.get("blocking") else f.warn)(spot, str(item["problem"]))
 
-    files = sorted({t["file"] for t in tests})
     deferred_smoke = sorted(scenario_ids_for_modes(spec, SMOKE_MODES))
     if deferred_smoke:
         f.warn("延後驗證", f"{', '.join(deferred_smoke)} 是 6c,由 S9b smoke 審查實跑證據,不以 @Test 冒充")
@@ -226,7 +225,10 @@ def main(argv: list[str]) -> int:
         "scope_source": scope_source,
         "reviewed_modes": sorted(RED_MODES),
         "deferred_smoke": deferred_smoke,
-        "files": {source["rel"]: source["sha256"] for source in test_sources if source["rel"] in files},
+        # 記錄整個規格測試邊界,不只「含 @Test 的檔」——共用 fixture 檔沒有 @Test,
+        # 但它承載 example 的字面值,改一個常數就能悄悄放寬斷言,所以同樣要被凍結與比對。
+        # 只收有測試的檔會讓 dashboard 的 G2b(審過的 == 凍結的)對任何凍結 fixture 的規格必然失敗。
+        "files": {source["rel"]: source["sha256"] for source in test_sources},
         "tree": tree_fingerprint(root),
         "errors": [f"{w}: {m}" for w, m in f.errors],
         "warnings": [f"{w}: {m}" for w, m in f.warnings],
