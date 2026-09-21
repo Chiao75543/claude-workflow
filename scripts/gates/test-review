@@ -38,7 +38,10 @@ from _state import tree_fingerprint  # noqa: E402
 SKIP_TOKENS = {"true", "false", "null", "none", "nil", "yes", "no"}
 # 註解裡的東西不算:`// #expect(...) 之後補` 不是斷言,`// emptyList` 不是引用。
 # `#` 開頭只在後面接空白時當註解(Python / shell),否則會把 Swift 的 #expect 剝掉。
-COMMENT = re.compile(r"/\*.*?\*/|//[^\n]*|^\s*#\s[^\n]*", re.S | re.M)
+# `//` 前面是 `:` 的不算註解,那是 URL 的 scheme —— 沒有這條 lookbehind,
+# 任何 example 的 out 值是網址的規格都必然被判「沒人引用」,而且無解:
+# anchor 本身就含 `//`,測試怎麼寫都救不了(2026-09-18 event-share 實證)。
+COMMENT = re.compile(r"/\*.*?\*/|(?<!:)//[^\n]*|^\s*#\s[^\n]*", re.S | re.M)
 
 
 def strip_comments(text: str) -> str:
