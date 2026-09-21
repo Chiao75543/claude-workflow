@@ -981,6 +981,22 @@ def test_test_review(tmp: pathlib.Path) -> None:
     check("凍結清單含無 @Test 的 fixture 檔時,審查記錄仍涵蓋整個邊界(G2b 才對得起來)",
           code == 0 and set(review.get("files", {})) == frozen, f"{sorted(review.get('files', {}))} vs {sorted(frozen)} | {out[:200]}")
 
+    # example 的 out 值是網址時,`//` 是 scheme 不是註解。剝掉的話 anchor 永遠找不到,
+    # 而且測試怎麼寫都救不了(2026-09-18 event-share 實證)。
+    url_spec = VALID_SPEC.replace("out: {returns: empty_list}",
+                                  'out: {share_url: "https://example.com/e/42"}')
+    url_src = ('@Test("SC-001 分享連結") func a() { #expect(link(0) == "https://example.com/e/42") }\n'
+               '@Test("SC-002 離線就報 NetworkError") func b() { #expect(throws: NetworkError.self) { try process() } }\n')
+    root = repo("tr-url-not-comment", url_src, spec=url_spec)
+    code, out = run_gate("test-review", "specs/demo/spec.yaml", cwd=root)
+    check("example 的值是網址時,`//` 不當註解剝掉(否則必判沒人引用)", code == 0, out[:300])
+    # 真正的行尾註解仍然要剝:值只出現在 `// …` 後面不算引用
+    root = repo("tr-url-real-comment",
+                '@Test("SC-001 x") func a() { #expect(link(0) != nil) } // https://example.com/e/42\n'
+                + url_src.splitlines()[1] + "\n", spec=url_spec)
+    code, out = run_gate("test-review", "specs/demo/spec.yaml", cwd=root)
+    check("網址只出現在行尾註解裡 → 仍然不算引用", code == 1 and "沒有引用 SC-001" in out, out[:300])
+
     root = repo("tr-spec-scope-missing", good.splitlines()[0] + "\n")
     (root / "Tests" / "OtherSpecTests.swift").write_text(good.splitlines()[1] + "\n")
     freeze(root, ["Tests/DemoTests.swift"])
