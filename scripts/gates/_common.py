@@ -33,6 +33,27 @@ RED_MODES = {"6a", "6b"}
 SMOKE_MODES = {"6c"}
 MANUAL_MODES = {"6d"}
 
+# 兩條車道。實測 84 條 findings 有一半集中在兩張碰敏感東西的卡;其餘每張 1–9 條,
+# 卻走一樣的十關。旗標沿用 profiles/codex-lean.yaml 的六個,任一為 true → full。
+# 沒寫 risk_flags 的規格 **算 full**(fail closed):忘了填不能變成少過關。
+RISK_FLAGS = ["permissions", "privacy", "payments", "irreversible_data", "critical_security", "core_entrypoint"]
+# lite 車道不要求的關:證明測試曾紅過(G5)、測試的語意審查(G2b 的 agent 半段)、
+# 可達性(G7)、獨立第二讀者(G9)。G10 對抗審查兩條車道都要。
+LITE_WAIVED_GATES = {"G5", "G7"}
+# 豁免只能落在腳本關(幾乎免費的那些)。smoke(S)與付費審查(G9/10)永遠不在豁免範圍 ——
+# 就算有人把它們加進上面那個集合也一樣。dashboard 用這份白名單再過濾一次。
+WAIVABLE_GATES = {"G0", "G1/2", "G2b", "G3", "G4", "G5", "G6", "G7"}
+
+
+def lane(spec: dict) -> str:
+    """"lite" 或 "full"。只看 meta.risk_flags;缺、型別不對、任一旗標非 False 都是 full。"""
+    flags = (spec.get("meta") or {}).get("risk_flags")
+    if not isinstance(flags, dict):
+        return "full"
+    if any(flags.get(k) is not False for k in RISK_FLAGS):
+        return "full"
+    return "lite"
+
 
 class Findings:
     """收集錯誤與警告,最後一次印出。錯誤讓退出碼非零。"""

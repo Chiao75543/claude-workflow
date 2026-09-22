@@ -1704,6 +1704,86 @@ def test_dashboard_approval_anchor_phases(tmp: pathlib.Path) -> None:
           code == 0 and "自動推:可以" in out, out[-500:])
 
 
+def test_risk_lanes(tmp: pathlib.Path) -> None:
+    """兩條車道。沒寫旗標 = full(fail closed);六個全 false 才是 lite;lite 豁免 G5/G7、G2b 語意、G9,
+    但 G10 與 smoke 照舊。豁免的關要留在證據表上,不能消失。"""
+    from _common import lane
+    ALL_FALSE = "  risk_flags: {permissions: false, privacy: false, payments: false, irreversible_data: false, critical_security: false, core_entrypoint: false}\n"
+    with_flags = lambda line: VALID_SPEC.replace("meta: {name: demo, ticket: null, capability: demo, change_type: ADDED}\n",
+                                                 "meta:\n  name: demo\n  ticket: null\n  capability: demo\n  change_type: ADDED\n" + line)
+    import yaml
+    check("沒寫 risk_flags → full(忘了填不能變成少過關)", lane(yaml.safe_load(VALID_SPEC)) == "full")
+    check("六個全 false → lite", lane(yaml.safe_load(with_flags(ALL_FALSE))) == "lite")
+    check("任一為 true → full", lane(yaml.safe_load(with_flags(ALL_FALSE.replace("privacy: false", "privacy: true")))) == "full")
+    check("旗標型別不對(字串)→ full", lane({"meta": {"risk_flags": "none"}}) == "full")
+
+    # spec-lint:要嘛不寫,要嘛六個全填 bool
+    root = make_repo(tmp / "lane-lint", with_flags(ALL_FALSE))
+    code, out = run_gate("spec-lint", "specs/demo/spec.yaml", cwd=root)
+    check("六個旗標全填 → lint PASS", code == 0, out[:200])
+    (root / "specs/demo/spec.yaml").write_text(with_flags("  risk_flags: {permissions: false, privacy: false}\n"))
+    code, out = run_gate("spec-lint", "specs/demo/spec.yaml", cwd=root)
+    check("旗標寫一半 → lint 擋(寫一半會讓人以為評估過)", code == 1 and "缺" in out and "payments" in out, out[:300])
+    (root / "specs/demo/spec.yaml").write_text(with_flags(ALL_FALSE.replace("payments: false", "payments: no_idea")))
+    code, out = run_gate("spec-lint", "specs/demo/spec.yaml", cwd=root)
+    check("旗標不是 bool → lint 擋", code == 1 and "true/false" in out, out[:300])
+    (root / "specs/demo/spec.yaml").write_text(with_flags(ALL_FALSE.rstrip("}\n") + ", gdpr: false}\n"))
+    code, out = run_gate("spec-lint", "specs/demo/spec.yaml", cwd=root)
+    check("不認得的旗標 → lint 擋", code == 1 and "不認得" in out, out[:300])
+
+    # dashboard:同一個 repo,只差 red.json 與 test-reviewer 結果沒有;lite 放行、full 擋
+    def repo(name: str, spec_text: str) -> pathlib.Path:
+        root = make_repo(tmp / name, spec_text)
+        (root / "Tests").mkdir()
+        (root / "Tests" / "DemoTests.swift").write_text(
+            '@Test("SC-001 a") func a() { #expect(x == .emptyList) }\n'
+            '@Test("SC-002 b") func b() { #expect(e == NetworkError.offline) }\n')
+        (root / "specs" / "pipeline.yaml").write_text(
+            'runner: swift-testing\ntests:\n  globs: ["Tests/**/*.swift"]\nreachability:\n  globs: ["App/**/*.swift"]\n'
+            'lint: "true"\ntest: "true"\nsmoke: "true"\n')
+        run_gate("test-review", "specs/demo/spec.yaml", "--mechanical-only", cwd=root)   # 沒派 test-reviewer
+        freeze(root, ["Tests/DemoTests.swift"])
+        shutil.copy(root / "specs/demo/spec.yaml", root / "specs/demo/evidence/spec.approved.yaml")
+        commit_base(root)
+        run_gate("smoke", "specs/demo/spec.yaml", cwd=root)
+        run_gate("findings", "specs/demo/spec.yaml", "dispatched", "--gate", "G10", cwd=root)   # 只派 G10
+        return root
+    spec = "specs/demo/spec.yaml"
+
+    root = repo("lane-lite", with_flags(ALL_FALSE))
+    code, out = run_gate("dashboard", spec, cwd=root)
+    dash = json.loads((root / "specs/demo/evidence/dashboard.json").read_text())
+    by = {g["id"]: g for g in dash["gates"]}
+    check("lite:缺 red.json、沒派 test-reviewer、只派 G10 → 全綠可推",
+          code == 0 and "自動推:可以" in out, out[:600])
+    check("lite:G5 標為豁免而不是消失(G7 本來就綠,不需要豁免)",
+          by["G5"].get("waived") and "lite" in by["G5"]["note"] and by["G7"]["ok"] and not by["G7"].get("waived"), str(by.get("G5")))
+    check("lite:G2b 只跑機械也算過,note 講明", by["G2b"]["ok"] and "語意審查不要求" in by["G2b"]["note"], str(by.get("G2b")))
+    check("lite:G9/10 只要求 G10", by["G9/10"]["ok"] and "只要求 G10" in by["G9/10"]["note"], str(by.get("G9/10")))
+    check("dashboard.json 與 _yield 都記 lane", dash["lane"] == "lite" and '"lane": "lite"' in (root / "specs/_yield.jsonl").read_text())
+    # lite 也不能繞過 smoke 與 G10
+    (root / "specs/demo/evidence/smoke.json").unlink()
+    code, out = run_gate("dashboard", spec, cwd=root)
+    check("lite:沒 smoke 一樣擋", code == 1 and "缺 smoke.json" in out, out[:400])
+    by = {g["id"]: g for g in json.loads((root / "specs/demo/evidence/dashboard.json").read_text())["gates"]}
+    check("lite:S 與 G9/10 永遠不帶 waived(豁免只落在腳本關)",
+          not by["S"].get("waived") and not by["G9/10"].get("waived") and not by["S"]["ok"], str(by["S"]))
+    run_gate("smoke", spec, cwd=root)
+    state = json.loads((root / "specs/demo/evidence/findings.json").read_text()); state["dispatched"].pop("G10")
+    (root / "specs/demo/evidence/findings.json").write_text(json.dumps(state))
+    code, out = run_gate("dashboard", spec, cwd=root)
+    check("lite:沒派 G10 一樣擋", code == 1 and "沒有派過的紀錄(G10)" in out, out[:400])
+
+    root = repo("lane-full", with_flags(ALL_FALSE.replace("privacy: false", "privacy: true")))
+    code, out = run_gate("dashboard", spec, cwd=root)
+    by = {g["id"]: g for g in json.loads((root / "specs/demo/evidence/dashboard.json").read_text())["gates"]}
+    check("full(privacy: true):同樣的證據 → G5 缺 red.json 擋、G2b 沒語意審查擋、沒有任何 waived",
+          code == 1 and not by["G5"]["ok"] and not by["G2b"]["ok"] and not any(g.get("waived") for g in by.values()), out[:600])
+    root = repo("lane-unset", VALID_SPEC)
+    code, out = run_gate("dashboard", spec, cwd=root)
+    check("沒寫旗標:等同 full", code == 1 and "缺 red.json" in out, out[:400])
+
+
 def test_config_check(tmp: pathlib.Path) -> None:
     root = make_repo(tmp / "cfg")
     code, out = run_gate("config-check", str(root), cwd=root)
@@ -1901,7 +1981,7 @@ def main() -> int:
                    test_reachability, test_reachability_hardening,
                    test_test_review, test_loop, test_findings, test_smoke,
                    test_dashboard_gating_order, test_dashboard_approval_anchor_phases,
-                   test_config_check, test_adversary_s7plus):
+                   test_config_check, test_adversary_s7plus, test_risk_lanes):
             try:
                 fn(tmp)
             except Exception as exc:  # noqa: BLE001

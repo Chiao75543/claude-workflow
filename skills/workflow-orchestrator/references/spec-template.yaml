@@ -10,6 +10,13 @@ meta:
   capability: example            # 這個功能屬於哪個能力
   change_type: ADDED             # ADDED | MODIFIED
   draft_version: 1
+  risk_flags:                    # 六個全填 true/false。全 false → lite 車道;任一 true 或整段不寫 → full
+    permissions: false           # 系統 / 平台權限
+    privacy: false               # 個資、錄音、位置、通訊內容
+    payments: false              # 金流
+    irreversible_data: false     # 刪除、遷移、不可逆的資料操作
+    critical_security: false     # 認證、token、加密、授權判斷
+    core_entrypoint: false       # 登入、session、App 啟動路徑
 
 why: |
   為什麼現在要做。觸發事件、誰受益。

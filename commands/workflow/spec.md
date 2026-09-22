@@ -18,5 +18,6 @@ Skill(skill="workflow-orchestrator", args="--only-spec $ARGUMENTS")
 **注意**
 
 - 產出:`specs/{name}/spec.yaml`(通過 `spec-lint`、hash 凍結)+ 一頁說明給你批准。
+- S1 會問六個風險旗標(`meta.risk_flags`);全 false 走 lite 車道(跳過 S4 隔離讀者)。沒填 = full。
 - **不會**寫測試、不會實作。要繼續就跑 `/workflow:test`。
 - S3 會跑 `scan-siblings`,把跟其他在飛分支撞到的檔案列出來。

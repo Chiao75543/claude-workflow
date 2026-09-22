@@ -61,6 +61,27 @@ MUTATIONS: list[tuple[str, str, str, str]] = [
      '                    f.error(f"{layer} / {sid or name[:32]}",\n'
      '                            "實作前就是綠的 —— 空測試。真有理由請在規格該條寫 red_exempt_reason")',
      "                    pass"),
+    # ---- 兩條車道 ----
+    ("_common.py", "沒寫 risk_flags 被當成 lite(忘了填變成少過關)",
+     '    if not isinstance(flags, dict):\n        return "full"',
+     '    if not isinstance(flags, dict):\n        return "lite"'),
+    ("_common.py", "任一旗標 true 仍走 lite",
+     '    if any(flags.get(k) is not False for k in RISK_FLAGS):\n        return "full"',
+     '    if all(flags.get(k) is not False for k in RISK_FLAGS):\n        return "full"'),
+    # (沒有「S 進白名單」的變異:G9/10 在 S 加入前就依 smoke_ok 判定,豁免 S 改變不了裁決 ——
+    #  實測該變異行為無差異。tests/run 另有斷言釘住「S 永遠不帶 waived」。)
+    ("dashboard", "豁免不經白名單過濾",
+     '            if g["id"] in LITE_WAIVED_GATES and g["id"] in WAIVABLE_GATES and not g["ok"] and not g.get("waived"):',
+     '            if g["id"] in LITE_WAIVED_GATES and not g["ok"] and not g.get("waived"):'),
+    ("dashboard", "lite 連 G10 都不要求",
+     '    required_reviews = ("G10",) if spec_lane == "lite" else ("G9", "G10")',
+     '    required_reviews = () if spec_lane == "lite" else ("G9", "G10")'),
+    ("dashboard", "full 車道也豁免 G5/G7",
+     '    if spec_lane == "lite":\n        for g in gates:',
+     '    if True:\n        for g in gates:'),
+    ("spec-lint", "旗標寫一半也放行",
+     '                if missing:\n                    f.error("meta.risk_flags"',
+     '                if False:\n                    f.error("meta.risk_flags"'),
     # ---- spec-lint ----
     ("spec-lint", "完備性可以指向別的 Requirement 的 Scenario",
      "                    if sid not in own:",

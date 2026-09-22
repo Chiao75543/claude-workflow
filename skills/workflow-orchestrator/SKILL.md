@@ -157,6 +157,10 @@ smoke 沒有的專案要在這裡**一起寫出來**(通常是一支 `scripts/sm
 
 1. 問 ticket id(可跳過)、一句功能描述
 2. 記錄 `{name}`(kebab-case)與分支名 `feat/[{TICKET}-]{name}`
+2b. **問六個風險旗標**(一次問完,每個 true/false):碰不碰 **權限**(permissions)、**個資 / 隱私**(privacy)、
+    **金流**(payments)、**不可逆的資料操作 / 遷移**(irreversible_data)、**關鍵資安**(critical_security)、
+    **核心入口 / 登入 / session**(core_entrypoint)。答案寫進 `meta.risk_flags`。
+    六個全 false → **lite 車道**;任一 true 或沒填 → **full**。見「兩條車道」。
 3. **跑 `scripts/gates/scan-siblings`** —— 列出所有 worktree 在飛的能力。
    同名能力會預警。已落地(在整合分支上)的規格會被濾掉,不算在飛。
 4. `specs/{name}/` 已存在 → 問要從哪一階段續跑
@@ -193,6 +197,8 @@ wt="$(git worktree list --porcelain \
    把會跟其他在飛分支撞的檔案列出來。在寫程式之前知道,比合併時才發現便宜得多。
 
 ### S4 歧義偵測
+
+**lite 車道跳過這一階段**(grill 的解讀表就是唯一一份)。full 車道上限兩輪。
 
 派遣 **2 個 `spec-reader`**(`tools: []`,規格直接貼在 prompt 裡)。
 兩種視角:**字面讀者**、**敵意讀者**。
@@ -235,6 +241,8 @@ wt="$(git worktree list --porcelain \
 
 ### S7 測試 RED
 
+**lite 車道:** red-writer 照樣先寫測試,但**不跑 `red-capture`**(G5 豁免)。直接進 S7½。
+
 **派遣 `red-writer`**。派遣訊息給它:凍結的規格路徑、專案 `test-writer` skill 的路徑、
 測試指令。它寫完會回報 `red-capture` 的輸出原文;**只回「完成」的報告不接受**。
 
@@ -270,6 +278,8 @@ wt="$(git worktree list --porcelain \
 任何未知或缺少的 mode 都 fail closed；不能因為不在某階段集合裡就靜默免驗。
 
 ### S7½ 審測試,再凍結
+
+**lite 車道:** 只跑 `test-review --mechanical-only`,不派 `test-reviewer`,然後凍結。
 
 **凍結錯的測試比沒凍結更糟** —— 實作者只能一直「衝突就停」。所以上鎖前:
 
@@ -410,11 +420,41 @@ gh run view <id> --log-failed                            # 拉失敗的 log
 PR 留言頂端是「✅ 全乾淨」→ 直接按。是「⏸ 需要你決定」→ 回答那幾題(在 PR 留言回,或直接跟 orchestrator 講),
 orchestrator 處理完重新留言。**orchestrator 一律不代按 merge。**
 
+## 兩條車道
+
+實測 mindey-mobile 九天:84 條 findings 有 43 條(51%)集中在兩張碰敏感東西的卡(錄音同意、即時通話);
+其餘每張 1–9 條,卻和它們走一樣的十關。只有兩個 Scenario 的分享功能,跑了 6 次證據表。
+
+`meta.risk_flags` 六個全 false 才是 **lite**;任一 true、沒填、型別不對都是 **full**(忘了填不能變成少過關)。
+判定在 `_common.lane()`,spec-lint 與 dashboard 共用同一個。
+
+| | **lite**(一般畫面、列表、分享、設定) | **full**(權限、個資、金流、不可逆資料、資安、核心入口) |
+|---|---|---|
+| S3 挑洞 | 一輪 | 一輪 |
+| S4 隔離讀者 | **跳過**(grill 的解讀表就是唯一一份) | 兩個,上限兩輪 |
+| S7 RED | red-writer 照樣先寫測試並凍結;**不跑 red-capture**(G5 豁免) | 現行全套 |
+| S7½ 審測試 | `test-review --mechanical-only`;**不派 test-reviewer** | 機械 + test-reviewer |
+| G7 可達性 | 豁免 | 要 |
+| S smoke | 要 | 要 |
+| G9 spec-oracle | **不派** | 派 |
+| G10 code-adversary | **要** | 要 |
+
+lite 砍的是「證明測試有牙齒」和「第二個人讀規格」;**沒砍「測試先寫、鎖住、實作碰不到」**這條規矩
+(它幾乎不花錢,卻防止 AI 為了變綠把考卷改簡單),也沒砍 G10 —— 它是砍掉 G5 之後唯一還會抓到
+「測試沒牙齒」的關(實例:拔掉 Bearer 後 253 條測試仍全綠,那 253 條都有 RED 證據)。
+
+豁免的關**留在證據表上**,note 寫「lite 車道不要求」,`dashboard.json` 與 `_yield.jsonl` 都記 `lane`。
+「沒檢查」和「檢查過」在證據上必須分得出來。
+
+**怎麼知道 lite 砍過頭:** `runs --yield` 看 lite 卡的 G10 must_fix 平均條數(基準約 3)與 G10 重派次數。
+明顯上升就把對應的關加回 lite。
+
 ## 關卡:順序就是花錢的順序
 
 ```
 腳本判定 · 幾乎不花錢 · 全綠才往下
-  G0  spec-lint        schema + 完備性六類 + 可測性
+  G0  spec-lint        schema + 完備性六類 + 可測性 + 車道旗標。
+                       (實測 94 次 0 攔截 —— S3/S5 早就過了同樣的檢查;留著只因為幾乎免費)
   G1  freeze-check     規格指紋 + **可解析性**(凍結一個載不進來的檔毫無意義)
                        指紋不符時跑 spec-diff 分類:行為改變 → 退回 S5;
                        事實修正 → 記錄後重新凍結
@@ -427,9 +467,9 @@ orchestrator 處理完重新留言。**orchestrator 一律不代按 merge。**
                        **沒設定 = 失敗,不是跳過** —— 「沒有人檢查」和「檢查通過」
                        是兩件完全不同的事。沒有這一關,RED 證據只證明實作前是紅的,
                        不證明實作後是綠的,GREEN 就還是「AI 說 OK」
-  G5  red-capture      6a/6b:六類 + 三方對帳。6c 明列 deferred,**不是豁免**
+  G5  red-capture      6a/6b:六類 + 三方對帳。6c 明列 deferred,**不是豁免**。**lite 車道不要求**
   G6  traceability     6a/6b Scenario ↔ RED 測試雙向;6c 明列交 S9b
-  G7  可達性           新增的型別有沒有人建構它
+  G7  可達性           新增的型別有沒有人建構它。**lite 車道不要求**
 ────────────────────────────────────────────
   S   smoke            用真的入口跑一次；6c 逐 Scenario/example 對到本輪實際檔案。
                        證據要新鮮(工作樹指紋對得上)。
@@ -437,7 +477,7 @@ orchestrator 處理完重新留言。**orchestrator 一律不代按 merge。**
 ────────────────────────────────────────────
 付費判定
   G8   變異測試        有工具才跑;沒有就對關鍵斷言做定向變異
-  G9   spec-oracle     opus,隔離,只憑規格寫驗收測試
+  G9   spec-oracle     opus,隔離,只憑規格寫驗收測試。**lite 車道不派**
   G10  code-adversary  fable,每條主張附可執行的重現,分四類
   G11  UI 截圖         smoke 順便截;有畫面變更才要求
 
