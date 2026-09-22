@@ -1233,6 +1233,20 @@ def test_smoke(tmp: pathlib.Path) -> None:
     smoke = json.loads((root / "specs/demo/evidence/smoke.json").read_text())
     check("指令失敗 → FAIL 且 exit code 留在 smoke.json", code == 1 and smoke["exit_code"] == 3, f"{code} {smoke}")
     check("輸出留在 smoke.log", "boom" in (root / "specs/demo/evidence/smoke.log").read_text())
+    # 效能最低保障:整支 smoke 超過 smoke_max_s 就 FAIL;沒設就不檢查
+    (root / "specs" / "pipeline.yaml").write_text('runner: swift-testing\nsmoke: "sleep 1.2"\nsmoke_max_s: 0.5\n')
+    code, out = run_gate("smoke", spec, cwd=root)
+    smoke = json.loads((root / "specs/demo/evidence/smoke.json").read_text())
+    check("跑得比 smoke_max_s 慢 → FAIL,too_slow 留在 smoke.json,log 講明",
+          code == 1 and smoke["too_slow"] and not smoke["ok"] and smoke["exit_code"] == 0
+          and "超過 smoke_max_s" in (root / "specs/demo/evidence/smoke.log").read_text(), f"{code} {smoke}")
+    (root / "specs" / "pipeline.yaml").write_text('runner: swift-testing\nsmoke: "sleep 1.2"\nsmoke_max_s: 5\n')
+    code, out = run_gate("smoke", spec, cwd=root)
+    smoke = json.loads((root / "specs/demo/evidence/smoke.json").read_text())
+    check("在門檻內 → PASS,too_slow false", code == 0 and smoke["ok"] and not smoke["too_slow"], f"{code} {smoke}")
+    (root / "specs" / "pipeline.yaml").write_text('runner: swift-testing\nsmoke: "sleep 1.2"\n')
+    code, out = run_gate("smoke", spec, cwd=root)
+    check("沒設 smoke_max_s → 不檢查", code == 0 and not json.loads((root / "specs/demo/evidence/smoke.json").read_text())["too_slow"])
     (root / "specs" / "pipeline.yaml").write_text('runner: swift-testing\nsmoke: "sleep 5"\nsmoke_timeout: 1\n')
     code, out = run_gate("smoke", spec, cwd=root)
     smoke = json.loads((root / "specs/demo/evidence/smoke.json").read_text())

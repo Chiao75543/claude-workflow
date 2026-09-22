@@ -24,7 +24,7 @@ tags: [workflow, init, config]
 | | 測試怎麼標 Scenario 編號?(預設:測試描述字串以 `SC-nnn` 開頭)| `tests.scenario_pattern` |
 | 指令 | 跑全部測試的指令?| `test` |
 | | lint 指令?(會把變更檔的路徑接在後面)| `lint` |
-| | **smoke 指令?** 用真的入口跑一次、拿到真的結果 —— UI 就開 app 導航到目標畫面截圖到 `$SMOKE_SCREENSHOTS`;API 就打一次端點;CLI 就跑一次。沒有的話**現在一起寫一支** `scripts/smoke.sh` | `smoke` `smoke_timeout` |
+| | **smoke 指令?** 用真的入口跑一次、拿到真的結果 —— UI 就開 app 導航到目標畫面截圖到 `$SMOKE_SCREENSHOTS`;API 就打一次端點;CLI 就跑一次。沒有的話**現在一起寫一支** `scripts/smoke.sh` | `smoke` `smoke_timeout` `smoke_max_s`(整支 smoke 的秒數上限,效能底線;不填不檢查) |
 | 版本 | 整合分支叫什麼?| `integration_branch` |
 | | 全綠零待決時可以自動推功能分支 + 開 PR 嗎?(整合分支永遠不直推)| `auto_push` |
 | | 有 CI 嗎?(github / gitlab / 沒有 → `none`,那就沒有 S12)| `ci` |

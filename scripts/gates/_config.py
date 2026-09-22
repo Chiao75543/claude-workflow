@@ -16,6 +16,7 @@ AGENTS.md 是寫給 AI 讀的散文;腳本需要真正的設定檔。
     test: "./scripts/verify.sh"        # 沒設定的話 G4 直接算失敗
     smoke: "./scripts/smoke.sh"        # 用真的入口跑一次、拿到真的結果;沒設定 = 失敗
     smoke_timeout: 600                 # 秒;超時算 hang
+    smoke_max_s: null                  # 秒;整支 smoke 超過就 FAIL(效能最低保障)。不設 = 不檢查
     integration_branch: main           # scan-siblings / runs 判斷「已落地」的基準
     auto_push: true                    # 全綠且零待決事項 → 自動推功能分支 + 開 PR
     ci: none                           # none | github | gitlab;有 CI 才有 S12
@@ -46,6 +47,7 @@ DEFAULTS = {
     "test": None,
     "smoke": None,
     "smoke_timeout": 600,
+    "smoke_max_s": None,
     "integration_branch": "main",
     "auto_push": True,
     "ci": "none",

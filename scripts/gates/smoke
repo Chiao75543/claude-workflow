@@ -199,13 +199,21 @@ def main(argv: list[str]) -> int:
     (ev / "smoke.log").write_text(output)
     new_shots = sorted(p.name for p in shots_dir.glob("*.png"))
     scenario_results, evidence_errors = validate_scenario_results(spec, ev, results_path)
-    ok = code == 0 and not timed_out and not evidence_errors
+    # 效能的最低保障:整支 smoke(build + 裝 + 啟動 + 導航)超過門檻就 FAIL。這量的是整條路,
+    # 不是 App 啟動秒數 —— 要量啟動,smoke.sh 自己量、寫進 $SMOKE_RESULTS。沒設門檻 = 不檢查。
+    max_s = config.get("smoke_max_s")
+    too_slow = bool(max_s) and not timed_out and duration > float(max_s)
+    if too_slow:
+        output += f"\n[smoke] 跑了 {duration}s,超過 smoke_max_s {max_s} —— 效能退化或環境變慢,判 FAIL\n"
+        (ev / "smoke.log").write_text(output)
+    ok = code == 0 and not timed_out and not evidence_errors and not too_slow
     write_json(ev / "smoke.json", {
         "ok": ok,
         "exit_code": code,
         "timed_out": timed_out,
         "command": cmd,
         "duration_s": duration,
+        "too_slow": too_slow,
         "screenshots": new_shots,
         "required_scenarios": sorted(scenario_ids_for_modes(spec, SMOKE_MODES)),
         "scenario_results": scenario_results,
