@@ -56,7 +56,12 @@ def main(argv: list[str]) -> int:
     if s:
         lines.append("")
         lines.append(f"審查活動量:提出 {s.get('proposed', 0)} → 作廢 {s.get('void', 0)} → 證實 {s.get('confirmed', 0)}")
-    other = [a for a in dash.get("attention") or [] if not a.get("decision")]
+    defaulted = [a for a in dash.get("attention") or [] if a.get("tag") == "預設接受"]
+    if defaulted:
+        lines.append("")
+        lines.append("### 已預設接受的風險(lite 車道,可推翻)")
+        lines += [f"- **{a['title']}** —— {a['body']}" for a in defaulted]
+    other = [a for a in dash.get("attention") or [] if not a.get("decision") and a.get("tag") != "預設接受"]
     if other:
         lines.append("")
         lines.append("<details><summary>其他注意事項</summary>")

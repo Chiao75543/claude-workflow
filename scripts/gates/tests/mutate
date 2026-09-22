@@ -82,6 +82,12 @@ MUTATIONS: list[tuple[str, str, str, str]] = [
     ("spec-lint", "旗標寫一半也放行",
      '                if missing:\n                    f.error("meta.risk_flags"',
      '                if False:\n                    f.error("meta.risk_flags"'),
+    ("dashboard", "full 車道的 ask_user 也被預設接受(人永遠不會被問)",
+     '        if spec_lane == "lite":\n            # lite 車道:example 之外的 edge case',
+     '        if True:\n            # lite 車道:example 之外的 edge case'),
+    ("pr-comment", "預設接受的風險藏進 details 不列出",
+     '    if defaulted:\n        lines.append("")',
+     '    if False:\n        lines.append("")'),
     # ---- spec-lint ----
     ("spec-lint", "完備性可以指向別的 Requirement 的 Scenario",
      "                    if sid not in own:",

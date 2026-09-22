@@ -345,7 +345,7 @@ runner log、錄影、截圖或產物)。缺 Scenario、缺 example、`ok:false`
 |---|---|
 | `must_fix` | `loop fix F-n` → 修 → 重跑 G0–G7 + 那條重現 → 不紅了 `loop resolved` + `findings set fixed` |
 | `overbuilt` | 同上,修 = 拿掉 |
-| `ask_user` | **不修。** 留給 S11 的 PR 留言問人 |
+| `ask_user` | **不修。** full:留給 S11 的 PR 留言問人,分支停著等。**lite:預設接受風險、不擋推**;PR 留言獨立一段列出,人可 `findings set F-n added_example` 推翻 |
 | `style` | 記下,不動 |
 
 `loop` 會在第 3 次 `fix` 拒絕(parked)、解過又出現時拒絕(flipflop)—— 那時停下來,
@@ -438,6 +438,10 @@ orchestrator 處理完重新留言。**orchestrator 一律不代按 merge。**
 | S smoke | 要 | 要 |
 | G9 spec-oracle | **不派** | 派 |
 | G10 code-adversary | **要** | 要 |
+| `ask_user` 的處置 | **預設 accepted_risk,不擋推**(PR 上列出,可推翻) | 停下來等人回答 |
+
+實測 31 條 ask_user:confirmed 13、accepted_risk 10、added_example 8 —— 三分之一最後是「不用防」,
+卻每一條都讓分支停下來等。lite 車道把這個預設翻過來:先記風險、照樣往前,人事後推翻。
 
 lite 砍的是「證明測試有牙齒」和「第二個人讀規格」;**沒砍「測試先寫、鎖住、實作碰不到」**這條規矩
 (它幾乎不花錢,卻防止 AI 為了變綠把考卷改簡單),也沒砍 G10 —— 它是砍掉 G5 之後唯一還會抓到

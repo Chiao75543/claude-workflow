@@ -561,6 +561,16 @@ def main(argv: list[str]) -> int:
             "body": "這是決策,不是 code review:照樣出貨 / 分支停在這 / 回頭改規格。",
         })
     for i in asking:
+        if spec_lane == "lite":
+            # lite 車道:example 之外的 edge case 預設「先記風險、照樣往前」,不停下來等人。
+            # 實測 31 條 ask_user 有三分之一最後是 accepted_risk。finding 本身不改(仍是 confirmed),
+            # 人隨時可以 `findings set F-n added_example` 推翻;PR 留言會列出來。
+            attention.append({
+                "tag": "預設接受", "title": f"{i['id']}:{i.get('title')}",
+                "body": f"{i.get('question')} 重現:{i.get('repro')}。lite 車道預設接受風險、不擋推;"
+                        f"要防 → `findings set {i['id']} added_example` 走 S7 加 example。",
+            })
+            continue
         attention.append({
             "tag": "需要你決定", "title": f"{i['id']}:{i.get('title')}",
             "body": f"{i.get('question')} 重現:{i.get('repro')}。要防 → 加一組 example;不用 → 記成已接受風險。",

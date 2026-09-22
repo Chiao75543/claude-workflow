@@ -1774,6 +1774,31 @@ def test_risk_lanes(tmp: pathlib.Path) -> None:
     code, out = run_gate("dashboard", spec, cwd=root)
     check("lite:沒派 G10 一樣擋", code == 1 and "沒有派過的紀錄(G10)" in out, out[:400])
 
+    # lite:ask_user 預設接受風險、不擋推;finding 不被改寫,人仍可推翻
+    run_gate("smoke", spec, cwd=root)
+    run_gate("findings", spec, "dispatched", "--gate", "G10", cwd=root)
+    run_gate("findings", spec, "add", "--id", "F-1", "--gate", "G10", "--class", "ask_user", "--title", "連點兩下",
+             "--repro", "Tests/Twice.swift", "--question", "要防嗎?", cwd=root)
+    run_gate("findings", spec, "set", "F-1", "confirmed", cwd=root)
+    code, out = run_gate("dashboard", spec, cwd=root)
+    dash = json.loads((root / "specs/demo/evidence/dashboard.json").read_text())
+    tag = next((a for a in dash["attention"] if a["tag"] == "預設接受"), None)
+    check("lite:確認過的 ask_user → 「預設接受」,不是決策,仍可自動推",
+          code == 0 and tag is not None and not tag["decision"] and "自動推:可以" in out
+          and not any(a["tag"] == "需要你決定" for a in dash["attention"]), f"{tag} | {out[-160:]}")
+    state = json.loads((root / "specs/demo/evidence/findings.json").read_text())
+    check("lite:finding 本身不被改寫(仍是 confirmed,人可推翻)",
+          next(i for i in state["items"] if i["id"] == "F-1")["status"] == "confirmed")
+    code, out = run_gate("pr-comment", spec, cwd=root)
+    check("lite:PR 留言標題全乾淨,但獨立一段列出預設接受的風險與推翻指令",
+          code == 0 and "全乾淨" in out and "已預設接受的風險" in out and "findings set F-1 added_example" in out, out[:600])
+    code, _ = run_gate("pr-comment", spec, "--check", cwd=root)
+    check("lite:pr-comment --check 不把預設接受算成要人決定", code == 0)
+    run_gate("findings", spec, "set", "F-1", "added_example", cwd=root)
+    code, out = run_gate("dashboard", spec, cwd=root)
+    check("lite:人推翻成 added_example 後,預設接受標籤消失",
+          "預設接受" not in json.dumps(json.loads((root / "specs/demo/evidence/dashboard.json").read_text())["attention"], ensure_ascii=False))
+
     root = repo("lane-full", with_flags(ALL_FALSE.replace("privacy: false", "privacy: true")))
     code, out = run_gate("dashboard", spec, cwd=root)
     by = {g["id"]: g for g in json.loads((root / "specs/demo/evidence/dashboard.json").read_text())["gates"]}
