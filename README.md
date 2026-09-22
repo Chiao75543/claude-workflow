@@ -36,7 +36,7 @@
 S1  識別              scan-siblings:誰在飛、會不會撞到
 S2  worktree
 S3  起草              全 codebase scope audit + spec-grill(fable)
-S4  歧義偵測          spec-reader ×2(fable,隔離,只看規格)
+S4  歧義偵測          spec-reader ×2(opus,隔離,只看規格)
 S5  ⏸ 你批准說明頁     白話 + 分歧選擇題 + N/A 主張 + 碰撞警告
 S6  定稿凍結          spec-lint + 反向回譯 + 指紋
 S7  測試 RED          stub-first → 格式化 → red-capture
@@ -161,8 +161,8 @@ claude-workflow/
 │       └── dispatch-prompts.md
 ├── agents/                          六個精簡定義
 │   ├── spec-grill.md               fable · 挑洞,兼第一個讀者
-│   ├── spec-reader.md              fable · 隔離,tools: []
-│   ├── spec-oracle.md              fable · 隔離,tools: []
+│   ├── spec-reader.md              opus  · 隔離,tools: []
+│   ├── spec-oracle.md              opus  · 隔離,tools: []
 │   ├── code-adversary.md           fable · 有 Bash,要真的去跑重現
 │   ├── red-writer.md               opus  · S7 寫測試並擷取 RED 證據
 │   └── green-writer.md             opus  · S8 實作;「衝突就停」寫死在定義裡

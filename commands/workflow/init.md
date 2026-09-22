@@ -30,7 +30,6 @@ tags: [workflow, init, config]
 | | 有 CI 嗎?(github / gitlab / 沒有 → `none`,那就沒有 S12)| `ci` |
 | 邊界 | 新型別的建構點該去哪些目錄找?(G7 可達性)| `reachability.globs` |
 | | 資安基準與架構鐵則寫在哪個檔?| `rules_files` |
-| 模型 | 預設 fable 起草與審查、opus 寫測試與實作 —— 要覆寫嗎?| `models` |
 
 寫檔 → 跑 `scripts/gates/config-check` → PASS 才回報完成。
 

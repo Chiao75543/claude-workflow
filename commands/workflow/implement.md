@@ -9,7 +9,7 @@ tags: [workflow, implement]
 
 **動作**
 
-派 `green-writer`(opus);它會讀專案自備的 `rd-implementer` skill 與 `rules_files`。
+派 `green-writer`(不傳 `model`);它會讀專案自備的 `rd-implementer` skill 與 `rules_files`。
 
 **注意**
 

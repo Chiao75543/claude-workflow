@@ -1180,6 +1180,18 @@ def test_findings(tmp: pathlib.Path) -> None:
     check("從 repo 子目錄 dispatch 仍記下真實 repo root 的工作樹指紋",
           code == 0 and state["dispatched"]["G9"]["tree"] == tree_fingerprint(root),
           str(state.get("dispatched")))
+    # 額度用完退級派的審查,要在證據上留下「哪個模型、是不是降級」——
+    # 不然永遠回答不了「換模型之後審得有沒有比較差」
+    run_gate("findings", spec, "dispatched", "--gate", "G10", "--model", "opus", "--degraded", cwd=root)
+    run_gate("findings", spec, "add", "--id", "F-009", "--gate", "G10", "--class", "style", "--title", "降級輪找到的", cwd=root)
+    state = json.loads((root / "specs/demo/evidence/findings.json").read_text())
+    f9 = next(i for i in state["items"] if i["id"] == "F-009")
+    check("dispatched --model --degraded 記進派遣紀錄",
+          state["dispatched"]["G10"].get("model") == "opus" and state["dispatched"]["G10"].get("degraded") is True,
+          str(state["dispatched"]["G10"]))
+    check("之後 add 的 finding 沿用該關的 model / degraded", f9.get("model") == "opus" and f9.get("degraded") is True, str(f9))
+    check("沒退級的關,finding 不帶 degraded",
+          all("degraded" not in i for i in state["items"] if i["gate"] != "G10"), str([i.get("gate") for i in state["items"]]))
 
     fingerprint_root = make_repo(tmp / "fingerprint-command-failure")
     commit_base(fingerprint_root)
@@ -1379,6 +1391,17 @@ def test_dashboard_gating_order(tmp: pathlib.Path) -> None:
     dispatched(root)
     code, out = run_gate("dashboard", spec, cwd=root)
     check("全綠零待決(零 finding 但派過)→ 自動推:可以", code == 0 and "自動推:可以" in out, out[:500])
+    tags = lambda: [a["tag"] for a in json.loads((root / "specs/demo/evidence/dashboard.json").read_text())["attention"]]
+    check("沒退級 → 沒有「降級審查」標籤", "降級審查" not in tags(), str(tags()))
+    # Fable 額度用完、用 opus 重派:要看得見(證據表 + PR 留言),但這是資訊不是決策,不擋推
+    run_gate("findings", spec, "dispatched", "--gate", "G10", "--model", "opus", "--degraded", cwd=root)
+    code, out = run_gate("dashboard", spec, cwd=root)
+    dash = json.loads((root / "specs/demo/evidence/dashboard.json").read_text())
+    tag = next((a for a in dash["attention"] if a["tag"] == "降級審查"), None)
+    check("退級派過的審查 → 證據表出「降級審查」並點名模型,仍可自動推",
+          code == 0 and tag is not None and "G10: opus" in tag["body"] and not tag["decision"] and "自動推:可以" in out,
+          f"{tag} | {out[-200:]}")
+    dispatched(root)  # 還原成正常派遣,後面的案例不受影響
     check("寫出 dashboard.json", (root / "specs/demo/evidence/dashboard.json").exists())
     code, out = run_gate("pr-comment", spec, cwd=root)
     check("pr-comment 全乾淨 → 標題是「全乾淨」", code == 0 and "全乾淨" in out and "需要你決定" not in out, out[:300])
@@ -1682,6 +1705,10 @@ def test_config_check(tmp: pathlib.Path) -> None:
     (root / "specs" / "pipeline.yaml").write_text(full)
     code, out = run_gate("config-check", str(root), cwd=root)
     check("填齊 → PASS", code == 0, out[-120:])
+    # models 鍵已停用(模型只由 agents/*.md 決定,沒有腳本讀它):既有專案留著它不能因此變紅
+    (root / "specs" / "pipeline.yaml").write_text(full + "models: {draft: fable, review: fable, build: opus}\n")
+    code, out = run_gate("config-check", str(root), cwd=root)
+    check("舊的 models 鍵 → 只提示已停用,仍 PASS", code == 0 and "models 已停用" in out, out[-200:])
 
 
 # ---------------------------------------------------------------- 對抗審查(S7 以後改版)的回歸

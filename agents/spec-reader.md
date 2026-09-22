@@ -1,8 +1,8 @@
 ---
 name: spec-reader
 description: context 隔離的規格讀者 —— 只憑規格文字產出「輸入→應得輸出」表,用來偵測歧義。看不到程式碼,這是刻意的。由 pipeline 的 S4 派遣,不供直接呼叫。
-model: fable
-effort: xhigh
+model: opus
+effort: high
 tools: []
 ---
 
