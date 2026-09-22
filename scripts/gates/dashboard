@@ -35,7 +35,8 @@ import sys
 sys.path.insert(0, str(pathlib.Path(__file__).parent))
 import _config  # noqa: E402
 from _common import (  # noqa: E402
-    evidence_dir, integration_branch, load_spec, read_json, scenario_ids, triage_findings, write_json,
+    LITE_WAIVED_GATES, WAIVABLE_GATES, evidence_dir, integration_branch, lane, load_spec, read_json,
+    scenario_ids, triage_findings, write_json,
 )
 from _state import index_fingerprint, tree_fingerprint  # noqa: E402
 
@@ -382,14 +383,15 @@ def main(argv: list[str]) -> int:
     elif not review.get("ok"):
         gates.append({"id": "G2b", "what": "測試在凍結前審過", "ok": False,
                       "note": f"{len(review.get('errors') or [])} 條問題"})
-    elif review.get("mechanical_only") or review.get("agent") is None:
+    elif (review.get("mechanical_only") or review.get("agent") is None) and lane(spec) != "lite":
         gates.append({"id": "G2b", "what": "測試在凍結前審過", "ok": False,
                       "note": "只跑過機械檢查,語意審查(test-reviewer)沒跑"})
     elif frozen_files and review.get("files") != frozen_files:
         gates.append({"id": "G2b", "what": "測試在凍結前審過", "ok": False, "note": "審過的和凍結的不是同一批檔"})
     else:
+        semantic = not (review.get("mechanical_only") or review.get("agent") is None)
         gates.append({"id": "G2b", "what": "測試在凍結前審過", "ok": True,
-                      "note": f"{review.get('tests', 0)} 條測試 · 機械 + 語意"})
+                      "note": f"{review.get('tests', 0)} 條測試 · " + ("機械 + 語意" if semantic else "機械(lite:語意審查不要求)")})
 
     ok, out = run([str(here / "traceability"), str(spec_path)], root)
     covered = re.search(r"測試涵蓋 (\d+) 條", out)
@@ -485,6 +487,18 @@ def main(argv: list[str]) -> int:
             index_note = str(exc)[:120]
         gates.append({"id": "P", "what": "待提交樹已實際驗證", "ok": index_matches_worktree,
                       "note": index_note})
+    # 車道豁免。豁免的關留在證據表上(note 寫明),不是消失 —— 「沒檢查」和「檢查過」要分得出來。
+    # 只有 WAIVABLE_GATES(腳本關)能被豁免:smoke 與付費審查就算被塞進 LITE_WAIVED_GATES 也不會放行。
+    spec_lane = lane(spec)
+
+    def apply_lane_waivers() -> None:
+        if spec_lane != "lite":
+            return
+        for g in gates:
+            if g["id"] in LITE_WAIVED_GATES and g["id"] in WAIVABLE_GATES and not g["ok"] and not g.get("waived"):
+                g.update(ok=True, waived=True, note=f"lite 車道不要求({g['note'][:40]})")
+
+    apply_lane_waivers()   # lite 卡不該因為 G5/G7 紅就把 G9/10 標「未跑」
     smoke = read_json(ev / "smoke.json")
     scripts_green = all(g["ok"] for g in gates)
     if not smoke:
@@ -508,9 +522,10 @@ def main(argv: list[str]) -> int:
               if it.get("status") in ("parked", "flipflop")}
     # 「派過了」要有紀錄:零 finding 的乾淨審查和「根本沒派」在證據上必須分得出來
     dispatched = findings.get("dispatched") or {}
-    missing_dispatch = [gate for gate in ("G9", "G10") if gate not in dispatched]
+    required_reviews = ("G10",) if spec_lane == "lite" else ("G9", "G10")
+    missing_dispatch = [gate for gate in required_reviews if gate not in dispatched]
     invalid_dispatch = [
-        gate for gate in ("G9", "G10")
+        gate for gate in required_reviews
         if gate in dispatched and (
             not isinstance(dispatched[gate], dict)
             or not isinstance(dispatched[gate].get("tree"), str)
@@ -518,7 +533,7 @@ def main(argv: list[str]) -> int:
         )
     ]
     stale_dispatch = [
-        gate for gate in ("G9", "G10")
+        gate for gate in required_reviews
         if gate not in missing_dispatch and gate not in invalid_dispatch
         and dispatched[gate]["tree"] != current_tree
     ]
@@ -538,7 +553,8 @@ def main(argv: list[str]) -> int:
         s = findings.get("summary") or {}
         gates.append({"id": "G9/10", "what": "獨立讀者 + 對抗審查", "ok": not pending and not halted,
                       "note": f"提出 {s.get('proposed', 0)} → 作廢 {s.get('void', 0)} → 證實 {s.get('confirmed', 0)}"
-                              + (f" · {len(pending)} 條沒處理完" if pending else "")})
+                              + (f" · {len(pending)} 條沒處理完" if pending else "")
+                              + (" · lite:只要求 G10" if spec_lane == "lite" else "")})
     for fid, it in halted.items():
         attention.append({
             "tag": "需要你決定", "title": f"{fid} {'修 2 次未果' if it['status'] == 'parked' else '解過又出現'}",
@@ -621,6 +637,7 @@ def main(argv: list[str]) -> int:
         "scale": stat or "—",
         "phase": "pre-commit" if pre_commit else "delivery",
         "approval_anchor": approval_anchor,
+        "lane": spec_lane,
         "gates": gates, "attention": attention, "screenshots": shots,
     }
     # 命中率紀錄:哪道關擋過東西、擋了幾次,才有數據決定哪道關值得留。
@@ -628,6 +645,7 @@ def main(argv: list[str]) -> int:
     yield_line = {
         "at": datetime.datetime.now().astimezone().isoformat(timespec="seconds"),
         "name": context_name,
+        "lane": spec_lane,
         "gates": {g["id"]: g["ok"] for g in gates},
         "attention": [a["tag"] for a in attention],
         "review": findings.get("summary") or {},
@@ -640,6 +658,7 @@ def main(argv: list[str]) -> int:
     out_path.write_text(render(context))
 
     # 全綠、零待決事項才自動推;不然 PR 上必須有「需要你決定」。
+    apply_lane_waivers()   # S 與 G9/10 已加入 —— 這一輪由白名單擋住它們
     all_green = all(g["ok"] for g in gates)
     for a in attention:
         a["decision"] = a["tag"] in DECISION_TAGS

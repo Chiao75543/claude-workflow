@@ -23,7 +23,7 @@ import sys
 
 sys.path.insert(0, str(pathlib.Path(__file__).parent))
 from _common import (  # noqa: E402
-    COMPLETENESS_CATEGORIES, MODES, NAME, REQUIREMENT_ID, SCENARIO_ID,
+    COMPLETENESS_CATEGORIES, MODES, NAME, REQUIREMENT_ID, RISK_FLAGS, SCENARIO_ID,
     Findings, load_spec, scenarios,
 )
 
@@ -83,6 +83,21 @@ def check_schema(spec: dict, f: Findings) -> None:
             f.error("meta.name", f"必須是 kebab-case 名稱,得到 {name!r}")
         if meta.get("change_type") not in {"ADDED", "MODIFIED"}:
             f.error("meta.change_type", "必須是 ADDED 或 MODIFIED")
+        # 車道旗標:要嘛不寫(走 full),要嘛六個全寫成 true/false。寫一半會讓人以為已經評估過。
+        flags = meta.get("risk_flags")
+        if flags is not None:
+            if not isinstance(flags, dict):
+                f.error("meta.risk_flags", "必須是 mapping(六個旗標各填 true/false),或整個不寫(走 full 車道)")
+            else:
+                missing = [k for k in RISK_FLAGS if k not in flags]
+                bad = [k for k in RISK_FLAGS if k in flags and not isinstance(flags[k], bool)]
+                unknown = [k for k in flags if k not in RISK_FLAGS]
+                if missing:
+                    f.error("meta.risk_flags", f"六個旗標要全填,缺 {', '.join(missing)}")
+                if bad:
+                    f.error("meta.risk_flags", f"只能是 true/false: {', '.join(bad)}")
+                if unknown:
+                    f.error("meta.risk_flags", f"不認得的旗標: {', '.join(unknown)}(只有 {', '.join(RISK_FLAGS)})")
     else:
         f.error("meta", "必須是 mapping")
 
