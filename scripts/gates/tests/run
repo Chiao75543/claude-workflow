@@ -273,6 +273,17 @@ def test_spec_lint(tmp: pathlib.Path) -> None:
 
 # ---------------------------------------------------------------- freeze-check
 
+def test_spec_size_warning(tmp: pathlib.Path) -> None:
+    """超過 800 行只警告不擋:大卡是人工介入的主要來源,但拆不拆是人的決定。"""
+    root = make_repo(tmp / "size-ok", VALID_SPEC)
+    code, out = run_gate("spec-lint", "specs/demo/spec.yaml", cwd=root)
+    check("800 行以內 → 沒有拆卡警告", code == 0 and "建議拆卡" not in out, out[:200])
+    big = VALID_SPEC + "".join(f"# padding {i}\n" for i in range(800))
+    root = make_repo(tmp / "size-big", big)
+    code, out = run_gate("spec-lint", "specs/demo/spec.yaml", cwd=root)
+    check("超過 800 行 → 警告「建議拆卡」但仍 PASS", code == 0 and "建議拆卡" in out and "PASS" in out, out[:300])
+
+
 def test_freeze_check(tmp: pathlib.Path) -> None:
     def with_test(root: pathlib.Path) -> list[str]:
         (root / "tests").mkdir(exist_ok=True)
@@ -2014,7 +2025,7 @@ def test_adversary_s7plus(tmp: pathlib.Path) -> None:
 def main() -> int:
     with tempfile.TemporaryDirectory() as td:
         tmp = pathlib.Path(td)
-        for fn in (test_spec_lint, test_freeze_check, test_red_capture,
+        for fn in (test_spec_lint, test_spec_size_warning, test_freeze_check, test_red_capture,
                    test_traceability, test_spec_diff,
                    test_dashboard_requires_verification, test_landed_compares_content,
                    test_reachability, test_reachability_hardening,
