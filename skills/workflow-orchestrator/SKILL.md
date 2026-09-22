@@ -144,7 +144,7 @@ digraph workflow {
 | 組 | 問什麼 | 寫到 |
 |---|---|---|
 | 技術棧 | 測試框架(決定 `runner` 解析器)、測試檔在哪、測試怎麼標 SC-id | `runner` `tests.globs` `tests.scenario_pattern` |
-| 指令 | 跑測試、lint(接檔案路徑)、**smoke**(起 app 截圖 / 打端點 / 跑 CLI) | `test` `lint` `smoke` `smoke_timeout` |
+| 指令 | 跑測試、lint(接檔案路徑)、**smoke**(起 app 截圖 / 打端點 / 跑 CLI)、整支 smoke 的秒數上限(不填不檢查) | `test` `lint` `smoke` `smoke_timeout` `smoke_max_s` |
 | 版本 | 整合分支叫什麼、能不能自動推功能分支、有沒有 CI(github / gitlab / 沒有) | `integration_branch` `auto_push` `ci` |
 | 邊界 | G7 去哪些目錄找建構點、資安基準與架構鐵則在哪個檔 | `reachability.globs` `rules_files` |
 
@@ -476,13 +476,14 @@ lite 砍的是「證明測試有牙齒」和「第二個人讀規格」;**沒砍
   G7  可達性           新增的型別有沒有人建構它。**lite 車道不要求**
 ────────────────────────────────────────────
   S   smoke            用真的入口跑一次；6c 逐 Scenario/example 對到本輪實際檔案。
-                       證據要新鮮(工作樹指紋對得上)。
+                       證據要新鮮(工作樹指紋對得上)。設了 `smoke_max_s` 就順便當效能底線:
+                       整支 smoke 超過就 FAIL(量的是 build+裝+啟動整條路,不是 App 啟動秒數)。
                        **沒過,下面全部不跑**
 ────────────────────────────────────────────
 付費判定
   G8   變異測試        有工具才跑;沒有就對關鍵斷言做定向變異
   G9   spec-oracle     opus,隔離,只憑規格寫驗收測試。**lite 車道不派**
-  G10  code-adversary  fable,每條主張附可執行的重現,分四類
+  G10  code-adversary  fable,每條主張附可執行的重現,分四類;效能四項(主執行緒 / N+1 / 無上限列表 / 沒取消)也在它清單上
   G11  UI 截圖         smoke 順便截;有畫面變更才要求
 
 **「每個 example 都有測試覆蓋」沒有獨立的關卡。** 由 spec-lint(每條 Scenario 必須有 examples)

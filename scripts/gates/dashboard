@@ -511,7 +511,9 @@ def main(argv: list[str]) -> int:
         smoke_ok = bool(smoke.get("ok"))
         gates.append({"id": "S", "what": "smoke:真的入口跑一次", "ok": smoke_ok,
                       "note": f"{smoke.get('duration_s')}s · 截圖 {len(smoke.get('screenshots') or [])} 張"
-                              if smoke_ok else ("超時" if smoke.get("timed_out") else f"exit {smoke.get('exit_code')}")})
+                              if smoke_ok else ("超時" if smoke.get("timed_out")
+                                                else f"太慢({smoke.get('duration_s')}s)" if smoke.get("too_slow")
+                                                else f"exit {smoke.get('exit_code')}")})
 
     # G9/G10 —— 付費審查。smoke 或腳本沒過就不該派;派了也只看 findings 有沒有處理完。
     findings = read_json(ev / "findings.json") or {}

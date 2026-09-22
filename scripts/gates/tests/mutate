@@ -88,6 +88,9 @@ MUTATIONS: list[tuple[str, str, str, str]] = [
     ("pr-comment", "預設接受的風險藏進 details 不列出",
      '    if defaulted:\n        lines.append("")',
      '    if False:\n        lines.append("")'),
+    ("smoke", "超過 smoke_max_s 照樣 PASS",
+     '    ok = code == 0 and not timed_out and not evidence_errors and not too_slow',
+     '    ok = code == 0 and not timed_out and not evidence_errors'),
     # ---- spec-lint ----
     ("spec-lint", "完備性可以指向別的 Requirement 的 Scenario",
      "                    if sid not in own:",
