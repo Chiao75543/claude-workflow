@@ -10,7 +10,7 @@ tags: [workflow, verify, gates]
 **動作**
 
 1. `scripts/gates/` 的 G0–G7 依序跑;沒過退回 S8
-2. `scripts/gates/smoke specs/{name}/spec.yaml`;**沒過就停,不派審查**
+2. `scripts/gates/smoke specs/{name}/spec.yaml`;**沒過就停,不派審查**。判定只讀 `smoke.json`,不 `Read` 截圖
 3. 派 `spec-oracle` 與 `code-adversary`(不傳 `model`),派完立刻 `scripts/gates/findings dispatched --gate G9|G10 --model <實際模型>`;
    Fable 額度用完 → 用 opus 重派一次並加 `--degraded`;不准退到 sonnet
    每條 finding 用 `findings add` 收,實跑重現 → `set confirmed` / `set void`(停在 proposed 算沒處理完)
