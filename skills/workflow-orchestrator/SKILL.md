@@ -316,6 +316,8 @@ wt="$(git worktree list --porcelain \
 **S9b smoke**:`scripts/gates/smoke specs/{name}/spec.yaml`。用真的入口跑一次、拿到真的結果 ——
 UI 專案開 app 導航到目標畫面截圖(放進 `$SMOKE_SCREENSHOTS`)、API 打一次端點、CLI 跑一次指令。
 **沒過就停在這裡,G9/G10 不派** —— 功能不對,審它幹嘛。退回 S8。
+**判定只讀 `smoke.json` / `$SMOKE_RESULTS`,不要 `Read` 截圖**(見「context 紀律」)。截圖給人看:
+在證據表和 PR 留言裡用路徑或連結掛出來。
 
 規格含 6c 時,整支 smoke 指令 exit 0 仍不夠。指令必須把逐 Scenario 結果寫到
 `$SMOKE_RESULTS`,每條列 `id`、`ok:true`、涵蓋的 1-based `examples`,以及本輪放在
@@ -539,6 +541,24 @@ Fable 額度只留給兩個地方:**S3 `spec-grill`**(一行程式沒寫就抓�
 停下來不是叫你看程式碼,是在證據表上列一行:「SC-003 有一條已證實的失敗,2 次修復未果」。
 你的決定是:照樣出貨 / 分支停在這 / 回頭改規格。**這是決策,不是 code review。**
 
+## context 紀律:錢花在重讀,不是思考
+
+實測 mindey-mobile 九天(51 個 session):**64% 的費用是 cache 讀**,真正的輸出只佔 11%。
+單一 session 的 context 從 4 萬 token 一路長到 99 萬撞上限才壓縮,平均每回合重讀 51 萬。
+而那疊裡 **98% 的 tool_result 字元是 base64 截圖**:orchestrator 自己 `Read` 了 310 次 png
+(主 session 256 次),每張 4,216 token,放進去之後每一回合都重讀一次。
+
+兩條規則:
+
+1. **不 `Read` 圖片。** 截圖的判定已經在 `smoke-results.json` 裡(每條 SC 的 `ok`);
+   要「看一眼確認」的衝動就是那 64%。給人看 → 證據表 / PR 留言掛路徑。真的非看不可(smoke 判定
+   和規格對不上、要決定 ask_user)→ 只讀那一張,讀完立刻寫下結論,不要再讀第二次。
+2. **階段換 session。** 這條 pipeline 天生有斷點,`evidence/` 就是交接格式:
+   S6 定稿(`spec.approved.yaml` + `spec.hash`)、S7½ 凍結(`tests.hash` + `test-review.json`)、
+   S8 全綠、S9 進審查。到斷點就結束 session,下一段從 `status.json` 和 `evidence/` 接手,
+   不帶前一段的對話。cache 讀成本 ∝ 回合數 × 平均 context,context 線性成長 → 總費用約 n²;
+   一張卡分四段,這塊大致降到四分之一。
+
 ## 命中率:哪道關值得留
 
 `dashboard` 每跑一次追加一筆到 `specs/_yield.jsonl`(append-only,跨功能累積):
@@ -589,6 +609,8 @@ Fable 額度只留給兩個地方:**S3 `spec-grill`**(一行程式沒寫就抓�
 | smoke 沒過就派 G9/G10 | 功能不對其他免談;而且那是白花的錢 |
 | CI 紅了丟給人看 | orchestrator 自己拉 log 分「環境差異 / 本機證據不可信」;人只看 parked |
 | 用 smoke 之前的截圖當畫面證據 | 證據要新鮮:工作樹指紋對不上就是過期;畫面證據只認 smoke.json 記的截圖 |
+| `Read` 截圖「看一眼確認」 | 判定在 smoke-results.json;圖片進 context 每回合重讀,是帳單的大頭。掛路徑給人看 |
+| 一張卡從 S1 跑到 S13 同一個 session | 到 S6 / S7½ / S8 / S9 斷點就換 session,從 `evidence/` 接手 |
 | 零 finding 就不記 `findings dispatched` | 「沒派」和「派了沒事」在證據上必須分得出來 |
 | parked 之後 `loop resolved` 解除 | 只有 `loop decided`(人的決定)能解除 |
 | 同一條 finding 換 id 重修 | `findings add` 同 repro 拒收;`loop` 拒收幽靈 id |
