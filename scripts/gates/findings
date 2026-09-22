@@ -13,7 +13,9 @@
   findings <spec.yaml> add --id F-001 --gate G10 --class must_fix --title "…" --repro "指令或測試路徑"
                            [--sc SC-003] [--question "要不要防這個?"]
   findings <spec.yaml> set F-001 confirmed|void|fixed|accepted_risk|added_example
-  findings <spec.yaml> dispatched --gate G9|G10   記「派過了」—— 零 finding 的乾淨審查也要留下派過的紀錄
+  findings <spec.yaml> dispatched --gate G9|G10 [--model opus] [--degraded]
+                           記「派過了」—— 零 finding 的乾淨審查也要留下派過的紀錄。
+                           --degraded:該用的模型額度用完,退到次一級才派得出去(證據表會標出來)
   findings <spec.yaml> list
   findings <spec.yaml> check     還有沒有沒處理完的(proposed 也算)、或等人回答的 ask_user
 
@@ -89,6 +91,9 @@ def main(argv: list[str]) -> int:
         items.append({
             "id": fid, "gate": gate, "class": cls, "title": title, "sc": flag(argv, "--sc"),
             "repro": repro, "question": question, "status": "proposed",
+            # 是哪個模型審出來的:沒有這欄就永遠回答不了「換模型之後審得有沒有比較差」
+            **{k: v for k, v in (state.get("dispatched") or {}).get(gate, {}).items()
+               if k in ("model", "degraded")},
             "at": datetime.datetime.now().astimezone().isoformat(timespec="seconds"),
         })
         state["summary"] = summary(state)
@@ -104,6 +109,8 @@ def main(argv: list[str]) -> int:
         state.setdefault("dispatched", {})[gate] = {
             "at": datetime.datetime.now().astimezone().isoformat(timespec="seconds"),
             "tree": tree_fingerprint(root),
+            **({"model": flag(argv, "--model")} if flag(argv, "--model") else {}),
+            **({"degraded": True} if "--degraded" in argv else {}),
         }
         state["summary"] = summary(state)
         write_json(ev / "findings.json", state)

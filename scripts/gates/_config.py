@@ -20,7 +20,6 @@ AGENTS.md 是寫給 AI 讀的散文;腳本需要真正的設定檔。
     auto_push: true                    # 全綠且零待決事項 → 自動推功能分支 + 開 PR
     ci: none                           # none | github | gitlab;有 CI 才有 S12
     rules_files: [AGENTS.md]           # 資安基準與架構鐵則在哪;派給 code-adversary
-    models: {draft: fable, review: fable, build: opus}
 
 以上每個鍵都可以用 /workflow:init 問卷一次填好。
 """
@@ -51,7 +50,6 @@ DEFAULTS = {
     "auto_push": True,
     "ci": "none",
     "rules_files": ["AGENTS.md"],
-    "models": {"draft": "fable", "review": "fable", "build": "opus"},
     # 測試裡「這一行是斷言」長什麼樣。test-review 用它抓空測試(零斷言)。
     "assert_pattern": r"#expect\(|#require\(|XCTAssert|assert(?:Equals|True|False|That|Throws)?\(|expect\(",
 }

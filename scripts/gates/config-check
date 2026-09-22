@@ -30,6 +30,9 @@ def main(argv: list[str]) -> int:
         gaps.append("ci(只能是 none / github / gitlab)")
     for key in ("runner", "lint", "test", "smoke", "integration_branch", "ci", "auto_push"):
         print(f"  {key:<20} {config.get(key)!r}")
+    if "models" in config:
+        # 舊鍵。只提示不失敗:既有專案的 pipeline.yaml 不該因為這次改版就紅。
+        print("  ℹ models 已停用 —— 模型只由 agents/*.md 決定,這個鍵沒有人讀,可以刪掉")
     if gaps:
         print(f"\nconfig-check: FAIL  缺 {', '.join(gaps)}")
         return 1

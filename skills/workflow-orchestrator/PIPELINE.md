@@ -8,7 +8,7 @@ S0  第一次:問卷      技術棧 / 指令含 smoke / 主線與自動推 / CI 
 S1  識別              scan-siblings:誰在飛、會不會撞
 S2  worktree
 S3  起草              全 codebase scope audit + spec-grill(fable)
-S4  歧義偵測          spec-reader ×2(fable,隔離,只看規格)
+S4  歧義偵測          spec-reader ×2(opus,隔離,只看規格)
 S5  ⏸ 你批准說明頁    白話 + 分歧選擇題 + N/A 主張 + 碰撞警告
 S6  定稿凍結          spec-lint + 反向回譯 + hash
 S7  測試 RED          stub-first → 格式化 → red-capture

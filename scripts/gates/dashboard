@@ -550,6 +550,14 @@ def main(argv: list[str]) -> int:
             "body": f"{i.get('question')} 重現:{i.get('repro')}。要防 → 加一組 example;不用 → 記成已接受風險。",
         })
 
+    degraded = [gate for gate in ("G9", "G10")
+                if isinstance(dispatched.get(gate), dict) and dispatched[gate].get("degraded")]
+    if degraded:
+        attention.append({"tag": "降級審查", "title": f"{'、'.join(degraded)} 不是用設定的模型審的",
+                          "body": "額度用完,退到次一級模型才派得出去("
+                                  + "、".join(f"{g}: {dispatched[g].get('model') or '未記錄'}" for g in degraded)
+                                  + ")。不擋推 —— 但這張卡的審查強度比平常低,你該知道。"})
+
     manual = [sc.get("id") for req in (spec.get("requirements") or []) if isinstance(req, dict)
               for sc in (req.get("scenarios") or []) if isinstance(sc, dict) and sc.get("mode") == "6d"]
     if manual:

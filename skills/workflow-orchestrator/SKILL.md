@@ -78,7 +78,6 @@ integration_branch: main
 auto_push: true                  # 全綠零待決 → 自動推功能分支 + 開 PR
 ci: github                       # none | github | gitlab;none 就沒有 S12
 rules_files: [AGENTS.md]         # 資安基準與架構鐵則;派給 green-writer / code-adversary
-models: {draft: fable, review: fable, build: opus}
 ```
 
 `scripts/gates/config-check` 會列出還沒填的鍵。沒填的鍵讓對應關卡**失敗**,不是跳過。
@@ -102,7 +101,7 @@ digraph workflow {
   s1 [shape=box, label="S1 識別\n(scan-siblings 看在飛的)"];
   s2 [shape=box, label="S2 worktree"];
   s3 [shape=box, label="S3 起草\nscope audit + spec-grill(fable)"];
-  s4 [shape=box, label="S4 歧義偵測\nspec-reader ×2(fable, 隔離)"];
+  s4 [shape=box, label="S4 歧義偵測\nspec-reader ×2(opus, 隔離)"];
   s5 [shape=diamond, label="⏸ S5 你批准說明頁"];
   s6 [shape=box, label="S6 定稿凍結\nspec-lint + hash"];
   s7 [shape=box, label="S7 測試 RED\nstub-first → red-capture"];
@@ -148,7 +147,6 @@ digraph workflow {
 | 指令 | 跑測試、lint(接檔案路徑)、**smoke**(起 app 截圖 / 打端點 / 跑 CLI) | `test` `lint` `smoke` `smoke_timeout` |
 | 版本 | 整合分支叫什麼、能不能自動推功能分支、有沒有 CI(github / gitlab / 沒有) | `integration_branch` `auto_push` `ci` |
 | 邊界 | G7 去哪些目錄找建構點、資安基準與架構鐵則在哪個檔 | `reachability.globs` `rules_files` |
-| 模型 | 預設 fable 起草與審查、opus 寫測試與實作;要不要覆寫 | `models` |
 
 smoke 沒有的專案要在這裡**一起寫出來**(通常是一支 `scripts/smoke.sh`),
 因為沒有 smoke 這條線跑不到付費審查。`ci: none` 是合法答案 —— 那就沒有 S12,證據只靠本機 + git。
@@ -189,14 +187,14 @@ wt="$(git worktree list --porcelain \
    **全 codebase grep**,不是 Explore subagent 的抽樣。而且要 grep **呼叫點本身**,
    不是 import(wildcard import 與完全限定呼叫會被漏掉)。
 2. 草擬 `specs/{name}/spec.yaml`(見 `references/spec-template.yaml`)
-3. **派遣 `spec-grill`**(fable) —— 完備性挑戰 + 洞 + **它自己的解讀表**
+3. **派遣 `spec-grill`**(模型由它的定義決定,派遣時不傳 `model`) —— 完備性挑戰 + 洞 + **它自己的解讀表**
    (兼任 S4 的第一個讀者,省一次派遣)
 4. **跑 `scan-siblings specs/{name}/spec.yaml`** —— 比對 `impact.files`,
    把會跟其他在飛分支撞的檔案列出來。在寫程式之前知道,比合併時才發現便宜得多。
 
 ### S4 歧義偵測
 
-派遣 **2 個 `spec-reader`**(fable,`tools: []`,規格直接貼在 prompt 裡)。
+派遣 **2 個 `spec-reader`**(`tools: []`,規格直接貼在 prompt 裡)。
 兩種視角:**字面讀者**、**敵意讀者**。
 
 加上 grill 的表共三張,機械比對:
@@ -237,7 +235,7 @@ wt="$(git worktree list --porcelain \
 
 ### S7 測試 RED
 
-**派遣 `red-writer`**(opus)。派遣訊息給它:凍結的規格路徑、專案 `test-writer` skill 的路徑、
+**派遣 `red-writer`**。派遣訊息給它:凍結的規格路徑、專案 `test-writer` skill 的路徑、
 測試指令。它寫完會回報 `red-capture` 的輸出原文;**只回「完成」的報告不接受**。
 
 強制 **stub-first**。`compile-fail-as-RED` 不接受 —— 編譯不過不證明任何斷言有效。
@@ -277,7 +275,7 @@ wt="$(git worktree list --porcelain \
 
 1. `scripts/gates/test-review specs/{name}/spec.yaml --mechanical-only` —— 對 6a/6b 檢查零斷言、
    沒引用 example 具體值、example 沒人測,三種都擋
-2. **派遣 `test-reviewer`**(opus,只有 Read/Grep/Glob)—— 看機械抓不到的:斷在對不對的地方、
+2. **派遣 `test-reviewer`**(只有 Read/Grep/Glob)—— 看機械抓不到的:斷在對不對的地方、
    一條測試一件事、case 名稱讀得出 given/when/then。它寫 `evidence/test-review.agent.json`
 3. 再跑一次 `test-review`(不帶 `--mechanical-only`)→ PASS 才 hash 凍結測試檔
 4. 有問題 → 退回 S7 改測試,**重新擷取 RED**(改過的測試沒有 RED 證據)
@@ -286,7 +284,7 @@ wt="$(git worktree list --porcelain \
 
 ### S8 實作 GREEN
 
-**派遣 `green-writer`**(opus)。派遣訊息給它:凍結測試的路徑、專案 `rd-implementer` skill 的路徑、
+**派遣 `green-writer`**。派遣訊息給它:凍結測試的路徑、專案 `rd-implementer` skill 的路徑、
 測試指令。「衝突就停」寫死在它的定義裡,不靠派遣訊息記得。
 
 **為什麼現在敢外派:** 凍結規則把它圍住了。它最壞能做的是動規格或規格測試(G1/G2 擋)、
@@ -325,8 +323,8 @@ UI 專案開 app 導航到目標畫面截圖(放進 `$SMOKE_SCREENSHOTS`)、API 
 runner log、錄影、截圖或產物)。缺 Scenario、缺 example、`ok:false`、舊檔、不存在／空檔、
 或只有 checklist 都讓 smoke FAIL。這是 6c 在 S7 被延後而不是被豁免的後半條防線。
 
-**S9c 付費審查 G9/G10**:派 `spec-oracle` 與 `code-adversary`(fable),**派完立刻
-`scripts/gates/findings dispatched --gate G9`(G10 同)** —— 零 finding 的乾淨審查也要留下派過的紀錄,
+**S9c 付費審查 G9/G10**:派 `spec-oracle` 與 `code-adversary`,**派完立刻
+`scripts/gates/findings dispatched --gate G9 --model <實際用的模型>`(G10 同;退過級就加 `--degraded`)** —— 零 finding 的乾淨審查也要留下派過的紀錄,
 否則「沒派」和「派了沒事」在證據上分不出來。每條 finding 用 `findings add` 收進來 ——
 沒重現的 `must_fix` / `ask_user` / `overbuilt` **收不進去**;同一個重現換 id 重 add 也**收不進去**(計數會歸零)。
 實跑重現:紅 → `set confirmed`;不紅 → `set void`。**停在 proposed 的 finding 算沒處理完**,擋 G9/10。然後分流:
@@ -437,7 +435,7 @@ orchestrator 處理完重新留言。**orchestrator 一律不代按 merge。**
 ────────────────────────────────────────────
 付費判定
   G8   變異測試        有工具才跑;沒有就對關鍵斷言做定向變異
-  G9   spec-oracle     fable,隔離,只憑規格寫驗收測試
+  G9   spec-oracle     opus,隔離,只憑規格寫驗收測試
   G10  code-adversary  fable,每條主張附可執行的重現,分四類
   G11  UI 截圖         smoke 順便截;有畫面變更才要求
 
@@ -512,6 +510,25 @@ loop <spec> check            有沒有任何一條停住(dashboard 也讀)
 
 為什麼這樣就收斂:「這算不算問題」不能吵(跑得出來才算數);例子外的東西不能逼修(只能問);
 修復次數有人在數(不會在同一個地方打轉)。
+
+## 模型與額度
+
+**模型只有一個來源:`agents/*.md` 的 frontmatter。派遣時不傳 `model`。** `pipeline.yaml` 沒有 `models` 鍵
+(舊專案有也沒人讀)。主 session(orchestrator)用 opus —— 它做的是跑腳本、讀 JSON、分流,
+拿最稀缺的模型跑這些是最差的用法。
+
+Fable 額度只留給兩個地方:**S3 `spec-grill`**(一行程式沒寫就抓到的洞最便宜)和
+**G10 `code-adversary`**(84 條 findings 裡 76 條、資安類 15 條裡 13 條是它抓的)。其他 agent 一律 opus。
+
+**撞到 Fable 額度上限時**(派遣回來是 `You've reached your Fable limit`):
+- `spec-grill` / `code-adversary` 用 `model: opus` **重派一次**,派完記
+  `findings dispatched --gate G10 --model opus --degraded`。證據表會出「降級審查」標籤,不擋推,
+  但你會看到這張卡的審查強度比平常低。
+- **不准退到 sonnet**;也不准為了省額度先用 sonnet 派。
+- 其他 agent 本來就不該碰 fable,撞到上限代表派遣時傳了 `model`,那是 bug。
+
+實測(mindey-mobile 九天):24 次派遣空跑,20 次是 Fable limit;red-writer 設定 opus 卻有 19 次跑在 fable。
+額度是被不該用它的地方吃掉的。
 
 實測的派遣開機費(單次、零工作量):`general-purpose` 31,554 · `spec-grill`(3 工具)5,587 ·
 `spec-reader`(零工具)3,137。**tool schema 佔了 general-purpose 開機費的九成** ——
@@ -603,7 +620,7 @@ loop <spec> check            有沒有任何一條停住(dashboard 也讀)
 ## Related
 
 - `scripts/gates/*` —— 關卡的實作;S7 以後新增 `test-review` `smoke` `findings` `loop` `pr-comment` `config-check`
-- `agents/*` —— spec-grill / spec-reader / spec-oracle / code-adversary(fable)+ red-writer / test-reviewer / green-writer(opus)
+- `agents/*` —— spec-grill / code-adversary(fable)+ spec-reader / spec-oracle / red-writer / test-reviewer / green-writer(opus);模型只在這裡設
 - `templates/ci/*` —— S12 的 CI 範本(要裝進專案是人的決定)
 - `commands/workflow/init.md` —— S0 問卷
 - `scripts/gates/runs --yield` —— 哪道關擋過東西、擋了幾次;跑過 ≥5 次從沒擋過的會被點名

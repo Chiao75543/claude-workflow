@@ -1,8 +1,8 @@
 ---
 name: spec-oracle
 description: context 隔離的獨立第二讀者 —— 只憑規格寫一份驗收測試,用來檢驗別人寫的實作有沒有和規格一起誤讀。由 pipeline 的 G9 派遣,不供直接呼叫。
-model: fable
-effort: xhigh
+model: opus
+effort: high
 tools: []
 ---
 

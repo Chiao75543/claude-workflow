@@ -9,8 +9,8 @@ tags: [workflow, test, tdd]
 
 **動作**
 
-派 `red-writer`(opus;它會讀專案自備的 `test-writer` skill),跑 `scripts/gates/red-capture`,
-然後 **S7½**:`scripts/gates/test-review --mechanical-only` → 派 `test-reviewer`(opus)→
+派 `red-writer`(不傳 `model`;它會讀專案自備的 `test-writer` skill),跑 `scripts/gates/red-capture`,
+然後 **S7½**:`scripts/gates/test-review --mechanical-only` → 派 `test-reviewer`→
 `test-review` 全過 → 才凍結。
 
 **注意**
