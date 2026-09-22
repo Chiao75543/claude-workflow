@@ -1383,6 +1383,10 @@ def test_dashboard_gating_order(tmp: pathlib.Path) -> None:
     freeze(root, ["Tests/DemoTests.swift"])
     code, out = run_gate("dashboard", spec, cwd=root)
     check("沒跑 smoke → S 擋,G9/10 標「未跑」", "缺 smoke.json" in out and "未跑" in out and code == 1, out[:400])
+    # 狀態板自動填:實測九天沒人手動 runs --set 過,7 個在飛全「尚未回報狀態」。dashboard 自己知道卡在哪。
+    status = lambda: json.loads((root / "specs/demo/evidence/status.json").read_text())
+    check("dashboard 有關卡紅 → status.json 記「卡在 <第一道紅的關>」,不等人",
+          status()["stage"] == "S9" and status()["label"].startswith("卡在 S ") and status()["blocked_on"] is None, str(status()))
 
     run_gate("smoke", spec, cwd=root)
     code, out = run_gate("dashboard", spec, cwd=root)
@@ -1391,6 +1395,15 @@ def test_dashboard_gating_order(tmp: pathlib.Path) -> None:
     dispatched(root)
     code, out = run_gate("dashboard", spec, cwd=root)
     check("全綠零待決(零 finding 但派過)→ 自動推:可以", code == 0 and "自動推:可以" in out, out[:500])
+    check("全綠零待決 → status.json 記 S10 可推", status()["stage"] == "S10" and status()["blocked_on"] is None, str(status()))
+    # runs 只列「尚未落地」的規格:切到功能分支、把規格改成和 main 不同,它才算在飛
+    subprocess.run(["git", "checkout", "-q", "-b", "feat/demo"], cwd=root, check=True)
+    (root / "specs/demo/spec.yaml").write_text((root / "specs/demo/spec.yaml").read_text() + "# in flight\n")
+    code, out = run_gate("runs", cwd=root)
+    check("runs 讀得到 dashboard 自己寫的狀態(不再是「尚未回報狀態」)",
+          code == 0 and "尚未回報狀態" not in out and "可推" in out, out[:300])
+    subprocess.run(["git", "checkout", "-q", "--", "specs/demo/spec.yaml"], cwd=root, check=True)
+    subprocess.run(["git", "checkout", "-q", "main"], cwd=root, check=True)
     tags = lambda: [a["tag"] for a in json.loads((root / "specs/demo/evidence/dashboard.json").read_text())["attention"]]
     check("沒退級 → 沒有「降級審查」標籤", "降級審查" not in tags(), str(tags()))
     # Fable 額度用完、用 opus 重派:要看得見(證據表 + PR 留言),但這是資訊不是決策,不擋推
@@ -1512,6 +1525,9 @@ def test_dashboard_gating_order(tmp: pathlib.Path) -> None:
     code, out = run_gate("dashboard", spec, cwd=root)
     check("有 ask_user 等人 → 關卡綠但自動推:不行(有待決事項)",
           code == 0 and "有待決事項" in out, out[:500])
+    st = json.loads((root / "specs/demo/evidence/status.json").read_text())
+    check("有待決事項 → status.json 標 blocked_on human,runs 會把它排最前面",
+          st["blocked_on"] == "human" and "等你決定" in st["label"], str(st))
     code, out = run_gate("pr-comment", spec, cwd=root)
     check("pr-comment 列出「需要你決定」與問句", "需要你決定" in out and "要防嗎?" in out, out[:400])
     code, _ = run_gate("pr-comment", spec, "--check", cwd=root)

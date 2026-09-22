@@ -17,6 +17,9 @@ scripts/gates/runs --set <spec> S5 "等你批說明頁" --blocked-on human
 
 **注意**
 
+- `dashboard` 每跑一次就會自己寫狀態(卡在哪一關 / 幾條等你決定 / 可推),不用手動 `--set`。
+  `--set` 留給 dashboard 之外的階段(等批說明頁、hold)。
+
 - 已落地(在整合分支上)的規格會被濾掉,不算在飛。
 - 等你的排在最前面。
 - 想知道會不會撞到別的分支,用 `scripts/gates/scan-siblings <spec>`。

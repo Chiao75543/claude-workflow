@@ -665,6 +665,22 @@ def main(argv: list[str]) -> int:
     print(f"  自動推:{verdict}")
     for a in decisions:
         print(f"  ⏸ {a['title']}")
+
+    # 狀態板自動填。實測九天沒人手動 `runs --set` 過一次:7 個在飛全是「尚未回報狀態」。
+    # 證據表本來就知道卡在哪一關、在等誰,寫下去就好;格式與 runs --set 相同。
+    first_red = next((g for g in gates if not g["ok"]), None)
+    if first_red is not None:
+        stage, label, blocked = "S9", f"卡在 {first_red['id']} {first_red['what']}", None
+    elif decisions:
+        stage, label, blocked = "S9", f"{len(decisions)} 條等你決定", "human"
+    elif pre_commit:
+        stage, label, blocked = "S9", "全綠,待 commit 後跑 delivery", None
+    else:
+        stage, label, blocked = "S10", "全綠零待決,可推", None
+    write_json(ev / "status.json", {
+        "stage": stage, "label": label, "blocked_on": blocked,
+        "updated_at": datetime.datetime.now().astimezone().isoformat(timespec="seconds"),
+    })
     return 0 if all_green else 1
 
 
