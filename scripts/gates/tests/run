@@ -1957,6 +1957,12 @@ def test_adversary_s7plus(tmp: pathlib.Path) -> None:
     code, out = run_gate("dashboard", spec, "--base", "nope", cwd=root)
     check("F-009 異常 --base → G3/G7 判失敗,不是靜默變綠",
           out.count("--base nope 不等於設定的整合分支 develop") == 2, out[:400])
+    # 設定的整合分支根本不存在:也要判失敗,不能靜默拿空 diff 當「沒有變更」
+    (root / "specs" / "pipeline.yaml").write_text(
+        'runner: swift-testing\nreachability:\n  globs: ["App/**/*.swift"]\nintegration_branch: ghost\nlint: "true"\ntest: "true"\nsmoke: "true"\n')
+    code, out = run_gate("dashboard", spec, cwd=root)
+    check("設定的整合分支不存在 → G3/G7 判失敗並點名",
+          code == 1 and out.count("找不到整合分支 ghost") == 2, out[:400])
 
     # F-011 名稱行與註解不算引用 / 斷言
     def review_of(name: str, src: str) -> tuple[int, str]:
