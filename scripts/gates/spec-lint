@@ -46,6 +46,9 @@ CJK = re.compile(r"[\u3000-\u9fff\uf900-\ufaff]")
 PLACEHOLDER = re.compile(r"\b(TBD|TODO|FIXME|XXX)\b|(待補|待定|待確認|暫定)", re.I)
 
 REQUIRED_TOP = ["meta", "why", "what", "impact", "requirements"]
+# 軟上限,只警告不擋。實測:跑最順的三張卡規格都在 800 行以內;最大那張 6395 行 → 21 小時、
+# 29 條 findings、13 次打斷,一張卡吃掉 42% 的人工決定。卡太大,守衛就會一直找你。
+SPEC_SOFT_MAX_LINES = 800
 
 
 def prose_limit(text: str) -> int | None:
@@ -273,6 +276,10 @@ def main(argv: list[str]) -> int:
         print(f"▸ {path}")
         spec = load_spec(path)
         f = Findings()
+        lines = path.read_text().count("\n")
+        if lines > SPEC_SOFT_MAX_LINES:
+            f.warn("(整份)", f"{lines} 行,超過 {SPEC_SOFT_MAX_LINES} 行 —— 建議拆卡:大卡會一直找你做決定"
+                              "(實測 6395 行那張:13 次打斷、29 條 findings)")
         check_schema(spec, f)
         check_completeness(spec, f)
         check_testability(spec, f)
