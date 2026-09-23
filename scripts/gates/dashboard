@@ -38,6 +38,7 @@ from _common import (  # noqa: E402
     evidence_dir, integration_branch, load_spec, read_json, scenario_ids, triage_findings, write_json,
 )
 from _state import index_fingerprint, tree_fingerprint  # noqa: E402
+from _workflow_schemas import schema_for  # noqa: E402
 
 # 型別宣告。要吃得下常見寫法,否則最該檢查的東西反而隱形:
 #   @MainActor final class XViewModel / actor XService / data class / sealed class / object
@@ -236,6 +237,16 @@ figcaption{{font-family:ui-monospace,monospace;font-size:.7rem;color:var(--dim);
 
 
 def main(argv: list[str]) -> int:
+    if argv == ["--help"]:
+        print(__doc__)
+        return 0
+    if argv == ["--schema"]:
+        print(json.dumps(schema_for("dashboard"), sort_keys=True, separators=(",", ":")))
+        return 0
+    allowed = {"--base", "--pre-commit", "-o"}
+    if any(arg.startswith("-") and arg not in allowed for arg in argv):
+        print(json.dumps({"status": "rejected", "reason": "invalid_cli", "exit_code": 2}, sort_keys=True, separators=(",", ":")))
+        return 2
     args = [a for a in argv if not a.startswith("-")]
     if not args:
         print(__doc__)
@@ -260,6 +271,23 @@ def main(argv: list[str]) -> int:
     here = pathlib.Path(__file__).parent
 
     gates, attention = [], []
+
+    version, _, _ = _config.autonomy_version(config)
+    if version == 1:
+        required_names = ("autonomy.json", "status.json", "delivery.json")
+        missing_inputs = [name for name in required_names
+                          if not (ev / name).is_file() or (ev / name).is_symlink()]
+        autonomy_ok, _ = run([str(here / "autonomy"), str(spec_path), "check"], root)
+        storage = "--index" if pre_commit else "--commit"
+        evidence_ok, _ = run(
+            [str(here / "evidence-check"), str(spec_path), storage, "--pre-dashboard"], root
+        )
+        v1_ok = not missing_inputs and autonomy_ok and evidence_ok
+        note_parts = ["autonomy.json", "status.json", "delivery.json", "evidence-check --pre-dashboard"]
+        if missing_inputs:
+            note_parts.append("missing=" + ",".join(missing_inputs))
+        gates.append({"id": "V1", "what": "autonomy/delivery 證據", "ok": v1_ok,
+                      "note": " ".join(note_parts)})
 
     ok, _ = run([str(here / "spec-lint"), str(spec_path)], root)
     gates.append({"id": "G0", "what": "規格檢查", "ok": ok, "note": "schema/完備性/可測性"})
@@ -475,7 +503,21 @@ def main(argv: list[str]) -> int:
             not isinstance(dispatched[gate], dict)
             or not isinstance(dispatched[gate].get("tree"), str)
             or re.fullmatch(r"tree:(?:[0-9a-f]{40}|[0-9a-f]{64})", dispatched[gate]["tree"]) is None
+            or version == 1 and (
+                set(dispatched[gate]) != {"at", "tree", "status"}
+                or dispatched[gate].get("status") not in {"completed", "denied"}
+                or not isinstance(dispatched[gate].get("at"), str)
+                or re.fullmatch(
+                    r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:Z|[+-][0-9]{2}:[0-9]{2})",
+                    dispatched[gate]["at"],
+                ) is None
+            )
         )
+    ]
+    denied_dispatch = [
+        gate for gate in ("G9", "G10")
+        if version == 1 and gate not in missing_dispatch and gate not in invalid_dispatch
+        and dispatched[gate].get("status") == "denied"
     ]
     stale_dispatch = [
         gate for gate in ("G9", "G10")
@@ -491,6 +533,9 @@ def main(argv: list[str]) -> int:
     elif invalid_dispatch:
         gates.append({"id": "G9/10", "what": "獨立讀者 + 對抗審查", "ok": False,
                       "note": f"dispatch tree 無效({', '.join(invalid_dispatch)})，必須重新審查"})
+    elif denied_dispatch:
+        gates.append({"id": "G9/10", "what": "獨立讀者 + 對抗審查", "ok": False,
+                      "note": f"dispatch denied({', '.join(denied_dispatch)})，平台拒絕且不得改道重派"})
     elif stale_dispatch:
         gates.append({"id": "G9/10", "what": "獨立讀者 + 對抗審查", "ok": False,
                       "note": f"審查過期(工作樹變了: {', '.join(stale_dispatch)})"})

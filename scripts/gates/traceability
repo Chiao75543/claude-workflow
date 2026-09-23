@@ -13,6 +13,7 @@
 from __future__ import annotations
 
 import pathlib
+import json
 import re
 import sys
 
@@ -22,6 +23,7 @@ from _common import (  # noqa: E402
     MANUAL_MODES, RED_MODES, SMOKE_MODES, Findings, invalid_scenario_modes, load_spec,
     scenario_ids, scenario_ids_for_modes, spec_test_sources,
 )
+from _workflow_schemas import schema_for  # noqa: E402
 
 
 def collect_test_ids(config: dict, sources: list[dict]) -> dict[str, set[str]]:
@@ -36,8 +38,14 @@ def collect_test_ids(config: dict, sources: list[dict]) -> dict[str, set[str]]:
 
 
 def main(argv: list[str]) -> int:
-    if len(argv) != 1:
+    if argv == ["--help"]:
         print(__doc__)
+        return 0
+    if argv == ["--schema"]:
+        print(json.dumps(schema_for("traceability"), sort_keys=True, separators=(",", ":")))
+        return 0
+    if len(argv) != 1 or argv[0].startswith("-"):
+        print(json.dumps({"status": "rejected", "reason": "invalid_cli", "exit_code": 2}, sort_keys=True, separators=(",", ":")))
         return 2
     spec_path = pathlib.Path(argv[0])
     root = spec_path.resolve().parents[2]

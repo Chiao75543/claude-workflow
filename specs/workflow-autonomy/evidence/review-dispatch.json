@@ -1,0 +1,8 @@
+{
+  "schema_version": 1,
+  "writer_task_ref": "/root/autonomy_red_writer",
+  "reviewer_task_ref": "/root/freshness_test_reviewer",
+  "completion_ref": "completion:freshness-test-reviewer-s7half-final-20260915T140418+0800",
+  "tree_token": "tree:b34816bb63d41d843ca7659cea1a66d2251d0dda",
+  "created_at": "2026-09-15T14:04:18+08:00"
+}

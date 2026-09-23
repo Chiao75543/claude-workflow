@@ -1,0 +1,720 @@
+#!/usr/bin/env python3
+"""Plan, complete, and verify workflow-autonomy repairs."""
+
+from __future__ import annotations
+
+import argparse
+import datetime
+import fcntl
+import fnmatch
+import hashlib
+import json
+import os
+import pathlib
+import re
+import stat
+import subprocess
+import sys
+import tempfile
+from typing import Any
+
+sys.path.insert(0, str(pathlib.Path(__file__).parent))
+import _config  # noqa: E402
+from _common import evidence_dir, load_spec  # noqa: E402
+from _workflow_schemas import schema_for  # noqa: E402
+
+KINDS = {"implementation", "review_fix", "evidence", "format", "frozen_test", "product_change", "permission"}
+SHA256_RE = re.compile(r"sha256:[0-9a-f]{64}")
+RFC3339_RE = re.compile(
+    r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:Z|[+-][0-9]{2}:[0-9]{2})"
+)
+
+
+def canonical(value: Any) -> bytes:
+    return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
+
+
+def digest_bytes(value: bytes) -> str:
+    return "sha256:" + hashlib.sha256(value).hexdigest()
+
+
+def now() -> str:
+    return datetime.datetime.now().astimezone().isoformat(timespec="seconds")
+
+
+def git(root: pathlib.Path, *args: str, binary: bool = False) -> bytes | str:
+    proc = subprocess.run(["git", *args], cwd=root, capture_output=True)
+    if proc.returncode:
+        raise RuntimeError((proc.stderr or proc.stdout).decode(errors="replace").strip())
+    return proc.stdout if binary else proc.stdout.decode().strip()
+
+
+def result(operation: str, status: str, reason: str | None, code: int, *, ledger: dict | None = None,
+           repair: dict | None = None, expected: int | None = None, written: bool = False,
+           idempotent: bool = False, required_action: str | None = None,
+           evidence_saved: bool | None = None, rebuilt: bool | None = None) -> dict:
+    generation = int((ledger or {}).get("generation", 0))
+    public_repair = None
+    if repair is not None:
+        public_repair = {key: value for key, value in repair.items() if key != "summary"}
+    return {
+        "schema_version": 1, "operation": operation, "status": status, "reason": reason,
+        "exit_code": code, "written": written, "generation": generation,
+        "expected_generation": expected, "actual_generation": generation,
+        "repair": public_repair, "may_continue": status in {"planned", "complete", "passed"},
+        "evidence_saved": evidence_saved, "test_contract_rebuilt": rebuilt,
+        "idempotent": idempotent, "blocked_on": (repair or {}).get("blocked_on"),
+        "bypass_attempted": False, "required_action": required_action,
+    }
+
+
+def emit(payload: dict) -> int:
+    print(json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")))
+    return int(payload["exit_code"])
+
+
+def atomic_write(path: pathlib.Path, payload: dict) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, name = tempfile.mkstemp(prefix=path.name + ".", dir=path.parent)
+    try:
+        with os.fdopen(fd, "w") as handle:
+            json.dump(payload, handle, ensure_ascii=False, indent=2)
+            handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(name, path)
+    finally:
+        if os.path.exists(name):
+            os.unlink(name)
+
+
+def initial_ledger(spec_hash: str) -> dict:
+    return {"schema_version": 1, "generation": 0, "spec_hash": spec_hash,
+            "repairs": [], "history": [], "updated_at": None}
+
+
+def read_ledger(path: pathlib.Path, spec_hash: str) -> dict:
+    if not path.exists():
+        return initial_ledger(spec_hash)
+    value = json.loads(path.read_text())
+    if not isinstance(value, dict) or value.get("schema_version") != 1 or not isinstance(value.get("generation"), int):
+        raise ValueError("invalid_autonomy_ledger")
+    value.setdefault("repairs", [])
+    value.setdefault("history", [])
+    return value
+
+
+def head_oid(root: pathlib.Path) -> str:
+    return str(git(root, "rev-parse", "HEAD"))
+
+
+def approval(root: pathlib.Path, spec_rel: str, spec_path: pathlib.Path) -> tuple[str | None, str | None, str]:
+    start = head_oid(root)
+    ev_rel = pathlib.PurePosixPath(spec_rel).parent / "evidence"
+    approved_rel = (ev_rel / "spec.approved.yaml").as_posix()
+    hash_rel = (ev_rel / "spec.hash").as_posix()
+    approval_rel = (ev_rel / "approval.json").as_posix()
+    blobs: dict[str, bytes] = {}
+    for rel in (approved_rel, hash_rel, approval_rel):
+        proc = subprocess.run(["git", "show", f"{start}:{rel}"], cwd=root, capture_output=True)
+        mode = subprocess.run(["git", "ls-tree", start, "--", rel], cwd=root, capture_output=True, text=True)
+        if proc.returncode or not mode.stdout.startswith("100644 "):
+            return "missing_approved_snapshot", None, start
+        blobs[rel] = proc.stdout
+    current_hash = digest_bytes(spec_path.read_bytes())
+    approved_hash = digest_bytes(blobs[approved_rel])
+    try:
+        line_hash = blobs[hash_rel].decode().split()[0]
+        record = json.loads(blobs[approval_rel])
+    except (UnicodeDecodeError, IndexError, json.JSONDecodeError):
+        return "missing_approved_snapshot", None, start
+    if (line_hash != current_hash or approved_hash != current_hash
+            or not isinstance(record, dict) or record.get("schema_version") != 1
+            or record.get("source") not in {"owner_chat", "owner_api"}
+            or not isinstance(record.get("source_ref"), str) or not record["source_ref"].strip()
+            or record.get("approved_spec_sha256") != current_hash):
+        return "spec_hash_mismatch", None, start
+    return None, current_hash, start
+
+
+def canonical_path(rel: str) -> bool:
+    path = pathlib.PurePosixPath(rel)
+    return bool(rel) and not path.is_absolute() and ".." not in path.parts and path.as_posix() == rel
+
+
+def has_symlink_component(root: pathlib.Path, rel: str) -> bool:
+    cursor = root
+    for part in pathlib.PurePosixPath(rel).parts:
+        cursor = cursor / part
+        if cursor.is_symlink():
+            return True
+    return False
+
+
+def allowed_scope(spec: dict, config: dict, spec_rel: str, rel: str) -> tuple[bool, str | None]:
+    ev_prefix = (pathlib.PurePosixPath(spec_rel).parent / "evidence").as_posix() + "/"
+    if rel.startswith(ev_prefix):
+        return True, "evidence"
+    if rel in (((spec.get("impact") or {}).get("files")) or []):
+        return True, "impact"
+    for pattern in ((config.get("tests") or {}).get("globs") or []):
+        if fnmatch.fnmatchcase(rel, str(pattern)):
+            return True, "test_glob"
+    return False, None
+
+
+def frozen_paths(root: pathlib.Path, spec_path: pathlib.Path) -> set[str]:
+    path = evidence_dir(spec_path) / "tests.hash"
+    if not path.is_file():
+        return set()
+    rows = set()
+    for line in path.read_text().splitlines():
+        parts = line.split(None, 1)
+        if len(parts) == 2:
+            rows.add(parts[1].strip())
+    return rows
+
+
+def worktree_entries(root: pathlib.Path) -> list[dict]:
+    raw = git(root, "ls-files", "-co", "--exclude-standard", "-z", binary=True)
+    entries = []
+    for chunk in raw.split(b"\0"):
+        if not chunk:
+            continue
+        rel = chunk.decode(errors="surrogateescape")
+        path = root / rel
+        try:
+            info = path.lstat()
+        except FileNotFoundError:
+            continue
+        if stat.S_ISREG(info.st_mode):
+            entries.append({"path": rel, "mode": format(stat.S_IMODE(info.st_mode), "04o"),
+                            "sha256": digest_bytes(path.read_bytes())})
+    return sorted(entries, key=lambda item: item["path"])
+
+
+def request_payload(rid: str, kind: str, files: list[str], summary: str | None, spec_hash: str) -> dict:
+    return {"id": rid, "kind": kind, "files": sorted(set(files)), "summary": summary, "spec_hash": spec_hash}
+
+
+def complete_request_payload(repair: dict, evidence: list[str]) -> dict:
+    return {
+        "id": repair.get("id"), "evidence": sorted(set(evidence)),
+        "spec_hash": repair.get("spec_hash"), "plan_version": repair.get("plan_version"),
+    }
+
+
+def verify_request_payload(repair: dict) -> dict:
+    return {
+        "id": repair.get("id"), "spec_hash": repair.get("spec_hash"),
+        "plan_version": repair.get("plan_version"),
+    }
+
+
+def history(ledger: dict, operation: str, rid: str, request_sha: str, status: str, reason: str | None) -> None:
+    ledger["history"].append({"generation": ledger["generation"], "operation": operation,
+                              "repair_id": rid, "request_sha256": request_sha,
+                              "result_status": status, "reason": reason, "recorded_at": now()})
+
+
+def commit_mutation(path: pathlib.Path, ledger: dict, start_head: str, root: pathlib.Path) -> bool:
+    if head_oid(root) != start_head:
+        return False
+    ledger["updated_at"] = now()
+    atomic_write(path, ledger)
+    return True
+
+
+def plan(root: pathlib.Path, spec_path: pathlib.Path, spec_rel: str, spec: dict, config: dict,
+         ledger_path: pathlib.Path, args: argparse.Namespace) -> dict:
+    reason, spec_hash, start = approval(root, spec_rel, spec_path)
+    ledger = read_ledger(ledger_path, spec_hash or digest_bytes(spec_path.read_bytes()))
+    if reason:
+        return result("plan", "rejected", reason, 1, ledger=ledger, expected=args.expect_generation)
+    files = sorted(set(args.file or []))
+    request_sha = digest_bytes(canonical(request_payload(args.id, args.kind, files, args.summary, spec_hash)))
+    existing = next((item for item in ledger["repairs"] if item.get("id") == args.id), None)
+    if existing is not None:
+        if existing.get("plan_version") == request_sha:
+            return result("plan", existing["status"], existing.get("reason"), 0, ledger=ledger,
+                          repair=existing, expected=args.expect_generation, idempotent=True)
+        return result("plan", "rejected", "repair_id_conflict", 1, ledger=ledger,
+                      repair=existing, expected=args.expect_generation)
+    if ledger["generation"] != args.expect_generation:
+        return result("plan", "conflict", None, 1, ledger=ledger, expected=args.expect_generation)
+    scope_sources = []
+    invalid = not files or args.kind not in KINDS
+    for rel in files:
+        ok, source = allowed_scope(spec, config, spec_rel, rel) if canonical_path(rel) else (False, None)
+        if args.kind == "frozen_test" and rel in frozen_paths(root, spec_path):
+            ok, source = True, "test_glob"
+        if not ok or has_symlink_component(root, rel):
+            invalid = True
+        elif source:
+            scope_sources.append({"path": rel, "source": source})
+    status, blocked_on, item_reason, code = "planned", None, None, 0
+    if args.kind == "product_change":
+        status, blocked_on, code = "blocked", "owner", 1
+    elif args.kind == "permission":
+        status, blocked_on, code = "blocked", "permission", 1
+    elif invalid:
+        status, item_reason, code = "rejected", "outside_approved_scope", 1
+    baseline = worktree_entries(root)
+    repair = {
+        "id": args.id, "kind": args.kind, "status": status, "files": files,
+        "summary": args.summary, "spec_hash": spec_hash,
+        "scope_sources": sorted(scope_sources, key=lambda item: item["path"]),
+        "blocked_on": blocked_on, "reason": item_reason, "plan_version": request_sha,
+        "baseline_entries": baseline, "baseline_worktree_token": digest_bytes(canonical(baseline)),
+        "evidence": [], "planned_at": now(), "completed_at": None,
+    }
+    ledger["generation"] += 1
+    ledger["repairs"].append(repair)
+    history(ledger, "plan", args.id, request_sha, status, item_reason)
+    if not commit_mutation(ledger_path, ledger, start, root):
+        ledger["generation"] -= 1
+        return result("plan", "rejected", "snapshot_drift", 1, ledger=ledger,
+                      repair=repair, expected=args.expect_generation)
+    return result("plan", status, item_reason, code, ledger=ledger, repair=repair,
+                  expected=args.expect_generation, written=True)
+
+
+def evidence_records(root: pathlib.Path, spec_rel: str, paths: list[str], tree: str) -> list[dict] | None:
+    prefix = (pathlib.PurePosixPath(spec_rel).parent / "evidence").as_posix() + "/"
+    records = []
+    for rel in sorted(set(paths)):
+        if not canonical_path(rel) or not rel.startswith(prefix) or has_symlink_component(root, rel):
+            return None
+        path = root / rel
+        try:
+            info = path.lstat()
+        except FileNotFoundError:
+            return None
+        if not stat.S_ISREG(info.st_mode):
+            return None
+        committed = subprocess.run(["git", "show", f"HEAD:{rel}"], cwd=root, capture_output=True)
+        mode = subprocess.run(["git", "ls-tree", "HEAD", "--", rel], cwd=root,
+                              capture_output=True, text=True)
+        if committed.returncode or not mode.stdout.startswith("100644 "):
+            return None
+        payload = committed.stdout
+        if path.read_bytes() != payload:
+            return None
+        if not payload:
+            return None
+        records.append({"path": rel, "sha256": digest_bytes(payload), "bytes": len(payload), "tree_token": tree})
+    return records or None
+
+
+def changed_paths(repair: dict, current: list[dict], ledger_rel: str, evidence_paths: set[str]) -> set[str]:
+    before = {item["path"]: (item["mode"], item["sha256"]) for item in repair.get("baseline_entries", [])}
+    after = {item["path"]: (item["mode"], item["sha256"]) for item in current}
+    changed = {path for path in set(before) | set(after) if before.get(path) != after.get(path)}
+    return changed - {ledger_rel} - evidence_paths
+
+
+def stored_evidence_valid(root: pathlib.Path, spec_rel: str, repair: dict) -> bool:
+    prefix = (pathlib.PurePosixPath(spec_rel).parent / "evidence").as_posix() + "/"
+    rows = repair.get("evidence")
+    if not isinstance(rows, list) or not rows:
+        return False
+    for row in rows:
+        if not isinstance(row, dict) or set(row) != {"path", "sha256", "bytes", "tree_token"}:
+            return False
+        rel = row.get("path") if isinstance(row, dict) else None
+        tree_token = row.get("tree_token")
+        if (not isinstance(rel, str) or not canonical_path(rel) or not rel.startswith(prefix)
+                or has_symlink_component(root, rel) or not isinstance(tree_token, str)
+                or not tree_token.startswith("tree:")
+                or not re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", tree_token[5:])):
+            return False
+        tree_oid = tree_token[5:]
+        tree_type = subprocess.run(["git", "cat-file", "-t", tree_oid], cwd=root,
+                                   capture_output=True, text=True)
+        if tree_type.returncode or tree_type.stdout.strip() != "tree":
+            return False
+        path = root / rel
+        if path.is_symlink() or not path.is_file() or not stat.S_ISREG(path.lstat().st_mode):
+            return False
+        payload = path.read_bytes()
+        if not payload or row.get("sha256") != digest_bytes(payload) or row.get("bytes") != len(payload):
+            return False
+        committed = subprocess.run(["git", "show", f"{tree_oid}:{rel}"], cwd=root, capture_output=True)
+        listing = subprocess.run(["git", "ls-tree", tree_oid, "--", rel], cwd=root,
+                                 capture_output=True, text=True)
+        fields = listing.stdout.split("\t", 1)[0].split() if listing.stdout else []
+        blob = subprocess.run(["git", "hash-object", "--stdin"], cwd=root, input=payload,
+                              capture_output=True, text=False)
+        if (committed.returncode != 0 or committed.stdout != payload or len(fields) < 3
+                or fields[0] != "100644"
+                or blob.returncode != 0 or fields[2] != blob.stdout.decode().strip()):
+            return False
+    return True
+
+
+def complete(root: pathlib.Path, spec_path: pathlib.Path, spec_rel: str, ledger_path: pathlib.Path,
+             args: argparse.Namespace) -> dict:
+    reason, spec_hash, start = approval(root, spec_rel, spec_path)
+    ledger = read_ledger(ledger_path, spec_hash or digest_bytes(spec_path.read_bytes()))
+    if reason:
+        return result("complete", "rejected", reason, 1, ledger=ledger, expected=args.expect_generation)
+    repair = next((item for item in ledger["repairs"] if item.get("id") == args.id), None)
+    if repair and repair.get("status") == "complete":
+        requested = sorted(set(args.evidence or []))
+        existing_paths = sorted(item.get("path") for item in repair.get("evidence", [])
+                                if isinstance(item, dict))
+        if requested == existing_paths and stored_evidence_valid(root, spec_rel, repair):
+            return result("complete", "complete", None, 0, ledger=ledger, repair=repair,
+                          expected=args.expect_generation, idempotent=True, evidence_saved=True)
+        return result("complete", "rejected", "invalid_repair_transition", 1, ledger=ledger,
+                      repair=repair, expected=args.expect_generation)
+    if ledger["generation"] != args.expect_generation:
+        return result("complete", "conflict", None, 1, ledger=ledger, repair=repair,
+                      expected=args.expect_generation)
+    if repair is None or repair.get("status") != "planned":
+        return result("complete", "rejected", "invalid_repair_transition", 1, ledger=ledger,
+                      repair=repair, expected=args.expect_generation)
+    if repair.get("kind") == "frozen_test":
+        return result("complete", "rejected", None, 1, ledger=ledger, repair=repair,
+                      expected=args.expect_generation, required_action="verify_tests")
+    expected_plan = digest_bytes(canonical(request_payload(repair["id"], repair["kind"], repair["files"],
+                                                          repair.get("summary"), repair["spec_hash"])))
+    if repair.get("plan_version") != expected_plan:
+        return result("complete", "rejected", "invalid_repair_transition", 1, ledger=ledger,
+                      repair=repair, expected=args.expect_generation)
+    snapshot = "tree:" + str(git(root, "rev-parse", "HEAD^{tree}"))
+    records = evidence_records(root, spec_rel, args.evidence or [], snapshot)
+    if records is None:
+        return result("complete", "rejected", "invalid_completion_evidence", 1, ledger=ledger,
+                      repair=repair, expected=args.expect_generation)
+    changed = changed_paths(repair, worktree_entries(root), str(ledger_path.relative_to(root)),
+                            {row["path"] for row in records})
+    if not changed.issubset(set(repair["files"])):
+        return result("complete", "rejected", "changed_path_outside_repair", 1, ledger=ledger,
+                      repair=repair, expected=args.expect_generation)
+    repair["status"] = "complete"
+    repair["evidence"] = records
+    repair["completed_at"] = now()
+    ledger["generation"] += 1
+    request_sha = digest_bytes(canonical(complete_request_payload(repair, args.evidence or [])))
+    history(ledger, "complete", repair["id"], request_sha, "complete", None)
+    if not commit_mutation(ledger_path, ledger, start, root):
+        ledger["generation"] -= 1
+        return result("complete", "rejected", "snapshot_drift", 1, ledger=ledger,
+                      repair=repair, expected=args.expect_generation)
+    return result("complete", "complete", None, 0, ledger=ledger, repair=repair,
+                  expected=args.expect_generation, written=True, evidence_saved=True)
+
+
+def parse_hashes(path: pathlib.Path) -> list[dict]:
+    rows = []
+    for line in path.read_text().splitlines():
+        if line.strip() and not line.lstrip().startswith("#"):
+            digest, rel = line.split(None, 1)
+            rows.append({"path": rel.strip(), "sha256": digest})
+    return sorted(rows, key=lambda row: row["path"])
+
+
+def verify_artifacts(root: pathlib.Path, spec_path: pathlib.Path, start: str) -> str | None:
+    ev = evidence_dir(spec_path)
+    names = ["review-dispatch.json", "test-review.agent.json", "test-review.json", "red.json", "tests.hash"]
+    if any(not (ev / name).is_file() for name in names):
+        return "missing_artifact"
+    try:
+        dispatch, agent, review, red = [json.loads((ev / name).read_text()) for name in names[:4]]
+        frozen = parse_hashes(ev / names[4])
+    except (OSError, ValueError, json.JSONDecodeError):
+        return "missing_artifact"
+    refs = ("writer_task_ref", "reviewer_task_ref", "completion_ref", "tree_token")
+    if (dispatch.get("writer_task_ref") == dispatch.get("reviewer_task_ref")
+            or agent.get("writer_task_ref") == agent.get("reviewer_task_ref")
+            or any(agent.get(key) != dispatch.get(key) for key in refs)
+            or agent.get("status") != "passed" or review.get("status") != "passed"):
+        return "invalid_independent_review"
+    before = review.get("before_tests")
+    after = review.get("after_tests")
+    reviewed_examples = review.get("reviewed_examples")
+    token_input = {
+        "writer_task_ref": dispatch.get("writer_task_ref"),
+        "reviewer_task_ref": dispatch.get("reviewer_task_ref"),
+        "completion_ref": dispatch.get("completion_ref"),
+        "tree_token": dispatch.get("tree_token"),
+        "before_tests": before,
+        "after_tests": after,
+        "assertion_weakened": review.get("assertion_weakened"),
+        "reviewed_examples": reviewed_examples,
+    }
+    if (not isinstance(before, list) or not before or not isinstance(after, list) or not after
+            or not isinstance(reviewed_examples, list) or not reviewed_examples
+            or review.get("review_token") != digest_bytes(canonical(token_input))):
+        return "invalid_independent_review"
+    if review.get("assertion_weakened") is not False:
+        return "assertion_weakened"
+    red_rows = red.get("runner_results") or []
+    if (red.get("status") != "passed" or not red_rows
+            or any(row.get("tree_token") != dispatch.get("tree_token") for row in red_rows)):
+        return "stale_red_evidence"
+    after = sorted(after, key=lambda row: row.get("path", ""))
+    if frozen != after:
+        return "tests_hash_mismatch"
+    for row in after:
+        path = root / str(row.get("path", ""))
+        if not path.is_file() or digest_bytes(path.read_bytes()) != row.get("sha256"):
+            return "tests_hash_mismatch"
+    if head_oid(root) != start:
+        return "snapshot_drift"
+    return None
+
+
+def verify_tests(root: pathlib.Path, spec_path: pathlib.Path, spec_rel: str,
+                 ledger_path: pathlib.Path, args: argparse.Namespace) -> dict:
+    reason, spec_hash, start = approval(root, spec_rel, spec_path)
+    ledger = read_ledger(ledger_path, spec_hash or digest_bytes(spec_path.read_bytes()))
+    repair = next((item for item in ledger["repairs"] if item.get("id") == args.id), None)
+    if reason:
+        return result("verify-tests", "rejected", reason, 1, ledger=ledger, repair=repair,
+                      expected=args.expect_generation, rebuilt=False)
+    if ledger["generation"] != args.expect_generation:
+        return result("verify-tests", "conflict", None, 1, ledger=ledger, repair=repair,
+                      expected=args.expect_generation, rebuilt=False)
+    if repair is None or repair.get("status") != "planned" or repair.get("kind") != "frozen_test":
+        return result("verify-tests", "rejected", "invalid_repair_transition", 1, ledger=ledger,
+                      repair=repair, expected=args.expect_generation, rebuilt=False)
+    artifact_reason = verify_artifacts(root, spec_path, start)
+    if artifact_reason:
+        return result("verify-tests", "rejected", artifact_reason, 1, ledger=ledger, repair=repair,
+                      expected=args.expect_generation, rebuilt=False)
+    ev = evidence_dir(spec_path)
+    allowed_evidence = {
+        str((ev / name).relative_to(root)) for name in
+        ("autonomy.lock", "review-dispatch.json", "test-review.agent.json", "test-review.json",
+         "red.json", "tests.hash", "red-inputs.json")
+    }
+    allowed_evidence.update(
+        item["path"] for item in worktree_entries(root)
+        if item["path"].startswith(str((ev / "static-red").relative_to(root)) + "/")
+    )
+    changed = changed_paths(repair, worktree_entries(root), str(ledger_path.relative_to(root)), allowed_evidence)
+    if not changed.issubset(set(repair["files"])):
+        return result("verify-tests", "rejected", "changed_path_outside_repair", 1,
+                      ledger=ledger, repair=repair, expected=args.expect_generation, rebuilt=False)
+    repair["status"] = "complete"
+    repair["completed_at"] = now()
+    ledger["generation"] += 1
+    request_sha = digest_bytes(canonical(verify_request_payload(repair)))
+    history(ledger, "verify-tests", repair["id"], request_sha, "complete", None)
+    if not commit_mutation(ledger_path, ledger, start, root):
+        ledger["generation"] -= 1
+        return result("verify-tests", "rejected", "snapshot_drift", 1, ledger=ledger, repair=repair,
+                      expected=args.expect_generation, rebuilt=False)
+    return result("verify-tests", "complete", None, 0, ledger=ledger, repair=repair,
+                  expected=args.expect_generation, written=True, rebuilt=True)
+
+
+def valid_repair_schema(root: pathlib.Path, spec_path: pathlib.Path, spec_rel: str,
+                        spec: dict, config: dict, item: Any) -> bool:
+    required = {
+        "id", "kind", "status", "files", "evidence", "spec_hash", "scope_sources",
+        "reason", "plan_version", "baseline_entries", "baseline_worktree_token",
+        "blocked_on", "planned_at", "completed_at",
+    }
+    if not isinstance(item, dict) or not required.issubset(item) or set(item) - required - {"summary"}:
+        return False
+    files = item.get("files")
+    if (not isinstance(item.get("id"), str) or not item["id"]
+            or item.get("kind") not in KINDS or item.get("status") not in {"planned", "complete", "blocked", "rejected"}
+            or not isinstance(files, list) or not files or files != sorted(set(files))
+            or any(not isinstance(rel, str) or not canonical_path(rel) for rel in files)
+            or SHA256_RE.fullmatch(str(item.get("spec_hash", ""))) is None
+            or SHA256_RE.fullmatch(str(item.get("plan_version", ""))) is None
+            or item.get("reason") is not None and (not isinstance(item.get("reason"), str) or not item["reason"])
+            or item.get("blocked_on") not in {None, "owner", "permission", "platform", "gate"}
+            or RFC3339_RE.fullmatch(str(item.get("planned_at", ""))) is None
+            or item.get("completed_at") is not None
+            and RFC3339_RE.fullmatch(str(item.get("completed_at"))) is None):
+        return False
+    scopes = item.get("scope_sources")
+    if not isinstance(scopes, list) or scopes != sorted(scopes, key=lambda row: str(row.get("path", ""))):
+        return False
+    expected_scopes = []
+    for rel in files:
+        allowed, source = allowed_scope(spec, config, spec_rel, rel)
+        if item.get("kind") == "frozen_test" and rel in frozen_paths(root, spec_path):
+            allowed, source = True, "test_glob"
+        if not allowed or not source:
+            return False
+        expected_scopes.append({"path": rel, "source": source})
+    if scopes != expected_scopes:
+        return False
+    baseline = item.get("baseline_entries")
+    if not isinstance(baseline, list) or baseline != sorted(baseline, key=lambda row: str(row.get("path", ""))):
+        return False
+    seen = set()
+    for row in baseline:
+        if (not isinstance(row, dict) or set(row) != {"path", "mode", "sha256"}
+                or not isinstance(row.get("path"), str) or not canonical_path(row["path"])
+                or row["path"] in seen or re.fullmatch(r"[0-7]{4}", str(row.get("mode", ""))) is None
+                or SHA256_RE.fullmatch(str(row.get("sha256", ""))) is None):
+            return False
+        seen.add(row["path"])
+    if item.get("baseline_worktree_token") != digest_bytes(canonical(baseline)):
+        return False
+    evidence = item.get("evidence")
+    if not isinstance(evidence, list):
+        return False
+    for row in evidence:
+        if (not isinstance(row, dict) or set(row) != {"path", "sha256", "bytes", "tree_token"}
+                or not isinstance(row.get("path"), str) or not canonical_path(row["path"])
+                or SHA256_RE.fullmatch(str(row.get("sha256", ""))) is None
+                or isinstance(row.get("bytes"), bool) or not isinstance(row.get("bytes"), int) or row["bytes"] < 0
+                or re.fullmatch(r"tree:(?:[0-9a-f]{40}|[0-9a-f]{64})", str(row.get("tree_token", ""))) is None):
+            return False
+    return True
+
+
+def valid_history(ledger: dict) -> bool:
+    rows = ledger.get("history")
+    repairs = ledger.get("repairs")
+    generation = ledger.get("generation")
+    if (not isinstance(rows, list) or not isinstance(repairs, list)
+            or isinstance(generation, bool) or not isinstance(generation, int) or generation < 0
+            or len(rows) != generation):
+        return False
+    by_id = {item.get("id"): item for item in repairs if isinstance(item, dict)}
+    if len(by_id) != len(repairs):
+        return False
+    for index, row in enumerate(rows, 1):
+        if (not isinstance(row, dict)
+                or set(row) != {"generation", "operation", "repair_id", "request_sha256",
+                                "result_status", "reason", "recorded_at"}
+                or row.get("generation") != index
+                or row.get("operation") not in {"plan", "complete", "verify-tests"}
+                or row.get("repair_id") not in by_id
+                or SHA256_RE.fullmatch(str(row.get("request_sha256", ""))) is None
+                or row.get("result_status") not in {"planned", "complete", "blocked", "rejected"}
+                or row.get("reason") is not None
+                and (not isinstance(row.get("reason"), str) or not row["reason"])
+                or RFC3339_RE.fullmatch(str(row.get("recorded_at", ""))) is None):
+            return False
+    for rid, repair in by_id.items():
+        matching = [row for row in rows if row.get("repair_id") == rid]
+        plans = [row for row in matching if row.get("operation") == "plan"]
+        terminals = [row for row in matching if row.get("operation") in {"complete", "verify-tests"}]
+        if len(plans) != 1 or plans[0].get("request_sha256") != repair.get("plan_version"):
+            return False
+        if repair.get("status") == "complete":
+            if len(terminals) != 1:
+                return False
+            terminal = terminals[0]
+            if repair.get("kind") == "frozen_test":
+                expected = digest_bytes(canonical(verify_request_payload(repair)))
+                if terminal.get("operation") != "verify-tests":
+                    return False
+            else:
+                expected = digest_bytes(canonical(complete_request_payload(
+                    repair, [row.get("path") for row in repair.get("evidence") or []]
+                )))
+                if terminal.get("operation") != "complete":
+                    return False
+            if terminal.get("request_sha256") != expected or terminal.get("result_status") != "complete":
+                return False
+        elif terminals:
+            return False
+    return True
+
+
+def check(root: pathlib.Path, spec_path: pathlib.Path, spec_rel: str, ledger_path: pathlib.Path) -> dict:
+    ledger = read_ledger(ledger_path, digest_bytes(spec_path.read_bytes()))
+    repairs = ledger.get("repairs") or []
+    spec = load_spec(spec_path)
+    config = _config.load(root)
+    approval_reason, approved_hash, _ = approval(root, spec_rel, spec_path)
+    ok = (set(ledger) == {"schema_version", "generation", "spec_hash", "repairs", "history", "updated_at"}
+          and ledger.get("schema_version") == 1 and bool(repairs) and approval_reason is None
+          and ledger.get("spec_hash") == approved_hash == digest_bytes(spec_path.read_bytes())
+          and RFC3339_RE.fullmatch(str(ledger.get("updated_at", ""))) is not None
+          and valid_history(ledger))
+    for item in repairs:
+        expected_plan = digest_bytes(canonical(request_payload(
+            item.get("id"), item.get("kind"), item.get("files") or [], item.get("summary"), item.get("spec_hash")
+        )))
+        baseline = item.get("baseline_entries")
+        if (not valid_repair_schema(root, spec_path, spec_rel, spec, config, item)
+                or item.get("status") != "complete" or not isinstance(baseline, list)
+                or item.get("baseline_worktree_token") != digest_bytes(canonical(baseline))
+                or item.get("plan_version") != expected_plan
+                or item.get("kind") != "frozen_test" and not stored_evidence_valid(root, spec_rel, item)):
+            ok = False
+            break
+    return result("check", "passed" if ok else "blocked", None, 0 if ok else 1, ledger=ledger)
+
+
+def parser() -> argparse.ArgumentParser:
+    p = argparse.ArgumentParser(description=__doc__)
+    p.add_argument("spec", nargs="?")
+    sub = p.add_subparsers(dest="operation")
+    plan_p = sub.add_parser("plan")
+    plan_p.add_argument("--expect-generation", type=int, required=True)
+    plan_p.add_argument("--id", required=True)
+    plan_p.add_argument("--kind", required=True)
+    plan_p.add_argument("--file", action="append", required=True)
+    plan_p.add_argument("--summary")
+    complete_p = sub.add_parser("complete")
+    complete_p.add_argument("--expect-generation", type=int, required=True)
+    complete_p.add_argument("--id", required=True)
+    complete_p.add_argument("--evidence", action="append")
+    verify_p = sub.add_parser("verify-tests")
+    verify_p.add_argument("--expect-generation", type=int, required=True)
+    verify_p.add_argument("--id", required=True)
+    sub.add_parser("check")
+    return p
+
+
+def main(argv: list[str]) -> int:
+    if argv == ["--schema"]:
+        print(json.dumps(schema_for("autonomy"), sort_keys=True, separators=(",", ":")))
+        return 0
+    try:
+        args = parser().parse_args(argv)
+    except SystemExit as exc:
+        if exc.code == 0:
+            return 0
+        return emit(result("invalid", "rejected", "invalid_cli", 2))
+    if not args.spec or not args.operation:
+        return emit(result("invalid", "rejected", "invalid_cli", 2))
+    spec_path = pathlib.Path(args.spec).resolve()
+    root = spec_path.parents[2]
+    try:
+        spec_rel = str(spec_path.relative_to(root))
+        spec = load_spec(spec_path)
+        config = _config.load(root)
+        version, reason, code = _config.autonomy_version(config)
+    except Exception:
+        return emit(result(args.operation, "rejected", "invalid_cli", 2))
+    if reason:
+        return emit(result(args.operation, "rejected", reason, code))
+    if version == 0:
+        return emit(result(args.operation, "rejected", "unsupported_autonomy_version", 1))
+    ledger_path = evidence_dir(spec_path) / "autonomy.json"
+    lock_path = evidence_dir(spec_path) / "autonomy.lock"
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    with lock_path.open("a+") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        try:
+            if args.operation == "plan":
+                payload = plan(root, spec_path, spec_rel, spec, config, ledger_path, args)
+            elif args.operation == "complete":
+                payload = complete(root, spec_path, spec_rel, ledger_path, args)
+            elif args.operation == "verify-tests":
+                payload = verify_tests(root, spec_path, spec_rel, ledger_path, args)
+            else:
+                payload = check(root, spec_path, spec_rel, ledger_path)
+        except (OSError, RuntimeError, ValueError, json.JSONDecodeError) as exc:
+            payload = result(args.operation, "rejected", "invalid_autonomy_state", 1,
+                             expected=getattr(args, "expect_generation", None))
+            payload["detail"] = str(exc)
+    return emit(payload)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv[1:]))

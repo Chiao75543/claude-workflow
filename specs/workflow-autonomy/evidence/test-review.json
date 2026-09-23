@@ -1,0 +1,501 @@
+{
+  "schema_version": 1,
+  "status": "passed",
+  "reason": null,
+  "ok": true,
+  "mechanical_only": false,
+  "at": "2026-09-15T14:06:37+08:00",
+  "tests": 85,
+  "scope_source": "evidence/tests.hash",
+  "reviewed_modes": [
+    "6a",
+    "6b"
+  ],
+  "deferred_smoke": [],
+  "files": {
+    "scripts/gates/tests/fixtures/workflow-autonomy-red-baseline/autonomy": "sha256:338690cbd7ea68a510d94ef4b2a460a7873104b19cc1b43beff144cdd4d7add1",
+    "scripts/gates/tests/fixtures/workflow-autonomy-red-baseline/evidence-check": "sha256:e32643464c9f92d0e935cb7704aed66dae9e100e350946fa19348b9735001ca0",
+    "scripts/gates/tests/spec_workflow_autonomy.py": "sha256:389223f920b6868022dc33154e21fe881b083fd199380ccdcc9286454a776ccd",
+    "scripts/gates/tests/workflow_autonomy_red_baseline.py": "sha256:131801f06ec27318d419632c96e910f7bdf25426510be57ebf01936d1abd70b3"
+  },
+  "tree": "tree:b34816bb63d41d843ca7659cea1a66d2251d0dda",
+  "errors": [],
+  "warnings": [],
+  "agent": {
+    "schema_version": 1,
+    "writer_task_ref": "/root/autonomy_red_writer",
+    "reviewer_task_ref": "/root/freshness_test_reviewer",
+    "completion_ref": "completion:freshness-test-reviewer-s7half-final-20260915T140418+0800",
+    "tree_token": "tree:b34816bb63d41d843ca7659cea1a66d2251d0dda",
+    "created_at": "2026-09-15T14:04:18+08:00",
+    "status": "passed",
+    "before_tests": [
+      {
+        "path": "scripts/gates/tests/fixtures/workflow-autonomy-red-baseline/autonomy",
+        "sha256": "sha256:338690cbd7ea68a510d94ef4b2a460a7873104b19cc1b43beff144cdd4d7add1"
+      },
+      {
+        "path": "scripts/gates/tests/fixtures/workflow-autonomy-red-baseline/evidence-check",
+        "sha256": "sha256:e32643464c9f92d0e935cb7704aed66dae9e100e350946fa19348b9735001ca0"
+      },
+      {
+        "path": "scripts/gates/tests/spec_workflow_autonomy.py",
+        "sha256": "sha256:593eff0f71a7448e4bf5615366d8f7d2e67027dbd6b19e7e00bbc511513c2379"
+      },
+      {
+        "path": "scripts/gates/tests/workflow_autonomy_red_baseline.py",
+        "sha256": "sha256:131801f06ec27318d419632c96e910f7bdf25426510be57ebf01936d1abd70b3"
+      }
+    ],
+    "after_tests": [
+      {
+        "path": "scripts/gates/tests/fixtures/workflow-autonomy-red-baseline/autonomy",
+        "sha256": "sha256:338690cbd7ea68a510d94ef4b2a460a7873104b19cc1b43beff144cdd4d7add1"
+      },
+      {
+        "path": "scripts/gates/tests/fixtures/workflow-autonomy-red-baseline/evidence-check",
+        "sha256": "sha256:e32643464c9f92d0e935cb7704aed66dae9e100e350946fa19348b9735001ca0"
+      },
+      {
+        "path": "scripts/gates/tests/spec_workflow_autonomy.py",
+        "sha256": "sha256:389223f920b6868022dc33154e21fe881b083fd199380ccdcc9286454a776ccd"
+      },
+      {
+        "path": "scripts/gates/tests/workflow_autonomy_red_baseline.py",
+        "sha256": "sha256:131801f06ec27318d419632c96e910f7bdf25426510be57ebf01936d1abd70b3"
+      }
+    ],
+    "assertion_weakened": false,
+    "findings": [],
+    "checked": [
+      "73 個 real CLI guards 均使用隔離 Git repository；71 個已通過，C03 修正後 targeted PASS，Z01 僅待正式 refreeze，0 crash",
+      "E02-E06 在合法 manifest 與 core roots 前置下施加單一 mutation，未再被 missing manifest 提早遮蔽",
+      "12 個 gate 的 canonical schema 精確鎖定 fixed properties、required、nullable、nested items、enum、pattern 與 additionalProperties；baseline mode 接受完整四位 POSIX mode",
+      "C05-C07 以完整 evidence 子樹 snapshot 驗證 written false 與零新增刪除覆寫或型別 mode bytes hash 變化",
+      "合法 seed 逐筆驗證 baseline mode、完整 snapshot、tree token、evidence bytes/hash 與互異的 plan/complete canonical digest",
+      "historical baseline 維持 83 assertion RED 加 2 核准 exemptions，59 scenarios 與 85 examples 未弱化"
+    ]
+  },
+  "before_tests": [
+    {
+      "path": "scripts/gates/tests/fixtures/workflow-autonomy-red-baseline/autonomy",
+      "sha256": "sha256:338690cbd7ea68a510d94ef4b2a460a7873104b19cc1b43beff144cdd4d7add1"
+    },
+    {
+      "path": "scripts/gates/tests/fixtures/workflow-autonomy-red-baseline/evidence-check",
+      "sha256": "sha256:e32643464c9f92d0e935cb7704aed66dae9e100e350946fa19348b9735001ca0"
+    },
+    {
+      "path": "scripts/gates/tests/spec_workflow_autonomy.py",
+      "sha256": "sha256:593eff0f71a7448e4bf5615366d8f7d2e67027dbd6b19e7e00bbc511513c2379"
+    },
+    {
+      "path": "scripts/gates/tests/workflow_autonomy_red_baseline.py",
+      "sha256": "sha256:131801f06ec27318d419632c96e910f7bdf25426510be57ebf01936d1abd70b3"
+    }
+  ],
+  "after_tests": [
+    {
+      "path": "scripts/gates/tests/fixtures/workflow-autonomy-red-baseline/autonomy",
+      "sha256": "sha256:338690cbd7ea68a510d94ef4b2a460a7873104b19cc1b43beff144cdd4d7add1"
+    },
+    {
+      "path": "scripts/gates/tests/fixtures/workflow-autonomy-red-baseline/evidence-check",
+      "sha256": "sha256:e32643464c9f92d0e935cb7704aed66dae9e100e350946fa19348b9735001ca0"
+    },
+    {
+      "path": "scripts/gates/tests/spec_workflow_autonomy.py",
+      "sha256": "sha256:389223f920b6868022dc33154e21fe881b083fd199380ccdcc9286454a776ccd"
+    },
+    {
+      "path": "scripts/gates/tests/workflow_autonomy_red_baseline.py",
+      "sha256": "sha256:131801f06ec27318d419632c96e910f7bdf25426510be57ebf01936d1abd70b3"
+    }
+  ],
+  "assertion_weakened": false,
+  "reviewed_examples": [
+    {
+      "scenario": "SC-001",
+      "examples": [
+        1,
+        2,
+        3,
+        4
+      ]
+    },
+    {
+      "scenario": "SC-002",
+      "examples": [
+        1,
+        2,
+        3,
+        4
+      ]
+    },
+    {
+      "scenario": "SC-003",
+      "examples": [
+        1
+      ]
+    },
+    {
+      "scenario": "SC-004",
+      "examples": [
+        1
+      ]
+    },
+    {
+      "scenario": "SC-005",
+      "examples": [
+        1,
+        2,
+        3,
+        4
+      ]
+    },
+    {
+      "scenario": "SC-006",
+      "examples": [
+        1
+      ]
+    },
+    {
+      "scenario": "SC-007",
+      "examples": [
+        1
+      ]
+    },
+    {
+      "scenario": "SC-008",
+      "examples": [
+        1
+      ]
+    },
+    {
+      "scenario": "SC-009",
+      "examples": [
+        1
+      ]
+    },
+    {
+      "scenario": "SC-010",
+      "examples": [
+        1
+      ]
+    },
+    {
+      "scenario": "SC-011",
+      "examples": [
+        1
+      ]
+    },
+    {
+      "scenario": "SC-012",
+      "examples": [
+        1
+      ]
+    },
+    {
+      "scenario": "SC-013",
+      "examples": [
+        1
+      ]
+    },
+    {
+      "scenario": "SC-014",
+      "examples": [
+        1
+      ]
+    },
+    {
+      "scenario": "SC-015",
+      "examples": [
+        1
+      ]
+    },
+    {
+      "scenario": "SC-016",
+      "examples": [
+        1
+      ]
+    },
+    {
+      "scenario": "SC-017",
+      "examples": [
+        1
+      ]
+    },
+    {
+      "scenario": "SC-018",
+      "examples": [
+        1
+      ]
+    },
+    {
+      "scenario": "SC-019",
+      "examples": [
+        1
+      ]
+    },
+    {
+      "scenario": "SC-020",
+      "examples": [
+        1
+      ]
+    },
+    {
+      "scenario": "SC-021",
+      "examples": [
+        1,
+        2
+      ]
+    },
+    {
+      "scenario": "SC-022",
+      "examples": [
+        1
+      ]
+    },
+    {
+      "scenario": "SC-023",
+      "examples": [
+        1
+      ]
+    },
+    {
+      "scenario": "SC-024",
+      "examples": [
+        1
+      ]
+    },
+    {
+      "scenario": "SC-025",
+      "examples": [
+        1
+      ]
+    },
+    {
+      "scenario": "SC-026",
+      "examples": [
+        1
+      ]
+    },
+    {
+      "scenario": "SC-027",
+      "examples": [
+        1
+      ]
+    },
+    {
+      "scenario": "SC-028",
+      "examples": [
+        1
+      ]
+    },
+    {
+      "scenario": "SC-029",
+      "examples": [
+        1
+      ]
+    },
+    {
+      "scenario": "SC-030",
+      "examples": [
+        1
+      ]
+    },
+    {
+      "scenario": "SC-031",
+      "examples": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6
+      ]
+    },
+    {
+      "scenario": "SC-032",
+      "examples": [
+        1,
+        2
+      ]
+    },
+    {
+      "scenario": "SC-033",
+      "examples": [
+        1
+      ]
+    },
+    {
+      "scenario": "SC-034",
+      "examples": [
+        1,
+        2,
+        3,
+        4
+      ]
+    },
+    {
+      "scenario": "SC-035",
+      "examples": [
+        1
+      ]
+    },
+    {
+      "scenario": "SC-036",
+      "examples": [
+        1
+      ]
+    },
+    {
+      "scenario": "SC-037",
+      "examples": [
+        1
+      ]
+    },
+    {
+      "scenario": "SC-038",
+      "examples": [
+        1
+      ]
+    },
+    {
+      "scenario": "SC-039",
+      "examples": [
+        1
+      ]
+    },
+    {
+      "scenario": "SC-040",
+      "examples": [
+        1,
+        2
+      ]
+    },
+    {
+      "scenario": "SC-041",
+      "examples": [
+        1,
+        2
+      ]
+    },
+    {
+      "scenario": "SC-042",
+      "examples": [
+        1
+      ]
+    },
+    {
+      "scenario": "SC-043",
+      "examples": [
+        1
+      ]
+    },
+    {
+      "scenario": "SC-044",
+      "examples": [
+        1
+      ]
+    },
+    {
+      "scenario": "SC-045",
+      "examples": [
+        1,
+        2
+      ]
+    },
+    {
+      "scenario": "SC-046",
+      "examples": [
+        1
+      ]
+    },
+    {
+      "scenario": "SC-047",
+      "examples": [
+        1,
+        2,
+        3,
+        4
+      ]
+    },
+    {
+      "scenario": "SC-048",
+      "examples": [
+        1
+      ]
+    },
+    {
+      "scenario": "SC-049",
+      "examples": [
+        1
+      ]
+    },
+    {
+      "scenario": "SC-050",
+      "examples": [
+        1
+      ]
+    },
+    {
+      "scenario": "SC-051",
+      "examples": [
+        1
+      ]
+    },
+    {
+      "scenario": "SC-052",
+      "examples": [
+        1
+      ]
+    },
+    {
+      "scenario": "SC-053",
+      "examples": [
+        1
+      ]
+    },
+    {
+      "scenario": "SC-054",
+      "examples": [
+        1,
+        2
+      ]
+    },
+    {
+      "scenario": "SC-055",
+      "examples": [
+        1
+      ]
+    },
+    {
+      "scenario": "SC-056",
+      "examples": [
+        1
+      ]
+    },
+    {
+      "scenario": "SC-057",
+      "examples": [
+        1
+      ]
+    },
+    {
+      "scenario": "SC-058",
+      "examples": [
+        1
+      ]
+    },
+    {
+      "scenario": "SC-059",
+      "examples": [
+        1
+      ]
+    }
+  ],
+  "review_token": "sha256:273f36af0150779bde455d7e5442225f1ad912d4e3749185c91242b3f8281e28",
+  "reviewed_at": "2026-09-15T14:06:37+08:00",
+  "exit_code": 0
+}

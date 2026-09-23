@@ -26,8 +26,12 @@
 from __future__ import annotations
 
 import datetime
+import json
+import os
 import pathlib
 import re
+import signal
+import subprocess
 import sys
 
 sys.path.insert(0, str(pathlib.Path(__file__).parent))
@@ -36,6 +40,8 @@ from _common import (  # noqa: E402
     MANUAL_MODES, RED_MODES, SMOKE_MODES, Findings, evidence_dir, invalid_scenario_modes,
     load_spec, read_json, scenario_ids_for_modes, sha256, write_json,
 )
+from _state import tree_fingerprint  # noqa: E402
+from _workflow_schemas import schema_for  # noqa: E402
 
 DEFAULT_MARKER = "STUB-NOT-IMPLEMENTED"
 
@@ -78,6 +84,185 @@ def parse_swift_testing(raw: str, marker: str) -> dict:
 PARSERS = {"swift-testing": parse_swift_testing}
 
 
+STATIC_MARKER = re.compile(r"^STATIC_ASSERTION:.*$", re.M)
+
+
+def _reuse_committed_frozen_red(
+    root: pathlib.Path, spec_path: pathlib.Path, ev: pathlib.Path, inputs: list[dict], config: dict,
+) -> int | None:
+    """已 commit 且仍對應相同 frozen tests 的 RED 是歷史證據，不在 GREEN 階段重跑覆寫。"""
+    if _config.autonomy_version(config)[0] != 1 or config.get("runner") != "static-command":
+        return None
+    ledger = read_json(ev / "autonomy.json") or {}
+    if any(item.get("kind") == "frozen_test" and item.get("status") == "planned"
+           for item in ledger.get("repairs") or [] if isinstance(item, dict)):
+        return None
+    red_path = ev / "red.json"
+    hash_path = ev / "tests.hash"
+    try:
+        red = read_json(red_path)
+        if not isinstance(red, dict) or red.get("schema_version") != 1 or red.get("status") != "passed":
+            return None
+        if red.get("spec_hash") != sha256(spec_path):
+            return None
+        declared_tests = sorted({str(path) for entry in inputs if isinstance(entry, dict)
+                                 for path in entry.get("tests") or []})
+        frozen: dict[str, str] = {}
+        for line in hash_path.read_text().splitlines():
+            digest, rel = line.split(None, 1)
+            frozen[rel.strip()] = digest
+        if sorted(frozen) != declared_tests:
+            return None
+        if any(not (root / rel).is_file() or (root / rel).is_symlink()
+               or sha256(root / rel) != digest for rel, digest in frozen.items()):
+            return None
+        expected = {
+            (str(check.get("scenario")), int(example))
+            for entry in inputs if isinstance(entry, dict)
+            for check in entry.get("checks") or [] if isinstance(check, dict)
+            for example in check.get("examples") or []
+        }
+        rows = red.get("runner_results") or []
+        actual = {(str(row.get("scenario")), int(row.get("example"))) for row in rows
+                  if isinstance(row, dict) and row.get("red_valid") is True}
+        if not expected or actual != expected:
+            return None
+        for row in rows:
+            if not isinstance(row, dict) or row.get("failure_class") not in {"assertion", "stub_sentinel", "exempt"}:
+                return None
+            for key in ("stdout_path", "stderr_path"):
+                path = root / str(row.get(key, ""))
+                if not path.is_file() or path.is_symlink():
+                    return None
+                rel = path.relative_to(root).as_posix()
+                committed = subprocess.run(["git", "show", f"HEAD:{rel}"], cwd=root, capture_output=True)
+                expected_hash = row.get(key.replace("_path", "_sha256"))
+                if (committed.returncode != 0 or committed.stdout != path.read_bytes()
+                        or expected_hash is not None and expected_hash != sha256(path)):
+                    print(json.dumps({"status": "rejected", "reason": "stale_red_evidence",
+                                      "exit_code": 1, "gate_exit_code": 1}, ensure_ascii=False, sort_keys=True,
+                                     separators=(",", ":")))
+                    return 1
+        for path in (red_path, hash_path):
+            rel = path.relative_to(root).as_posix()
+            committed = subprocess.run(["git", "show", f"HEAD:{rel}"], cwd=root, capture_output=True)
+            if committed.returncode != 0 or committed.stdout != path.read_bytes():
+                return None
+    except (OSError, ValueError, TypeError, AttributeError):
+        return None
+    print(json.dumps({"status": "passed", "reason": None, "gate_exit_code": 0,
+                      "reused_frozen_red": True}, ensure_ascii=False, sort_keys=True))
+    return 0
+
+
+def _static_schema(spec: dict, entry: dict) -> tuple[list[tuple[str, int]], str | None, bool]:
+    """Validate one static-command declaration.
+
+    Returns (declared checks, error reason, missing example coverage).  A missing
+    approved example is a contract failure (exit 1); malformed or ambiguous
+    declarations are CLI/schema errors (exit 2).
+    """
+    argv = entry.get("argv")
+    timeout = entry.get("timeout_seconds")
+    tests = entry.get("tests")
+    checks = entry.get("checks")
+    if (not isinstance(argv, list) or not argv
+            or any(not isinstance(item, str) or not item for item in argv)
+            or isinstance(timeout, bool) or not isinstance(timeout, int) or timeout <= 0
+            or not isinstance(tests, list) or not tests
+            or any(not isinstance(item, str) or not item for item in tests)
+            or not isinstance(checks, list) or not checks):
+        return [], "invalid_static_schema", False
+
+    approved = {
+        str(sc.get("id")): set(range(1, len(sc.get("examples") or []) + 1))
+        for req in (spec.get("requirements") or []) if isinstance(req, dict)
+        for sc in (req.get("scenarios") or []) if isinstance(sc, dict) and sc.get("id")
+    }
+    seen_scenarios: set[str] = set()
+    declared: list[tuple[str, int]] = []
+    missing = False
+    for check in checks:
+        if not isinstance(check, dict):
+            return [], "invalid_static_schema", False
+        sid = check.get("scenario")
+        examples = check.get("examples")
+        if (not isinstance(sid, str) or sid not in approved or sid in seen_scenarios
+                or not isinstance(examples, list) or not examples):
+            return [], "invalid_static_schema", False
+        seen_scenarios.add(sid)
+        if (any(isinstance(index, bool) or not isinstance(index, int) or index <= 0 for index in examples)
+                or len(set(examples)) != len(examples)
+                or any(index not in approved[sid] for index in examples)):
+            return [], "invalid_static_schema", False
+        if set(examples) != approved[sid]:
+            missing = True
+        declared.extend((sid, index) for index in examples)
+    if set(approved) != seen_scenarios:
+        missing = True
+    return declared, None, missing
+
+
+def _run_static(root: pathlib.Path, ev: pathlib.Path, entry: dict, position: int) -> dict:
+    """Run argv without a shell and terminate the whole process group on timeout."""
+    argv = entry["argv"]
+    timeout = entry["timeout_seconds"]
+    started = datetime.datetime.now().astimezone()
+    timed_out = False
+    stdout_raw = b""
+    stderr_raw = b""
+    exit_code: int | None = None
+    proc = subprocess.Popen(
+        argv, cwd=root, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        start_new_session=True,
+    )
+    try:
+        stdout_raw, stderr_raw = proc.communicate(timeout=timeout)
+        exit_code = proc.returncode
+    except subprocess.TimeoutExpired as exc:
+        timed_out = True
+        stdout_raw = exc.stdout or b""
+        stderr_raw = exc.stderr or b""
+        try:
+            os.killpg(proc.pid, signal.SIGTERM)
+        except ProcessLookupError:
+            pass
+        try:
+            tail_out, tail_err = proc.communicate(timeout=1)
+        except subprocess.TimeoutExpired:
+            try:
+                os.killpg(proc.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            tail_out, tail_err = proc.communicate()
+        stdout_raw += tail_out or b""
+        stderr_raw += tail_err or b""
+        exit_code = proc.returncode
+    finished = datetime.datetime.now().astimezone()
+    ev_root = ev if ev.is_absolute() else root / ev
+    raw_dir = ev_root / "static-red"
+    raw_dir.mkdir(parents=True, exist_ok=True)
+    stem = f"entry-{position:03d}"
+    stdout_path = raw_dir / f"{stem}.stdout.log"
+    stderr_path = raw_dir / f"{stem}.stderr.log"
+    stdout_path.write_bytes(stdout_raw)
+    stderr_path.write_bytes(stderr_raw)
+    stdout = stdout_raw.decode(errors="replace")
+    stderr = stderr_raw.decode(errors="replace")
+    return {
+        "argv": argv,
+        "timeout_seconds": timeout,
+        "exit_code": exit_code,
+        "timed_out": timed_out,
+        "stdout": stdout,
+        "stderr": stderr,
+        "stdout_path": str(stdout_path.relative_to(root)),
+        "stderr_path": str(stderr_path.relative_to(root)),
+        "started_at": started.isoformat(timespec="seconds"),
+        "finished_at": finished.isoformat(timespec="seconds"),
+    }
+
+
 # ---------------------------------------------------------------- main
 
 # 從原始碼把每條測試的**名字**也抓出來,才能指名哪一條沒跑完(hang),
@@ -106,6 +291,15 @@ def count_declared(root: pathlib.Path, test_files: list[str], runner: str) -> tu
 
 
 def main(argv: list[str]) -> int:
+    if argv == ["--help"]:
+        print(__doc__)
+        return 0
+    if argv == ["--schema"]:
+        print(json.dumps(schema_for("red-capture"), sort_keys=True, separators=(",", ":")))
+        return 0
+    if any(arg.startswith("-") and arg != "--marker" for arg in argv):
+        print(json.dumps({"status": "rejected", "reason": "invalid_cli", "exit_code": 2}, sort_keys=True, separators=(",", ":")))
+        return 2
     args = [a for a in argv if not a.startswith("--")]
     marker = DEFAULT_MARKER
     for i, a in enumerate(argv):
@@ -120,14 +314,15 @@ def main(argv: list[str]) -> int:
     spec = load_spec(spec_path)
     config = _config.load(root)
     runner = config["runner"]
-    parser = PARSERS.get(runner)
-    if parser is None:
-        sys.exit(f"✘ 沒有 {runner!r} 的輸出解析器。已支援: {', '.join(sorted(PARSERS))}")
+    legacy_v0 = _config.autonomy_version(config)[0] == 0
 
     ev = evidence_dir(spec_path)
     inputs = read_json(ev / "red-inputs.json")
     if not inputs:
         sys.exit(f"✘ 缺少 {ev / 'red-inputs.json'} —— 需要各層的測試輸出清單")
+    reuse = _reuse_committed_frozen_red(root, spec_path.resolve(), ev.resolve(), inputs, config)
+    if reuse is not None:
+        return reuse
 
     # 書面豁免:純值型別之類沒有縫可以 stub 的測試
     exemptions = {
@@ -137,13 +332,97 @@ def main(argv: list[str]) -> int:
     }
 
     f = Findings()
-    tests, recon = [], []
+    tests, recon, runner_results = [], [], []
+    schema_error: str | None = None
+    contract_reason: str | None = None
+    snapshot = tree_fingerprint(root)
 
     for sid, mode in invalid_scenario_modes(spec):
         f.error(sid, f"未知或缺少 mode {mode!r} —— 不能靜默略過 RED 證據")
 
-    for entry in inputs:
+    for position, entry in enumerate(inputs, 1):
         layer = entry.get("layer", "?")
+        effective_runner = entry.get("runner", runner)
+        if effective_runner == "static-command":
+            declared_checks, invalid_reason, missing_checks = _static_schema(spec, entry)
+            if invalid_reason:
+                schema_error = invalid_reason
+                f.error(layer, "static-command 的 argv/timeout/tests/checks schema 無效")
+                continue
+            if missing_checks:
+                contract_reason = "missing_example_check"
+                f.error(layer, "checks 沒有逐一涵蓋所有核准 Scenario/example")
+                continue
+            missing_files = [rel for rel in entry["tests"] if not (root / rel).is_file()]
+            if missing_files:
+                schema_error = "invalid_static_schema"
+                for rel in missing_files:
+                    f.error(layer, f"red-inputs 列的測試檔不存在: {rel}")
+                continue
+            try:
+                result = _run_static(root, ev, entry, position)
+            except OSError as exc:
+                result = {
+                    "argv": entry["argv"], "timeout_seconds": entry["timeout_seconds"],
+                    "exit_code": None, "timed_out": False, "stdout": "", "stderr": str(exc),
+                    "stdout_path": None, "stderr_path": None,
+                    "started_at": datetime.datetime.now().astimezone().isoformat(timespec="seconds"),
+                    "finished_at": datetime.datetime.now().astimezone().isoformat(timespec="seconds"),
+                }
+            marker_lines = STATIC_MARKER.findall(result["stdout"] + "\n" + result["stderr"])
+            mapped: dict[tuple[str, int], list[str]] = {item: [] for item in declared_checks}
+            for line in marker_lines:
+                match = re.match(r"STATIC_ASSERTION:\s*(SC-\d+[a-z]?)\s+example\s+#(\d+)\b", line)
+                key = (match.group(1), int(match.group(2))) if match else None
+                if key in mapped:
+                    mapped[key].append(line)
+                elif len(declared_checks) == 1:
+                    mapped[declared_checks[0]].append(line)
+            for sid, example in declared_checks:
+                if result["timed_out"]:
+                    klass, red_valid = "hang", False
+                elif sid in exemptions and not mapped[(sid, example)]:
+                    # A batched checker exits 1 when any sibling example is RED;
+                    # an approved example with no assertion marker is still the
+                    # explicitly documented pre-implementation GREEN exemption.
+                    klass, red_valid = "exempt", True
+                elif result["exit_code"] == 0:
+                    klass, red_valid = "passed", False
+                elif result["exit_code"] == 1 and mapped[(sid, example)]:
+                    klass, red_valid = "assertion", True
+                else:
+                    klass, red_valid = "error", False
+                if klass == "exempt":
+                    f.warn(f"{layer} / {sid}",
+                           f"實作前就綠,靠書面豁免通過:{str(exemptions[sid])[:60]}")
+                elif not red_valid:
+                    f.error(f"{layer} / {sid}#{example}", f"failure_class = {klass}")
+                row = {
+                    "schema_version": 1, "layer": layer, "scenario": sid, "example": example,
+                    "argv": result["argv"], "timeout_seconds": result["timeout_seconds"],
+                    "exit_code": result["exit_code"], "stdout_path": result["stdout_path"],
+                    "stderr_path": result["stderr_path"], "failure_class": klass,
+                    "marker_lines": mapped[(sid, example)], "red_valid": red_valid,
+                    "started_at": result["started_at"], "finished_at": result["finished_at"],
+                    "tree_token": snapshot,
+                }
+                runner_results.append(row)
+                tests.append({
+                    "layer": layer, "scenario": sid, "test": f"{sid} example #{example}",
+                    "failure_class": klass, "message": (mapped[(sid, example)] or [None])[0],
+                })
+            recon.append({
+                "layer": layer, "declared_in_source": len(declared_checks),
+                "reported_by_runner": len(declared_checks), "started": len(declared_checks),
+                "reconciled": True,
+            })
+            continue
+
+        parser = PARSERS.get(effective_runner)
+        if parser is None:
+            schema_error = "invalid_static_schema"
+            f.error(layer, f"沒有 {effective_runner!r} 的輸出解析器")
+            continue
         out_path = pathlib.Path(entry["output"])
         if not out_path.exists():
             f.error(layer, f"找不到測試輸出 {out_path}")
@@ -151,7 +430,7 @@ def main(argv: list[str]) -> int:
         raw = out_path.read_text(errors="ignore")
         parsed = parser(raw, marker)
 
-        declared, declared_names, missing_files = count_declared(root, entry.get("tests", []), runner)
+        declared, declared_names, missing_files = count_declared(root, entry.get("tests", []), effective_runner)
         for rel in missing_files:
             f.error(layer, f"red-inputs 列的測試檔不存在: {rel} —— 宣告數會被算成 0,對帳形同虛設")
         if not entry.get("tests"):
@@ -201,11 +480,18 @@ def main(argv: list[str]) -> int:
                             "實作前就是綠的 —— 空測試。真有理由請在規格該條寫 red_exempt_reason")
             elif klass in BLOCKING:
                 f.error(f"{layer} / {sid or name[:32]}", f"failure_class = {klass}")
-            tests.append({
+            test_row = {
                 "layer": layer, "scenario": sid, "test": name,
                 "failure_class": klass,
                 "message": (parsed["issues"].get(name) or "")[:160] or None,
-            })
+            }
+            if not legacy_v0:
+                test_row.update({
+                    "red_valid": klass in {"assertion", "stub_sentinel", "exempt"},
+                    "legacy_parser_used": True,
+                    "behavior_preserved": True,
+                })
+            tests.append(test_row)
 
     from collections import Counter
     counts = Counter(t["failure_class"] for t in tests)
@@ -215,19 +501,42 @@ def main(argv: list[str]) -> int:
     manual = sorted(scenario_ids_for_modes(spec, MANUAL_MODES))
     missing = sorted(red_required - covered)
 
-    write_json(ev / "red.json", {
-        "spec_hash": sha256(spec_path),
-        "captured_at": datetime.datetime.now().astimezone().isoformat(timespec="seconds"),
-        "runner": runner,
-        "marker": marker,
-        "exemptions": exemptions,
-        "required_modes": sorted(RED_MODES),
-        "deferred_smoke": deferred_smoke,
-        "manual": manual,
-        "reconciliation": recon,
-        "counts": dict(counts),
-        "tests": tests,
-    })
+    status = "rejected" if schema_error else ("failed" if f.errors else "passed")
+    reason = schema_error or contract_reason
+    if legacy_v0:
+        # v0 的落盤格式也是公開契約；保持核准快照的鍵、順序與時間欄位。
+        payload = {
+            "spec_hash": sha256(spec_path),
+            "captured_at": datetime.datetime.now().astimezone().isoformat(timespec="seconds"),
+            "runner": runner,
+            "marker": marker,
+            "exemptions": exemptions,
+            "required_modes": sorted(RED_MODES),
+            "deferred_smoke": deferred_smoke,
+            "manual": manual,
+            "reconciliation": recon,
+            "counts": dict(counts),
+            "tests": tests,
+        }
+    else:
+        payload = {
+            "schema_version": 1,
+            "spec_hash": sha256(spec_path),
+            "generated_at": datetime.datetime.now().astimezone().isoformat(timespec="seconds"),
+            "runner": runner,
+            "marker": marker,
+            "exemptions": exemptions,
+            "required_modes": sorted(RED_MODES),
+            "deferred_smoke": deferred_smoke,
+            "manual": manual,
+            "reconciliation": recon,
+            "counts": dict(counts),
+            "tests": tests,
+            "runner_results": runner_results,
+            "status": status,
+            "reason": reason,
+        }
+    write_json(ev / "red.json", payload)
 
     print("  " + " · ".join(f"{k} {v}" for k, v in counts.most_common()))
     for r in recon:
@@ -241,7 +550,23 @@ def main(argv: list[str]) -> int:
     if deferred_smoke:
         f.warn("延後驗證", f"{', '.join(deferred_smoke)} 是 6c,RED 階段不要求 @Test；S9b smoke 必須逐條交實跑證據")
     print(f"  → {ev / 'red.json'}")
-    return f.report("red-capture")
+    if schema_error:
+        print(json.dumps({"status": "rejected", "reason": schema_error, "gate_exit_code": 2}, ensure_ascii=False))
+        f.report("red-capture")
+        return 2
+    code = f.report("red-capture")
+    if contract_reason:
+        print(json.dumps({"status": "failed", "reason": contract_reason, "gate_exit_code": 1}, ensure_ascii=False))
+        return 1
+    if not legacy_v0:
+        summary = {"status": status, "reason": reason, "gate_exit_code": code}
+        if len(runner_results) == 1:
+            summary.update({
+                "failure_class": runner_results[0]["failure_class"],
+                "red_valid": runner_results[0]["red_valid"],
+            })
+        print(json.dumps(summary, ensure_ascii=False, sort_keys=True, separators=(",", ":")))
+    return code
 
 
 if __name__ == "__main__":

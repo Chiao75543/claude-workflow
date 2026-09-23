@@ -19,6 +19,7 @@ tags: [workflow, init, config]
 
 | 組 | 問題 | 鍵 |
 |---|---|---|
+| 自治契約 | 是否啟用可稽核的 repair/status/delivery v1？新接入建議 `version: 1`；既有專案保留 0 | `autonomy.version` |
 | 技術棧 | 測試框架是哪個?(swift-testing / junit / pytest / jest …;決定 `red-capture` 解析器)| `runner` |
 | | 測試檔在哪些路徑?| `tests.globs` |
 | | 測試怎麼標 Scenario 編號?(預設:測試描述字串以 `SC-nnn` 開頭)| `tests.scenario_pattern` |
@@ -37,6 +38,8 @@ tags: [workflow, init, config]
 **注意**
 
 - **沒填的鍵會讓對應關卡失敗,不是跳過。** 所以問卷不能跳過 `test` / `lint` / `smoke`。
+- `autonomy` 缺少或 `version: 0` 會完整走舊流程；只有明列 `version: 1` 才能使用
+  `autonomy`、CAS status 與 manifest delivery 契約。
 - `ci: none` 是合法答案。`ci: github|gitlab` 時要**另外問**要不要把 `templates/ci/` 的範本裝進專案 ——
   改 CI 是人確認的事,不隨問卷自動做。
 - 答錯了之後任何時候改 `specs/pipeline.yaml` 就好,不用重跑問卷。

@@ -13,6 +13,11 @@ tags: [workflow, test, tdd]
 然後 **S7½**:`scripts/gates/test-review --mechanical-only` → 派 `test-reviewer`(opus)→
 `test-review` 全過 → 才凍結。
 
+若要修改已凍結測試，先用 `autonomy ... plan --kind frozen_test` 登記；依序保存
+`review-dispatch.json`、獨立 reviewer 的 `test-review.agent.json`（含 before/after hash 與
+`assertion_weakened`）、重新擷取 RED、跑完整 `test-review`，最後才以其 review token 執行
+`freeze-check <spec> --replace-tests-hash <token>`，再用 `autonomy ... verify-tests` 結案。
+
 **注意**
 
 - **stub 必須回傳「沒有任何 Scenario 預期的東西」** —— 回 `[]` 或靜默成功
@@ -24,3 +29,4 @@ tags: [workflow, test, tdd]
 - mode 6a/6b 在這裡交 RED 與凍結證據；6c 明列延後到 S9b,不寫假的 `@Test`；6d 只列人工理由。
 - 未知或缺少 mode 一律擋,不能因為不屬於目前階段就靜默略過。
 - **凍結錯的測試比沒凍結更糟** —— 審出問題退回改測試,而且要重新擷取 RED。
+- 不得只重打 `tests.hash`；缺 dispatch、同一 actor、舊 token、弱化斷言或 stale RED 都維持 planned。

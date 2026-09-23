@@ -13,13 +13,13 @@ S5  ⏸ 你批准說明頁    白話 + 分歧選擇題 + N/A 主張 + 碰撞警�
 S6  定稿凍結          spec-lint + 反向回譯 + hash
 S7  測試 RED          stub-first → 格式化 → red-capture
 S7½ 審測試            test-review + test-reviewer(opus)→ 才凍結
-S8  實作 GREEN        green-writer(opus):只做 examples 涵蓋的事
+S8  實作 GREEN        autonomy plan/complete/check + green-writer(opus):只做 examples 涵蓋的事
 S9a 腳本關卡 G0–G7
 S9b smoke             真的入口跑一次;沒過不派審查
 S9c 付費審查 G9/G10   四類分流:must_fix / ask_user / overbuilt / style;loop 腳本數次數
 S9d pre-commit 證據表  候選快照已 stage 才能 commit;絕不自動推
 S10 commit
-S10½ delivery 證據表   批准快照已 commit 且乾淨才可推
+S10½ delivery 證據表   manifest/status/index/HEAD byte-exact，批准快照已 commit 才可推
 S11 自動推 + 開 PR    證據表貼成留言;有「需要你決定」才叫你
 S12 CI 獨立重跑       ci: none 就跳過;紅了 orchestrator 自己拉 log 修
 S13 ⏸ 你按 merge
@@ -53,6 +53,13 @@ S13 ⏸ 你按 merge
 腳本關卡 G0–G7 幾乎不花錢 → smoke 用真的入口跑一次 → **兩者都過才啟動**付費審查 G9/G10。
 功能不對,其他免談。
 
+G9/G10 完成後以 `findings <spec> dispatched --gate G9|G10 --status completed` 留證；平台拒絕則
+保存 `--status denied` 並停止，不得改道重派。dashboard 寫自身 artifact 前用
+`evidence-check <spec> --index|--commit --pre-dashboard` 驗其餘 roots，寫完後仍跑一般完整驗證。
+
 ## 完整規範
 
 **`SKILL.md` 是唯一的規範來源。** 這份只是入口,不是鏡像。
+
+`specs/pipeline.yaml` 缺少 `autonomy` 或為 `version: 0` 時完整保留舊九命令行為；只有 version 1
+啟用 ledger CAS、static runner、嚴格 CLI/schema 與 delivery manifest verifier。

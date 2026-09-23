@@ -56,6 +56,19 @@ DEFAULTS = {
     "assert_pattern": r"#expect\(|#require\(|XCTAssert|assert(?:Equals|True|False|That|Throws)?\(|expect\(",
 }
 
+
+def autonomy_version(config: dict) -> tuple[int | None, str | None, int]:
+    """Return (effective version, rejection reason, exit code)."""
+    value = config.get("autonomy", {"version": 0})
+    if value is None or not isinstance(value, dict):
+        return None, "invalid_autonomy_schema", 2
+    version = value.get("version", 0)
+    if isinstance(version, bool) or not isinstance(version, int):
+        return None, "invalid_autonomy_schema", 2
+    if version not in (0, 1):
+        return version, "unsupported_autonomy_version", 1
+    return version, None, 0
+
 # 沒填就跑不了 pipeline 的鍵。/workflow:init 問卷與 config-check 都看這份。
 REQUIRED = ["runner", "lint", "test", "smoke"]
 PLACEHOLDER = re.compile(r"\{[A-Z_]+\}")

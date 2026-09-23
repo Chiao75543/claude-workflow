@@ -12,14 +12,208 @@
 from __future__ import annotations
 
 import datetime
+import fcntl
+import hashlib
+import json
+import os
 import pathlib
+import subprocess
 import sys
+import tempfile
 
 sys.path.insert(0, str(pathlib.Path(__file__).parent))
+import _config  # noqa: E402
 from _common import evidence_dir, in_flight_specs, read_json, repo_root, sibling_worktrees, write_json  # noqa: E402
+from _workflow_schemas import schema_for  # noqa: E402
+
+PIPELINE_STATES = {"running", "waiting", "blocked", "complete"}
+BLOCKERS = {"owner", "permission", "platform", "gate"}
+DELIVERY_STATES = {"local", "committed", "pr_open", "merged"}
+REPORT_STATES = {"pending", "sent", "denied"}
+
+
+def _sha(payload: bytes) -> str:
+    return "sha256:" + hashlib.sha256(payload).hexdigest()
+
+
+def _materialize_delivery_manifest(root: pathlib.Path, spec_path: pathlib.Path) -> None:
+    """runs owns delivery preparation; evidence-check remains a read-only verifier."""
+    ev = evidence_dir(spec_path)
+    path = ev / "delivery.json"
+    if path.exists():
+        return
+    candidates = [
+        (spec_path.relative_to(root).as_posix(), "spec"),
+        ((ev / "spec.approved.yaml").relative_to(root).as_posix(), "approval"),
+        ((ev / "approval.json").relative_to(root).as_posix(), "approval"),
+        ((ev / "spec.hash").relative_to(root).as_posix(), "freeze"),
+        ((ev / "tests.hash").relative_to(root).as_posix(), "freeze"),
+        ((ev / "red.json").relative_to(root).as_posix(), "red"),
+        ((ev / "test-review.json").relative_to(root).as_posix(), "review"),
+    ]
+    for name, source in (("smoke.json", "smoke"), ("findings.json", "finding"),
+                         ("autonomy.json", "autonomy")):
+        if (ev / name).is_file():
+            candidates.append(((ev / name).relative_to(root).as_posix(), source))
+    red = read_json(ev / "red.json") or {}
+    for row in red.get("runner_results") or []:
+        if not isinstance(row, dict):
+            continue
+        for key in ("stdout_path", "stderr_path"):
+            rel = row.get(key)
+            if isinstance(rel, str):
+                candidates.append((rel, "red"))
+    files, seen = [], set()
+    for rel, source in candidates:
+        target = root / rel
+        if rel in seen or not target.is_file() or target.is_symlink():
+            continue
+        seen.add(rel)
+        files.append({"path": rel, "sha256": _sha(target.read_bytes()), "source": source})
+    head = subprocess.run(["git", "rev-parse", "HEAD"], cwd=root, capture_output=True,
+                          text=True, check=True).stdout.strip()
+    tree = subprocess.run(["git", "rev-parse", "HEAD^{tree}"], cwd=root, capture_output=True,
+                          text=True, check=True).stdout.strip()
+    _atomic(path, {"schema_version": 1, "spec_hash": _sha(spec_path.read_bytes()),
+                   "approval_commit": head, "approval_tree": tree,
+                   "files": sorted(files, key=lambda row: row["path"])})
+
+
+def _flag(argv: list[str], name: str) -> str | None:
+    if name not in argv:
+        return None
+    index = argv.index(name)
+    return argv[index + 1] if index + 1 < len(argv) else None
+
+
+def _status_default() -> dict:
+    return {"schema_version": 0, "generation": 0, "pipeline_state": "waiting", "stage": None,
+            "next_step": None, "blocked_on": None,
+            "delivery": {"state": "local", "ref": None, "validation": None},
+            "report": {"state": "pending", "reason": None}, "updated_at": None}
+
+
+def _emit(record: dict, status: str, reason: str | None, code: int, expected: int,
+          written: bool) -> int:
+    payload = dict(record)
+    payload.update({"status": status, "reason": reason, "exit_code": code, "written": written,
+                    "expected_generation": expected, "actual_generation": record["generation"],
+                    "owner_merge_required": record.get("delivery", {}).get("state") in {"pr_open", "merged"},
+                    "retry_via_other_channel": False})
+    print(json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")))
+    return code
+
+
+def _atomic(path: pathlib.Path, payload: dict) -> None:
+    fd, name = tempfile.mkstemp(prefix=path.name + ".", dir=path.parent)
+    try:
+        with os.fdopen(fd, "w") as handle:
+            json.dump(payload, handle, ensure_ascii=False, indent=2)
+            handle.write("\n")
+        os.replace(name, path)
+    finally:
+        if os.path.exists(name):
+            os.unlink(name)
+
+
+def set_status_v1(argv: list[str]) -> int:
+    spec_path = pathlib.Path(argv[0]).resolve()
+    root = spec_path.parents[2]
+    path = evidence_dir(spec_path) / "status.json"
+    expected_raw = _flag(argv, "--expect-generation")
+    try:
+        expected = int(expected_raw) if expected_raw is not None else -1
+    except ValueError:
+        expected = -1
+    path.parent.mkdir(parents=True, exist_ok=True)
+    lock_path = path.with_suffix(".lock")
+    with lock_path.open("a+") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        stored = read_json(path)
+        record = stored if isinstance(stored, dict) and stored.get("schema_version") == 1 else _status_default()
+        if expected < 0:
+            return _emit(record, "rejected", "invalid_status_schema", 2, expected, False)
+        if record["generation"] != expected:
+            return _emit(record, "conflict", None, 1, expected, False)
+        new = json.loads(json.dumps(record))
+        state = _flag(argv, "--pipeline-state")
+        stage = _flag(argv, "--stage")
+        next_step = _flag(argv, "--next-step")
+        blocked = _flag(argv, "--blocked-on")
+        delivery_state = _flag(argv, "--delivery-state")
+        delivery_ref = _flag(argv, "--delivery-ref")
+        report_state = _flag(argv, "--report-state")
+        report_reason = _flag(argv, "--report-reason")
+        token = _flag(argv, "--committed-evidence-token")
+        known = {"--expect-generation", "--pipeline-state", "--stage", "--next-step", "--blocked-on",
+                 "--delivery-state", "--delivery-ref", "--report-state", "--report-reason",
+                 "--committed-evidence-token"}
+        if not any(flag in argv for flag in known - {"--expect-generation"}):
+            return _emit(record, "rejected", "invalid_status_schema", 2, expected, False)
+        if state is not None:
+            new["pipeline_state"] = state
+        if stage is not None:
+            new["stage"] = stage
+        if next_step is not None:
+            new["next_step"] = next_step
+        if blocked is not None:
+            new["blocked_on"] = blocked
+        if delivery_state is not None:
+            new["delivery"]["state"] = delivery_state
+            new["delivery"]["ref"] = delivery_ref
+        elif delivery_ref is not None:
+            new["delivery"]["ref"] = delivery_ref
+        if report_state is not None:
+            new["report"]["state"] = report_state
+        if report_reason is not None:
+            new["report"]["reason"] = report_reason
+        valid_stage = new["stage"] is None or (isinstance(new["stage"], str)
+                                                and new["stage"] in {f"S{i}" for i in range(11)})
+        valid_next = new["next_step"] is None or (isinstance(new["next_step"], str)
+                                                   and new["next_step"].strip()
+                                                   and "\n" not in new["next_step"])
+        valid = (new["pipeline_state"] in PIPELINE_STATES and valid_stage and valid_next
+                 and new["blocked_on"] in ({None} | BLOCKERS)
+                 and new["delivery"]["state"] in DELIVERY_STATES
+                 and new["report"]["state"] in REPORT_STATES)
+        ds = new["delivery"]["state"]
+        if ds == "pr_open" and (not isinstance(new["delivery"].get("ref"), str)
+                                or not new["delivery"]["ref"].startswith(("http://", "https://"))):
+            valid = False
+        if ds == "merged" and (not isinstance(new["delivery"].get("ref"), str)
+                               or not new["delivery"]["ref"].strip()):
+            valid = False
+        if new["report"]["state"] == "denied" and not new["report"].get("reason"):
+            valid = False
+        if not valid:
+            return _emit(record, "rejected", "invalid_status_schema", 2, expected, False)
+        if ds in {"committed", "pr_open"}:
+            if not token:
+                return _emit(record, "rejected", "invalid_status_schema", 2, expected, False)
+            proc = subprocess.run([str(root / "scripts/gates/evidence-check"), str(spec_path), "--commit"],
+                                  cwd=root, capture_output=True, text=True)
+            checked = None
+            for line in reversed(proc.stdout.splitlines()):
+                try:
+                    checked = json.loads(line)
+                    break
+                except json.JSONDecodeError:
+                    continue
+            if proc.returncode != 0 or not isinstance(checked, dict) or checked.get("token") != token:
+                return _emit(record, "rejected", "committed_evidence_mismatch", 1, expected, False)
+            new["delivery"]["validation"] = {"snapshot": checked.get("snapshot"), "token": token}
+        new["schema_version"] = 1
+        new["generation"] = expected + 1
+        new["updated_at"] = datetime.datetime.now().astimezone().isoformat(timespec="seconds")
+        _atomic(path, new)
+        if ds == "local":
+            _materialize_delivery_manifest(root, spec_path)
+        return _emit(new, "updated", None, 0, expected, True)
 
 
 def set_status(argv: list[str]) -> int:
+    if "--expect-generation" in argv:
+        return set_status_v1(argv)
     if len(argv) < 3:
         print(__doc__)
         return 2
@@ -69,10 +263,51 @@ def show_yield(root: pathlib.Path) -> int:
 
 
 def main(argv: list[str]) -> int:
+    if argv == ["--help"]:
+        print(__doc__)
+        return 0
+    if argv == ["--schema"]:
+        print(json.dumps(schema_for("runs"), sort_keys=True, separators=(",", ":")))
+        return 0
+    if argv and argv[0].startswith("-") and argv[0] not in {"--yield", "--set"}:
+        print(json.dumps({"status": "rejected", "reason": "invalid_cli", "exit_code": 2}, sort_keys=True, separators=(",", ":")))
+        return 2
     if argv and argv[0] == "--yield":
         return show_yield(repo_root())
     if argv and argv[0] == "--set":
-        return set_status(argv[1:])
+        nested = argv[1:]
+        if not nested:
+            print(json.dumps({"status": "rejected", "reason": "invalid_cli", "exit_code": 2}, sort_keys=True, separators=(",", ":")))
+            return 2
+        known = {"--expect-generation", "--pipeline-state", "--stage", "--next-step", "--blocked-on",
+                 "--delivery-state", "--delivery-ref", "--report-state", "--report-reason",
+                 "--committed-evidence-token"}
+        # Every v1 flag is a value pair.  Reject the complete argv before a
+        # lock or evidence directory is created.
+        if "--expect-generation" in nested:
+            pairs = nested[1:]
+            if (not pairs or len(pairs) % 2 != 0
+                    or any(pairs[index] not in known for index in range(0, len(pairs), 2))
+                    or len({pairs[index] for index in range(0, len(pairs), 2)}) != len(pairs) // 2
+                    or any(pairs[index].startswith("--") for index in range(1, len(pairs), 2))):
+                print(json.dumps({"status": "rejected", "reason": "invalid_cli", "written": False,
+                                  "exit_code": 2}, sort_keys=True, separators=(",", ":")))
+                return 2
+            try:
+                spec_path = pathlib.Path(nested[0]).resolve()
+                version, _, _ = _config.autonomy_version(_config.load(spec_path.parents[2]))
+            except Exception:
+                version = 0
+            if version != 1:
+                print(json.dumps({"status": "rejected", "reason": "invalid_cli", "written": False,
+                                  "exit_code": 2}, sort_keys=True, separators=(",", ":")))
+                return 2
+            if (_flag(nested, "--delivery-state") == "merged"
+                    and not (_flag(nested, "--delivery-ref") or "").strip()):
+                print(json.dumps({"status": "rejected", "reason": "invalid_status_schema", "written": False,
+                                  "exit_code": 2}, sort_keys=True, separators=(",", ":")))
+                return 2
+        return set_status(nested)
 
     root = repo_root()
     rows = []

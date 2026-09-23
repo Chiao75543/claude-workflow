@@ -41,6 +41,16 @@ tools: Read, Grep, Glob
 
 ```json
 {
+  "schema_version": 1,
+  "status": "passed",
+  "writer_task_ref": "task:writer-001",
+  "reviewer_task_ref": "task:reviewer-002",
+  "completion_ref": "completion:review-001",
+  "tree_token": "tree:<40 hex>",
+  "created_at": "2026-09-15T00:00:00+08:00",
+  "before_tests": [{"path": "Tests/FeatureTests.swift", "sha256": "sha256:<64 hex>"}],
+  "after_tests": [{"path": "Tests/FeatureTests.swift", "sha256": "sha256:<64 hex>"}],
+  "assertion_weakened": false,
   "findings": [
     {"test": "FavoritesUseCaseTests.swift · SC-003 …", "sc": "SC-003",
      "problem": "斷言 result != nil,example 要的是 .notSignedIn;實作回任何錯都會綠",
@@ -49,6 +59,9 @@ tools: Read, Grep, Glob
   "checked": ["斷在對的地方", "一條測試一件事", "case 名稱"]
 }
 ```
+
+四個 dispatch ref 必須和 `review-dispatch.json` 完全一致，writer/reviewer 必須不同；before/after 依 path
+排序且都非空。你必須明確判定 `assertion_weakened`，不能讓後續 gate 代填 `false`。
 
 `blocking: true` 只給「這條測試現在凍結會讓實作者被錯的東西卡住」的情況。
 找不到問題就回 `"findings": []` 並列出 `checked` —— 那是有價值的資訊,不要硬湊。

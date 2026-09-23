@@ -11,10 +11,17 @@
 from __future__ import annotations
 
 import pathlib
+import hashlib
+import json
+import os
+import stat
 import sys
+import tempfile
 
 sys.path.insert(0, str(pathlib.Path(__file__).parent))
-from _common import Findings, evidence_dir, load_spec, sha256  # noqa: E402
+import _config  # noqa: E402
+from _common import RED_MODES, Findings, evidence_dir, load_spec, scenarios, sha256  # noqa: E402
+from _workflow_schemas import schema_for  # noqa: E402
 
 
 def parse_hash_file(path: pathlib.Path) -> list[tuple[str, str]]:
@@ -30,10 +37,196 @@ def parse_hash_file(path: pathlib.Path) -> list[tuple[str, str]]:
     return entries
 
 
+def emit(status: str, reason: str | None, code: int) -> int:
+    print(json.dumps({"status": status, "reason": reason, "exit_code": code},
+                     ensure_ascii=False, sort_keys=True, separators=(",", ":")))
+    return code
+
+
+def canonical(value) -> bytes:
+    return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
+
+
+def regular_repo_file(root: pathlib.Path, rel: str) -> bool:
+    value = pathlib.PurePosixPath(rel)
+    if not rel or value.is_absolute() or ".." in value.parts or value.as_posix() != rel:
+        return False
+    cursor = root
+    for part in value.parts:
+        cursor = cursor / part
+        if cursor.is_symlink():
+            return False
+    try:
+        return stat.S_ISREG(cursor.lstat().st_mode)
+    except OSError:
+        return False
+
+
+def valid_red_contract(spec_path: pathlib.Path, dispatch: dict,
+                       reviewed_examples: list[dict]) -> bool:
+    root = spec_path.parents[2]
+    ev = evidence_dir(spec_path)
+    try:
+        red = json.loads((ev / "red.json").read_text())
+    except (OSError, json.JSONDecodeError):
+        return False
+    expected_hash = "sha256:" + hashlib.sha256(spec_path.read_bytes()).hexdigest()
+    if (not isinstance(red, dict) or red.get("schema_version") != 1
+            or red.get("status") != "passed" or red.get("spec_hash") != expected_hash):
+        return False
+    expected_pairs = {
+        (row["scenario"], example) for row in reviewed_examples for example in row["examples"]
+    }
+    actual_pairs: set[tuple[str, int]] = set()
+    exemptions = red.get("exemptions") if isinstance(red.get("exemptions"), dict) else {}
+    rows = red.get("runner_results")
+    if not isinstance(rows, list) or not rows:
+        return False
+    for row in rows:
+        failure_class = row.get("failure_class") if isinstance(row, dict) else None
+        exempt = (failure_class == "exempt" and isinstance(row.get("scenario"), str)
+                  and row.get("scenario") in exemptions)
+        if (not isinstance(row, dict) or row.get("schema_version") != 1
+                or row.get("red_valid") is not True or row.get("exit_code") != 1
+                or failure_class not in {"assertion", "exempt"}
+                or failure_class == "exempt" and not exempt
+                or row.get("tree_token") != dispatch.get("tree_token")):
+            return False
+        scenario, example = row.get("scenario"), row.get("example")
+        if not isinstance(scenario, str) or isinstance(example, bool) or not isinstance(example, int):
+            return False
+        actual_pairs.add((scenario, example))
+        streams = []
+        for key in ("stdout_path", "stderr_path"):
+            rel = row.get(key)
+            recorded = row.get(key.replace("_path", "_sha256"))
+            if not isinstance(rel, str) or not regular_repo_file(root, rel):
+                return False
+            payload = (root / rel).read_bytes()
+            if recorded != "sha256:" + hashlib.sha256(payload).hexdigest():
+                return False
+            streams.append(payload)
+        if (not exempt and not any(
+                line.startswith(b"STATIC_ASSERTION:")
+                for payload in streams for line in payload.splitlines())):
+            return False
+    return actual_pairs == expected_pairs
+
+
+def valid_review_contract(spec_path: pathlib.Path, review: dict) -> bool:
+    root = spec_path.parents[2]
+    ev = evidence_dir(spec_path)
+    try:
+        dispatch = json.loads((ev / "review-dispatch.json").read_text())
+        agent = json.loads((ev / "test-review.agent.json").read_text())
+        spec = load_spec(spec_path)
+    except (OSError, json.JSONDecodeError, SystemExit):
+        return False
+    refs = ("writer_task_ref", "reviewer_task_ref", "completion_ref", "tree_token")
+    if (dispatch.get("schema_version") != 1 or agent.get("schema_version") != 1
+            or any(not isinstance(dispatch.get(key), str) or not dispatch.get(key) for key in refs)
+            or any(agent.get(key) != dispatch.get(key) for key in refs)
+            or agent.get("writer_task_ref") == agent.get("reviewer_task_ref")
+            or agent.get("status") != "passed" or review.get("status") != "passed"
+            or review.get("agent") not in (None, agent)):
+        return False
+    before, after = review.get("before_tests"), review.get("after_tests")
+    reviewed = review.get("reviewed_examples")
+    expected_reviewed = sorted([
+        {"scenario": str(sc.get("id")), "examples": list(range(1, len(sc.get("examples") or []) + 1))}
+        for _, sc in scenarios(spec) if sc.get("mode") in RED_MODES
+    ], key=lambda row: row["scenario"])
+    if (not isinstance(before, list) or not before or not isinstance(after, list) or not after
+            or reviewed != expected_reviewed or review.get("assertion_weakened") is not False
+            or agent.get("before_tests", before) != before
+            or agent.get("after_tests", after) != after
+            or agent.get("reviewed_examples", reviewed) != reviewed
+            or agent.get("assertion_weakened", False) is not False):
+        return False
+    token_input = {
+        "writer_task_ref": dispatch.get("writer_task_ref"),
+        "reviewer_task_ref": dispatch.get("reviewer_task_ref"),
+        "completion_ref": dispatch.get("completion_ref"),
+        "tree_token": dispatch.get("tree_token"),
+        "before_tests": before, "after_tests": after,
+        "assertion_weakened": review.get("assertion_weakened"),
+        "reviewed_examples": reviewed,
+    }
+    expected_token = "sha256:" + hashlib.sha256(canonical(token_input)).hexdigest()
+    if review.get("review_token") != expected_token:
+        return False
+    if not valid_red_contract(spec_path, dispatch, expected_reviewed):
+        return False
+    seen: set[str] = set()
+    for row in after:
+        if not isinstance(row, dict) or set(row) != {"path", "sha256"}:
+            return False
+        rel, recorded = row.get("path"), row.get("sha256")
+        if not isinstance(rel, str) or rel in seen or not regular_repo_file(root, rel):
+            return False
+        seen.add(rel)
+        if recorded != "sha256:" + hashlib.sha256((root / rel).read_bytes()).hexdigest():
+            return False
+    return True
+
+
+def replace_tests_hash(spec_path: pathlib.Path, token: str) -> int:
+    ev = evidence_dir(spec_path)
+    try:
+        review = json.loads((ev / "test-review.json").read_text())
+        agent = review.get("agent") or {}
+        token_input = {
+            "writer_task_ref": agent.get("writer_task_ref"),
+            "reviewer_task_ref": agent.get("reviewer_task_ref"),
+            "completion_ref": agent.get("completion_ref"),
+            "tree_token": agent.get("tree_token"),
+            "before_tests": review.get("before_tests"),
+            "after_tests": review.get("after_tests"),
+            "assertion_weakened": review.get("assertion_weakened"),
+            "reviewed_examples": review.get("reviewed_examples"),
+        }
+        expected = "sha256:" + hashlib.sha256(json.dumps(
+            token_input, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+        ).encode()).hexdigest()
+        after = review.get("after_tests")
+        valid = (review.get("schema_version") == 1 and review.get("status") == "passed"
+                 and isinstance(after, list) and bool(after)
+                 and review.get("assertion_weakened") is False
+                 and isinstance(token, str) and token == review.get("review_token") == expected
+                 and valid_review_contract(spec_path, review))
+        if not valid:
+            return emit("rejected", "invalid_independent_review", 1)
+        lines = []
+        for row in sorted(after, key=lambda item: item.get("path", "")):
+            rel, digest = row.get("path"), row.get("sha256")
+            if not isinstance(rel, str) or not isinstance(digest, str):
+                return emit("rejected", "invalid_independent_review", 1)
+            lines.append(f"{digest}  {rel}\n")
+        path = ev / "tests.hash"
+        fd, name = tempfile.mkstemp(prefix="tests.hash.", dir=ev)
+        try:
+            with os.fdopen(fd, "w") as handle:
+                handle.writelines(lines)
+            os.replace(name, path)
+        finally:
+            if os.path.exists(name):
+                os.unlink(name)
+        return emit("passed", None, 0)
+    except (OSError, json.JSONDecodeError, TypeError, AttributeError):
+        return emit("rejected", "invalid_independent_review", 1)
+
+
 def main(argv: list[str]) -> int:
-    if len(argv) != 1:
+    if argv == ["--help"]:
         print(__doc__)
-        return 2
+        return 0
+    if argv == ["--schema"]:
+        print(json.dumps(schema_for("freeze-check"), sort_keys=True, separators=(",", ":")))
+        return 0
+    if len(argv) == 3 and argv[1] == "--replace-tests-hash":
+        return replace_tests_hash(pathlib.Path(argv[0]).resolve(), argv[2])
+    if len(argv) != 1 or argv[0].startswith("-"):
+        return emit("rejected", "invalid_cli", 2)
     spec_path = pathlib.Path(argv[0])
     root = spec_path.resolve().parents[2]  # <root>/specs/<name>/spec.yaml
     ev = evidence_dir(spec_path)
@@ -73,7 +266,16 @@ def main(argv: list[str]) -> int:
             elif sha256(target) != recorded_hash:
                 f.error(rel, "測試檔已被改動 —— 實作階段不得動規格測試")
 
-    return f.report("freeze-check")
+    code = f.report("freeze-check")
+    config = _config.load(root)
+    version, _, _ = _config.autonomy_version(config)
+    if config.get("runner") == "static-command" and version == 1:
+        reason = "fingerprint_mismatch" if any("改動" in message for _, message in f.errors) else (
+            "missing_artifact" if f.errors else None
+        )
+        print(json.dumps({"status": "passed" if code == 0 else "failed", "reason": reason,
+                          "exit_code": code}, ensure_ascii=False, sort_keys=True))
+    return code
 
 
 if __name__ == "__main__":

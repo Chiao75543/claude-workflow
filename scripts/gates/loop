@@ -24,11 +24,13 @@ parked / flipflop 之後 AI 不能自己 `resolved` 解除;只有 `decided` 能,
 from __future__ import annotations
 
 import datetime
+import json
 import pathlib
 import sys
 
 sys.path.insert(0, str(pathlib.Path(__file__).parent))
 from _common import evidence_dir, read_json, write_json  # noqa: E402
+from _workflow_schemas import schema_for  # noqa: E402
 
 DECISIONS = {"ship", "hold", "respec"}
 
@@ -50,6 +52,38 @@ def stopped(state: dict) -> list[tuple[str, str]]:
 
 
 def main(argv: list[str]) -> int:
+    if argv == ["--help"]:
+        print(__doc__)
+        return 0
+    if argv == ["--schema"]:
+        print(json.dumps(schema_for("loop"), sort_keys=True, separators=(",", ":")))
+        return 0
+    if argv and argv[0].startswith("-"):
+        print(json.dumps({"status": "rejected", "reason": "invalid_cli", "exit_code": 2}, sort_keys=True, separators=(",", ":")))
+        return 2
+    if len(argv) == 1:
+        ev = evidence_dir(pathlib.Path(argv[0]).resolve())
+        state = load(ev)
+        request = state.get("requested_action") or {}
+        if request.get("kind") == "fix":
+            fid = request.get("id")
+            item = state.get("findings", {}).get(fid) or {}
+            fixes = int(item.get("fixes", 0))
+            if fixes >= MAX_FIXES:
+                item["status"] = "parked"
+                write_json(ev / "loop.json", state)
+                print(json.dumps({"id": fid, "status": "parked", "fixes": fixes,
+                                  "owner_decision_required": True, "exit_code": 1}, sort_keys=True))
+                return 1
+        if request.get("kind") == "redispatch":
+            gate = request.get("gate")
+            prior = int((state.get("redispatch") or {}).get(gate, 0))
+            if prior >= MAX_REDISPATCH.get(gate, 1):
+                print(json.dumps({"gate": gate, "status": "blocked", "prior_redispatches": prior,
+                                  "owner_decision_required": True, "exit_code": 1}, sort_keys=True))
+                return 1
+        print(json.dumps({"status": "rejected", "reason": "invalid_loop_request", "exit_code": 2}, sort_keys=True))
+        return 2
     if len(argv) < 2:
         print(__doc__)
         return 2

@@ -66,6 +66,7 @@ smoke 沒過就連審都不審。
 
 ```yaml
 runner: swift-testing            # red-capture 的輸出解析器
+autonomy: {version: 1}           # 缺少/0 完整保留舊流程；1 啟用 ledger/CAS/delivery 契約
 tests:
   globs: ["Packages/*/Tests/**/*.swift", "MindEYTests/**/*.swift"]
   scenario_pattern: '@Test\(\s*"(SC-\d+[a-z]?)'
@@ -82,6 +83,7 @@ models: {draft: fable, review: fable, build: opus}
 ```
 
 `scripts/gates/config-check` 會列出還沒填的鍵。沒填的鍵讓對應關卡**失敗**,不是跳過。
+`autonomy` 是唯一例外：缺少時等同 version 0，不能使用 version 1 的新 CLI 或 artifact 冒充舊流程。
 
 **`<repo>/AGENTS.md`** —— 給 AI 讀的散文:`{TEST_COMMAND}`、`{BUILD_COMMAND}`、
 `{LAYERING_CONVENTION}`、`{INTEGRATION_BRANCH}`、`{TICKET_PREFIX}`、Security Baseline、專案鐵則。
@@ -144,6 +146,7 @@ digraph workflow {
 
 | 組 | 問什麼 | 寫到 |
 |---|---|---|
+| 自治契約 | 新接入是否啟用可稽核 repair/status/delivery（建議 1；既有專案可保留 0） | `autonomy.version` |
 | 技術棧 | 測試框架(決定 `runner` 解析器)、測試檔在哪、測試怎麼標 SC-id | `runner` `tests.globs` `tests.scenario_pattern` |
 | 指令 | 跑測試、lint(接檔案路徑)、**smoke**(起 app 截圖 / 打端點 / 跑 CLI) | `test` `lint` `smoke` `smoke_timeout` |
 | 版本 | 整合分支叫什麼、能不能自動推功能分支、有沒有 CI(github / gitlab / 沒有) | `integration_branch` `auto_push` `ci` |
@@ -325,8 +328,9 @@ UI 專案開 app 導航到目標畫面截圖(放進 `$SMOKE_SCREENSHOTS`)、API 
 runner log、錄影、截圖或產物)。缺 Scenario、缺 example、`ok:false`、舊檔、不存在／空檔、
 或只有 checklist 都讓 smoke FAIL。這是 6c 在 S7 被延後而不是被豁免的後半條防線。
 
-**S9c 付費審查 G9/G10**:派 `spec-oracle` 與 `code-adversary`(fable),**派完立刻
-`scripts/gates/findings dispatched --gate G9`(G10 同)** —— 零 finding 的乾淨審查也要留下派過的紀錄,
+**S9c 付費審查 G9/G10**:派 `spec-oracle` 與 `code-adversary`(fable)，**完成後立刻記錄
+`scripts/gates/findings <spec> dispatched --gate G9 --status completed`(G10 同)** —— 零 finding 的乾淨審查也要留下完成紀錄；
+平台拒絕則記 `--status denied` 並停止，不得換 wording／channel 重派，
 否則「沒派」和「派了沒事」在證據上分不出來。每條 finding 用 `findings add` 收進來 ——
 沒重現的 `must_fix` / `ask_user` / `overbuilt` **收不進去**;同一個重現換 id 重 add 也**收不進去**(計數會歸零)。
 實跑重現:紅 → `set confirmed`;不紅 → `set void`。**停在 proposed 的 finding 算沒處理完**,擋 G9/10。然後分流:

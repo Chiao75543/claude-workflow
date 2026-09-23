@@ -24,16 +24,274 @@
 from __future__ import annotations
 
 import datetime
+import hashlib
+import json
+import os
 import pathlib
+import re
+import stat
+import subprocess
 import sys
 
 sys.path.insert(0, str(pathlib.Path(__file__).parent))
-from _common import evidence_dir, read_json, repo_root, triage_findings, write_json  # noqa: E402
+import _config  # noqa: E402
+from _common import evidence_dir, load_spec, read_json, repo_root, triage_findings, write_json  # noqa: E402
 from _state import tree_fingerprint  # noqa: E402
+from _workflow_schemas import schema_for  # noqa: E402
 
 CLASSES = {"must_fix", "ask_user", "overbuilt", "style"}
 NEEDS_REPRO = {"must_fix", "ask_user", "overbuilt"}
 STATUSES = {"proposed", "confirmed", "void", "fixed", "accepted_risk", "added_example"}
+
+
+def canonical(value) -> str:
+    return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+
+
+def canonical_rel(rel: str) -> bool:
+    path = pathlib.PurePosixPath(rel)
+    return bool(rel) and not path.is_absolute() and ".." not in path.parts and path.as_posix() == rel
+
+
+def regular_repo_file(root: pathlib.Path, rel: str) -> bool:
+    if not canonical_rel(rel):
+        return False
+    cursor = root
+    for part in pathlib.PurePosixPath(rel).parts:
+        cursor = cursor / part
+        try:
+            mode = cursor.lstat().st_mode
+        except OSError:
+            return False
+        if stat.S_ISLNK(mode):
+            return False
+    return stat.S_ISREG(cursor.lstat().st_mode)
+
+
+def repo_directory(root: pathlib.Path, rel: str) -> bool:
+    if rel == ".":
+        return True
+    if not canonical_rel(rel):
+        return False
+    cursor = root
+    for part in pathlib.PurePosixPath(rel).parts:
+        cursor = cursor / part
+        try:
+            mode = cursor.lstat().st_mode
+        except OSError:
+            return False
+        if stat.S_ISLNK(mode):
+            return False
+    return stat.S_ISDIR(cursor.lstat().st_mode)
+
+
+def valid_sha(value: object) -> bool:
+    return isinstance(value, str) and re.fullmatch(r"sha256:[0-9a-f]{64}", value) is not None
+
+
+def load_repro(root: pathlib.Path, rel: str, spec_path: pathlib.Path | None = None) -> dict | None:
+    try:
+        path = root / rel
+        if not regular_repo_file(root, rel):
+            return None
+        if spec_path is not None:
+            prefix = evidence_dir(spec_path).relative_to(root).as_posix() + "/"
+            if not rel.startswith(prefix):
+                return None
+        data = json.loads(path.read_text())
+    except (OSError, json.JSONDecodeError):
+        return None
+    if (not isinstance(data, dict) or data.get("schema_version") != 1
+            or not isinstance(data.get("argv"), list) or not data["argv"]
+            or not all(isinstance(v, str) for v in data["argv"])
+            or not isinstance(data.get("path_indices"), list)
+            or not isinstance(data.get("environment"), dict)
+            or not isinstance(data.get("inputs"), list)):
+        return None
+    return data
+
+
+def valid_add_repro(root: pathlib.Path, data: dict) -> bool:
+    if set(data) != {"schema_version", "argv", "path_indices", "cwd", "stdin_sha256", "environment", "inputs"}:
+        return False
+    argv, indices = data.get("argv"), data.get("path_indices")
+    if (data.get("schema_version") != 1 or not isinstance(argv, list) or not argv
+            or not all(isinstance(value, str) and value for value in argv)
+            or not isinstance(indices, list)
+            or any(isinstance(index, bool) or not isinstance(index, int) or index < 0 or index >= len(argv)
+                   for index in indices)
+            or len(indices) != len(set(indices))):
+        return False
+    cwd = data.get("cwd")
+    if not isinstance(cwd, str) or not repo_directory(root, cwd):
+        return False
+    for index in indices:
+        if not regular_repo_file(root, argv[index]):
+            return False
+    stdin_hash = data.get("stdin_sha256")
+    if stdin_hash is not None and not valid_sha(stdin_hash):
+        return False
+    # v1 currently declares no environment keys; accepting ambient or secret
+    # names would make the reproduction depend on unreviewed state.
+    if data.get("environment") != {}:
+        return False
+    inputs = data.get("inputs")
+    if not isinstance(inputs, list):
+        return False
+    names: list[str] = []
+    for item in inputs:
+        if not isinstance(item, dict) or set(item) != {"name", "sha256"}:
+            return False
+        name = item.get("name")
+        if not isinstance(name, str) or not regular_repo_file(root, name) or not valid_sha(item.get("sha256")):
+            return False
+        if "sha256:" + hashlib.sha256((root / name).read_bytes()).hexdigest() != item["sha256"]:
+            return False
+        names.append(name)
+    return names == sorted(names) and len(names) == len(set(names))
+
+
+def full_rerun() -> int:
+    return emit({"required_action": "full_rerun", "gates": ["G0-G7", "smoke", "G9", "G10"],
+                 "may_claim_pass": False}, 1)
+
+
+def identity(spec_path: pathlib.Path, item: dict, repro: dict) -> str:
+    spec = load_spec(spec_path)
+    semantic = {
+        "spec": (spec.get("meta") or {}).get("name"),
+        "scenario_or_gate": item.get("check") or item.get("gate"),
+        "kind": item.get("kind") or item.get("class"),
+        "check": item.get("check") or item.get("sc") or item.get("gate"),
+        "location": item.get("location") or "none",
+        "repro": repro,
+    }
+    return "sha256:" + hashlib.sha256(canonical(semantic).encode()).hexdigest()
+
+
+def emit(payload: dict, code: int) -> int:
+    status = payload.get("status")
+    if status is None:
+        status = "flipflop" if payload.get("result") == "flipflop" else "failed"
+    canonical_payload = {
+        "status": status,
+        "reason": None,
+        "id": None,
+        "identity": None,
+        "canonical_id": None,
+        "existing_finding_preserved": False,
+        "fixes_preserved": False,
+        "finding_id_reused": False,
+        "action": None,
+        "result": None,
+        "fixes": 0,
+        "required_action": None,
+        "gates": [],
+        "may_claim_pass": status == "fixed" and code == 0,
+        "written": status == "added" and code == 0 or payload.get("result") == "flipflop",
+        "invalid_files": [],
+    }
+    canonical_payload.update(payload)
+    canonical_payload["status"] = status
+    canonical_payload["exit_code"] = code
+    print(json.dumps(canonical_payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")))
+    return code
+
+
+def v1_add(spec_path: pathlib.Path, root: pathlib.Path, state: dict, argv: list[str]) -> int:
+    rid, kind, check_name = flag(argv, "--id"), flag(argv, "--kind"), flag(argv, "--check")
+    location, repro_rel = flag(argv, "--location"), flag(argv, "--repro-json")
+    allowed = ["--id", "--kind", "--check", "--location", "--repro-json"]
+    if (len(argv) != 12 or any(argv.count(flag) != 1 for flag in allowed)
+            or any(token.startswith("--") and token not in allowed for token in argv[2:])
+            or not all((rid, kind, check_name, location, repro_rel))):
+        return emit({"status": "rejected", "reason": "invalid_cli"}, 2)
+    if (re.fullmatch(r"[A-Za-z0-9_.-]+", str(kind)) is None
+            or re.fullmatch(r"[A-Za-z0-9_.-]+", str(check_name)) is None
+            or (location != "none" and re.fullmatch(r"(?!/)(?!.*(?:^|/)\.\.(?:/|$))[^\x00\r\n:]+:[1-9][0-9]*", str(location)) is None)):
+        return emit({"status": "rejected", "reason": "invalid_cli"}, 2)
+    repro = load_repro(root, str(repro_rel), spec_path)
+    if repro is None or not valid_add_repro(root, repro):
+        return emit({"status": "rejected", "reason": "invalid_repro_schema"}, 2)
+    requested = {"id": rid, "kind": kind, "check": check_name, "location": location,
+                 "repro_json": repro_rel}
+    wanted = identity(spec_path, requested, repro)
+    for old in state.get("items") or []:
+        old_rel = old.get("repro_json") or old.get("repro")
+        old_repro = load_repro(root, str(old_rel), spec_path) if old_rel else None
+        if old_repro is None:
+            continue
+        old_identity = identity(spec_path, old, old_repro)
+        if old.get("id") == rid and old_identity != wanted:
+            return emit({"status": "rejected", "reason": "finding_id_conflict",
+                         "existing_finding_preserved": True}, 1)
+        if old_identity == wanted:
+            return emit({"status": "rejected", "reason": "finding_identity_exists",
+                         "canonical_id": old.get("id"), "fixes_preserved": True}, 1)
+    requested.update({"gate": "G10", "class": kind, "title": check_name, "status": "proposed",
+                      "fixes": 0, "identity": wanted, "at": datetime.datetime.now().astimezone().isoformat(timespec="seconds")})
+    state.setdefault("items", []).append(requested)
+    state["summary"] = summary(state)
+    write_json(evidence_dir(spec_path) / "findings.json", state)
+    return emit({"status": "added", "id": rid, "identity": wanted}, 0)
+
+
+def v1_revalidate(spec_path: pathlib.Path, root: pathlib.Path, state: dict, argv: list[str]) -> int:
+    if len(argv) != 4 or argv[2] != "--id" or not argv[3]:
+        return emit({"status": "rejected", "reason": "invalid_cli"}, 2)
+    rid = flag(argv, "--id")
+    item = next((row for row in state.get("items") or [] if row.get("id") == rid), None)
+    if item is None:
+        return emit({"status": "rejected", "reason": "unknown_finding"}, 1)
+    repro_rel = item.get("repro_json") or item.get("repro")
+    repro = load_repro(root, str(repro_rel), spec_path) if repro_rel else None
+    if repro is None:
+        return emit({"status": "rejected", "reason": "invalid_repro_schema"}, 2)
+    cwd = repro.get("cwd", ".")
+    if not isinstance(cwd, str) or not repo_directory(root, cwd):
+        return full_rerun()
+    indices = repro.get("path_indices")
+    if (any(isinstance(index, bool) or not isinstance(index, int) or index < 0 or index >= len(repro["argv"])
+            for index in indices) or len(set(indices)) != len(indices)):
+        return full_rerun()
+    for index in indices:
+        rel = repro["argv"][index]
+        if not canonical_rel(rel) or not (root / rel).exists():
+            return full_rerun()
+    environment = repro.get("environment")
+    if any(not isinstance(key, str) or not isinstance(value, str) for key, value in environment.items()):
+        return full_rerun()
+    for key, value in environment.items():
+        if key.upper().endswith("PATH") and any(
+            part and (pathlib.PurePosixPath(part).is_absolute() or ".." in pathlib.PurePosixPath(part).parts)
+            for part in value.split(os.pathsep)
+        ):
+            return full_rerun()
+    input_snapshots: dict[str, str] = {}
+    for source in repro.get("inputs") or []:
+        rel = (source.get("name") or source.get("path")) if isinstance(source, dict) else None
+        if not isinstance(rel, str) or not canonical_rel(rel):
+            return emit({"status": "failed", "invalid_files": [{"path": rel or "", "reason": "outside_repo"}]}, 1)
+        if not regular_repo_file(root, rel):
+            return full_rerun()
+        current = "sha256:" + hashlib.sha256((root / rel).read_bytes()).hexdigest()
+        if current != source.get("sha256"):
+            return full_rerun()
+        input_snapshots[rel] = current
+    proc = subprocess.run(repro["argv"], cwd=root / str(repro.get("cwd") or "."),
+                          env={**os.environ, **{str(k): str(v) for k, v in repro.get("environment", {}).items()}},
+                          capture_output=True)
+    if any(not (root / rel).is_file()
+           or "sha256:" + hashlib.sha256((root / rel).read_bytes()).hexdigest() != before
+           for rel, before in input_snapshots.items()):
+        return full_rerun()
+    if proc.returncode == 0:
+        return emit({"id": rid, "status": item.get("status"), "action": "preserve",
+                     "fixes": item.get("fixes", 0)}, 0)
+    item["status"] = "flipflop"
+    write_json(evidence_dir(spec_path) / "findings.json", state)
+    return emit({"id": rid, "finding_id_reused": True, "action": "reappear",
+                 "result": "flipflop", "fixes": item.get("fixes", 0)}, 1)
 
 
 def flag(argv: list[str], name: str) -> str | None:
@@ -54,15 +312,32 @@ def summary(state: dict) -> dict:
 
 
 def main(argv: list[str]) -> int:
-    if len(argv) < 2:
+    if argv == ["--help"]:
         print(__doc__)
-        return 2
+        return 0
+    if argv == ["--schema"]:
+        print(json.dumps(schema_for("findings"), sort_keys=True, separators=(",", ":")))
+        return 0
+    if argv and argv[0] in {"add", "revalidate"} and len(argv) >= 2:
+        leading_verb = argv[0]
+        argv = [argv[1], leading_verb, *argv[2:]]
+    if len(argv) < 2:
+        return emit({"status": "rejected", "reason": "invalid_cli"}, 2)
     spec_path = pathlib.Path(argv[0]).resolve()
     root = repo_root(spec_path.parent)
     ev = evidence_dir(spec_path)
     verb = argv[1]
     state = load(ev)
     items = state["items"]
+
+    version, _, _ = _config.autonomy_version(_config.load(root))
+    if verb in {"revalidate"} or verb == "add" and "--repro-json" in argv:
+        if version != 1:
+            return emit({"status": "rejected", "reason": "invalid_cli"}, 2)
+    if verb == "add" and "--repro-json" in argv:
+        return v1_add(spec_path, root, state, argv)
+    if verb == "revalidate":
+        return v1_revalidate(spec_path, root, state, argv)
 
     if verb == "add":
         fid, gate, cls = flag(argv, "--id"), flag(argv, "--gate"), flag(argv, "--class")
@@ -98,7 +373,23 @@ def main(argv: list[str]) -> int:
 
     if verb == "dispatched":
         gate = flag(argv, "--gate")
-        if gate not in ("G9", "G10"):
+        dispatch_status = flag(argv, "--status")
+        if version == 1:
+            if (len(argv) != 6 or argv[2] != "--gate" or argv[4] != "--status"
+                    or gate not in ("G9", "G10") or dispatch_status not in {"completed", "denied"}):
+                return emit({"status": "rejected", "reason": "invalid_cli"}, 2)
+            prior = (state.get("dispatched") or {}).get(gate)
+            if isinstance(prior, dict) and prior.get("status") == "denied":
+                return emit({"status": "rejected", "reason": "dispatch_denied"}, 1)
+            state.setdefault("dispatched", {})[gate] = {
+                "at": datetime.datetime.now().astimezone().isoformat(timespec="seconds"),
+                "tree": tree_fingerprint(root),
+                "status": dispatch_status,
+            }
+            state["summary"] = summary(state)
+            write_json(ev / "findings.json", state)
+            return emit({"status": "fixed", "action": "preserve", "written": True}, 0)
+        if gate not in ("G9", "G10") or len(argv) != 4:
             print("✘ --gate 只能是 G9 或 G10")
             return 2
         state.setdefault("dispatched", {})[gate] = {

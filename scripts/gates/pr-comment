@@ -12,11 +12,34 @@
 
 from __future__ import annotations
 
+import json
 import pathlib
+import subprocess
 import sys
 
 sys.path.insert(0, str(pathlib.Path(__file__).parent))
+import _config  # noqa: E402
 from _common import evidence_dir, read_json  # noqa: E402
+from _workflow_schemas import schema_for  # noqa: E402
+
+
+def schema() -> dict:
+    scalar = {"type": "string"}
+    nullable = {"oneOf": [{"type": "string", "minLength": 1}, {"type": "null"}]}
+    return {"$schema": "https://json-schema.org/draft/2020-12/schema", "type": "object",
+            "properties": {"status": {"type": "string", "enum": ["passed", "blocked", "rejected"]},
+                           "reason": nullable, "title": scalar, "markdown": scalar,
+                           "decisions": {"type": "array", "items": scalar},
+                           "auto_push_ok": {"type": "boolean"},
+                           "exit_code": {"type": "integer", "enum": [0, 1, 2]}},
+            "required": ["status", "reason", "title", "markdown", "decisions", "auto_push_ok", "exit_code"],
+            "additionalProperties": False}
+
+
+def emit(payload: dict, code: int) -> int:
+    payload["exit_code"] = code
+    print(json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")))
+    return code
 
 
 def decisions(dash: dict) -> list[str]:
@@ -25,19 +48,42 @@ def decisions(dash: dict) -> list[str]:
 
 
 def main(argv: list[str]) -> int:
-    args = [a for a in argv if not a.startswith("-")]
-    if not args:
+    if argv == ["--help"]:
         print(__doc__)
-        return 2
-    ev = evidence_dir(pathlib.Path(args[0]).resolve())
+        return 0
+    if argv == ["--schema"]:
+        print(json.dumps(schema_for("pr-comment"), ensure_ascii=False, sort_keys=True, separators=(",", ":")))
+        return 0
+    if len(argv) not in {1, 2} or argv[0].startswith("-") or (len(argv) == 2 and argv[1] != "--check"):
+        return emit({"status": "rejected", "reason": "invalid_cli", "title": "", "markdown": "",
+                     "decisions": [], "auto_push_ok": False}, 2)
+    spec_path = pathlib.Path(argv[0]).resolve()
+    root = spec_path.parents[2]
+    ev = evidence_dir(spec_path)
     dash = read_json(ev / "dashboard.json")
     if dash is None:
-        print("✘ 缺 evidence/dashboard.json —— 先跑 dashboard")
-        return 2
+        return emit({"status": "blocked", "reason": "missing_delivery_evidence", "title": "", "markdown": "",
+                     "decisions": [], "auto_push_ok": False}, 1)
     findings = read_json(ev / "findings.json") or {}
     todo = decisions(dash)
-    if "--check" in argv:
-        return 1 if todo else 0
+
+    version, _, _ = _config.autonomy_version(_config.load(root))
+    contract_ok = True
+    if version == 1:
+        required = [ev / name for name in ("autonomy.json", "status.json", "delivery.json")]
+        contract_ok = all(path.is_file() and not path.is_symlink() for path in required)
+        if contract_ok:
+            for gate, args in (("autonomy", [str(spec_path), "check"]),
+                               ("evidence-check", [str(spec_path), "--commit"])):
+                proc = subprocess.run([str(root / "scripts/gates" / gate), *args], cwd=root,
+                                      capture_output=True, text=True)
+                if proc.returncode != 0:
+                    contract_ok = False
+                    break
+        status = read_json(ev / "status.json") or {}
+        contract_ok = (contract_ok and status.get("schema_version") == 1
+                       and dash.get("auto_push_ok") is True
+                       and all(row.get("ok") is True for row in dash.get("gates") or []))
 
     lines = []
     if todo:
@@ -68,7 +114,16 @@ def main(argv: list[str]) -> int:
     if shots:
         lines.append("")
         lines.append("畫面證據:" + "、".join(shots))
-    print("\n".join(lines))
+    markdown = "\n".join(lines)
+    clean = contract_ok and not todo
+    if version == 1:
+        return emit({"status": "passed" if clean else "blocked",
+                     "reason": None if clean else "invalid_delivery_evidence",
+                     "title": lines[0] if lines else "", "markdown": markdown,
+                     "decisions": todo, "auto_push_ok": clean}, 0 if clean else 1)
+    if "--check" in argv:
+        return 1 if todo else 0
+    print(markdown)
     return 0
 
 

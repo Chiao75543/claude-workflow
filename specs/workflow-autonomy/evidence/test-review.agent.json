@@ -1,0 +1,31 @@
+{
+  "schema_version": 1,
+  "writer_task_ref": "/root/autonomy_red_writer",
+  "reviewer_task_ref": "/root/freshness_test_reviewer",
+  "completion_ref": "completion:freshness-test-reviewer-s7half-final-20260915T140418+0800",
+  "tree_token": "tree:b34816bb63d41d843ca7659cea1a66d2251d0dda",
+  "created_at": "2026-09-15T14:04:18+08:00",
+  "status": "passed",
+  "before_tests": [
+    {"path": "scripts/gates/tests/fixtures/workflow-autonomy-red-baseline/autonomy", "sha256": "sha256:338690cbd7ea68a510d94ef4b2a460a7873104b19cc1b43beff144cdd4d7add1"},
+    {"path": "scripts/gates/tests/fixtures/workflow-autonomy-red-baseline/evidence-check", "sha256": "sha256:e32643464c9f92d0e935cb7704aed66dae9e100e350946fa19348b9735001ca0"},
+    {"path": "scripts/gates/tests/spec_workflow_autonomy.py", "sha256": "sha256:593eff0f71a7448e4bf5615366d8f7d2e67027dbd6b19e7e00bbc511513c2379"},
+    {"path": "scripts/gates/tests/workflow_autonomy_red_baseline.py", "sha256": "sha256:131801f06ec27318d419632c96e910f7bdf25426510be57ebf01936d1abd70b3"}
+  ],
+  "after_tests": [
+    {"path": "scripts/gates/tests/fixtures/workflow-autonomy-red-baseline/autonomy", "sha256": "sha256:338690cbd7ea68a510d94ef4b2a460a7873104b19cc1b43beff144cdd4d7add1"},
+    {"path": "scripts/gates/tests/fixtures/workflow-autonomy-red-baseline/evidence-check", "sha256": "sha256:e32643464c9f92d0e935cb7704aed66dae9e100e350946fa19348b9735001ca0"},
+    {"path": "scripts/gates/tests/spec_workflow_autonomy.py", "sha256": "sha256:389223f920b6868022dc33154e21fe881b083fd199380ccdcc9286454a776ccd"},
+    {"path": "scripts/gates/tests/workflow_autonomy_red_baseline.py", "sha256": "sha256:131801f06ec27318d419632c96e910f7bdf25426510be57ebf01936d1abd70b3"}
+  ],
+  "assertion_weakened": false,
+  "findings": [],
+  "checked": [
+    "73 個 real CLI guards 均使用隔離 Git repository；71 個已通過，C03 修正後 targeted PASS，Z01 僅待正式 refreeze，0 crash",
+    "E02-E06 在合法 manifest 與 core roots 前置下施加單一 mutation，未再被 missing manifest 提早遮蔽",
+    "12 個 gate 的 canonical schema 精確鎖定 fixed properties、required、nullable、nested items、enum、pattern 與 additionalProperties；baseline mode 接受完整四位 POSIX mode",
+    "C05-C07 以完整 evidence 子樹 snapshot 驗證 written false 與零新增刪除覆寫或型別 mode bytes hash 變化",
+    "合法 seed 逐筆驗證 baseline mode、完整 snapshot、tree token、evidence bytes/hash 與互異的 plan/complete canonical digest",
+    "historical baseline 維持 83 assertion RED 加 2 核准 exemptions，59 scenarios 與 85 examples 未弱化"
+  ]
+}

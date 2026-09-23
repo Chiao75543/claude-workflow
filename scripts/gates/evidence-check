@@ -1,0 +1,558 @@
+#!/usr/bin/env python3
+"""Validate final workflow evidence from the Git index or HEAD."""
+
+from __future__ import annotations
+
+import hashlib
+import json
+import pathlib
+import re
+import stat
+import subprocess
+import sys
+from typing import Any
+
+sys.path.insert(0, str(pathlib.Path(__file__).parent))
+from _common import evidence_dir, load_spec  # noqa: E402
+from _workflow_schemas import schema_for  # noqa: E402
+
+SOURCES = {"spec", "approval", "freeze", "red", "review", "smoke", "finding", "autonomy", "dashboard"}
+SHA256_RE = re.compile(r"sha256:[0-9a-f]{64}")
+OID_RE = re.compile(r"[0-9a-f]{40}|[0-9a-f]{64}")
+RFC3339_RE = re.compile(
+    r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:Z|[+-][0-9]{2}:[0-9]{2})"
+)
+
+
+def canonical(value: Any) -> bytes:
+    return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
+
+
+def digest(payload: bytes) -> str:
+    return "sha256:" + hashlib.sha256(payload).hexdigest()
+
+
+def git(root: pathlib.Path, *args: str, binary: bool = False, check: bool = True):
+    proc = subprocess.run(["git", *args], cwd=root, capture_output=True)
+    if check and proc.returncode:
+        raise RuntimeError((proc.stderr or proc.stdout).decode(errors="replace").strip())
+    return proc.stdout if binary else proc.stdout.decode().strip()
+
+
+def snapshot(root: pathlib.Path, storage: str) -> str:
+    if storage == "index":
+        # ls-files is read-only and does not contend with a concurrent index
+        # writer; hashing its complete staged tuples still detects any drift.
+        staged = git(root, "ls-files", "--stage", "-z", binary=True)
+        return "sha256:" + hashlib.sha256(staged).hexdigest()
+    return str(git(root, "rev-parse", "HEAD"))
+
+
+def index_state(root: pathlib.Path) -> dict[str, str]:
+    raw = git(root, "ls-files", "--stage", "-z", binary=True)
+    rows = {}
+    for entry in raw.split(b"\0"):
+        if not entry:
+            continue
+        meta, path = entry.split(b"\t", 1)
+        rows[path.decode(errors="surrogateescape")] = meta.decode()
+    return rows
+
+
+def snapshot_file(root: pathlib.Path, storage: str, rel: str) -> tuple[bytes | None, str | None]:
+    ref = f":{rel}" if storage == "index" else f"HEAD:{rel}"
+    proc = subprocess.run(["git", "show", ref], cwd=root, capture_output=True)
+    if proc.returncode:
+        return None, None
+    if storage == "index":
+        listing = str(git(root, "ls-files", "--stage", "--", rel))
+        fields = listing.split("\t", 1)[0].split() if listing else []
+        mode = fields[0] if len(fields) == 3 and fields[2] == "0" else None
+    else:
+        listing = str(git(root, "ls-tree", "HEAD", "--", rel))
+        fields = listing.split("\t", 1)[0].split() if listing else []
+        mode = fields[0] if len(fields) >= 3 else None
+    return proc.stdout, mode
+
+
+def regular_worktree(root: pathlib.Path, rel: str) -> bool:
+    cursor = root
+    for part in pathlib.PurePosixPath(rel).parts:
+        cursor = cursor / part
+        if cursor.is_symlink():
+            return False
+    try:
+        return stat.S_ISREG((root / rel).lstat().st_mode)
+    except FileNotFoundError:
+        return False
+
+
+def valid_rel(rel: str) -> bool:
+    path = pathlib.PurePosixPath(rel)
+    return bool(rel) and not path.is_absolute() and ".." not in path.parts and path.as_posix() == rel
+
+
+def empty_static_stream_refs(root: pathlib.Path, spec_path: pathlib.Path, storage: str) -> set[str]:
+    """Return the narrow set of snapshot-authenticated RED streams that may be empty."""
+    ev = evidence_dir(spec_path)
+    red_rel = ev.relative_to(root).joinpath("red.json").as_posix()
+    payload, mode = snapshot_file(root, storage, red_rel)
+    if payload is None or mode != "100644":
+        return set()
+    try:
+        red = json.loads(payload)
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        return set()
+    if red.get("schema_version") != 1 or red.get("status") != "passed":
+        return set()
+    static_dir = pathlib.PurePosixPath(ev.relative_to(root).as_posix()) / "static-red"
+    refs: set[str] = set()
+    for row in red.get("runner_results") or []:
+        if (not isinstance(row, dict) or row.get("schema_version") != 1
+                or not isinstance(row.get("scenario"), str)
+                or isinstance(row.get("example"), bool) or not isinstance(row.get("example"), int)
+                or row.get("example", 0) <= 0 or row.get("red_valid") is not True
+                or row.get("exit_code") != 1 or row.get("failure_class") != "assertion"):
+            continue
+        streams: list[tuple[str, bytes]] = []
+        row_refs: list[str] = []
+        valid_row = True
+        for key in ("stdout_path", "stderr_path"):
+            rel = row.get(key)
+            if not isinstance(rel, str) or not valid_rel(rel):
+                valid_row = False
+                break
+            path = pathlib.PurePosixPath(rel)
+            if path.parent != static_dir:
+                valid_row = False
+                break
+            if not (path.name.endswith(".stdout.log") or path.name.endswith(".stderr.log")):
+                valid_row = False
+                break
+            payload, mode = snapshot_file(root, storage, rel)
+            expected = row.get(key.replace("_path", "_sha256"))
+            if (payload is None or mode != "100644"
+                    or expected is not None and expected != digest(payload)):
+                valid_row = False
+                break
+            streams.append((rel, payload))
+            row_refs.append(rel)
+        combined = b"\n".join(payload for _, payload in streams)
+        marker = any(line.startswith(b"STATIC_ASSERTION:") for line in combined.splitlines())
+        if valid_row and marker and any(payload for _, payload in streams):
+            refs.update(rel for rel, payload in streams if not payload)
+    return refs
+
+
+def required_roots(root: pathlib.Path, spec_path: pathlib.Path, storage: str) -> dict[str, str]:
+    ev = evidence_dir(spec_path)
+    required = {
+        spec_path.relative_to(root).as_posix(): "spec",
+        (ev / "spec.approved.yaml").relative_to(root).as_posix(): "approval",
+        (ev / "approval.json").relative_to(root).as_posix(): "approval",
+        (ev / "spec.hash").relative_to(root).as_posix(): "freeze",
+        (ev / "tests.hash").relative_to(root).as_posix(): "freeze",
+        (ev / "red.json").relative_to(root).as_posix(): "red",
+        (ev / "test-review.json").relative_to(root).as_posix(): "review",
+    }
+    # v1 final delivery always includes the three state-producing roots; a
+    # manifest may not shrink the required set by deleting both the file and
+    # its row.
+    state_roots = (("autonomy.json", "autonomy"), ("findings.json", "finding"))
+    for name, source in state_roots:
+        rel = (ev / name).relative_to(root).as_posix()
+        required[rel] = source
+    # Smoke is conditional on an approved 6c scenario.
+    spec_payload, _ = snapshot_file(root, storage, spec_path.relative_to(root).as_posix())
+    smoke_required = False
+    if spec_payload is not None:
+        try:
+            import yaml
+            parsed = yaml.safe_load(spec_payload)
+            smoke_required = any(
+                isinstance(sc, dict) and sc.get("mode") == "6c"
+                for req in (parsed.get("requirements") or []) if isinstance(req, dict)
+                for sc in (req.get("scenarios") or [])
+            )
+        except Exception:
+            smoke_required = False
+    for name, source in (("smoke.json", "smoke"),):
+        rel = (ev / name).relative_to(root).as_posix()
+        if smoke_required:
+            required[rel] = source
+    return required
+
+
+def valid_status(value: Any) -> bool:
+    required = {"schema_version", "generation", "pipeline_state", "stage", "next_step",
+                "blocked_on", "delivery", "report", "updated_at"}
+    if (not isinstance(value, dict) or set(value) != required or value.get("schema_version") != 1
+            or isinstance(value.get("generation"), bool) or not isinstance(value.get("generation"), int)
+            or value["generation"] < 0):
+        return False
+    delivery, report = value.get("delivery"), value.get("report")
+    if (not isinstance(delivery, dict) or set(delivery) != {"state", "ref", "validation"}
+            or not isinstance(report, dict) or set(report) != {"state", "reason"}):
+        return False
+    stage, next_step = value.get("stage"), value.get("next_step")
+    if stage is not None and stage not in {f"S{i}" for i in range(11)}:
+        return False
+    if next_step is not None and (not isinstance(next_step, str) or not next_step.strip() or "\n" in next_step):
+        return False
+    if value.get("pipeline_state") not in {"running", "waiting", "blocked", "complete"}:
+        return False
+    if value.get("blocked_on") not in {None, "owner", "permission", "platform", "gate"}:
+        return False
+    if delivery.get("state") not in {"local", "committed", "pr_open", "merged"}:
+        return False
+    if delivery.get("state") == "pr_open" and (not isinstance(delivery.get("ref"), str)
+                                                   or not delivery["ref"].startswith(("http://", "https://"))):
+        return False
+    if delivery.get("state") == "merged" and (not isinstance(delivery.get("ref"), str)
+                                                 or not delivery["ref"].strip()):
+        return False
+    if delivery.get("state") in {"local", "committed"} and delivery.get("ref") is not None:
+        return False
+    validation = delivery.get("validation")
+    if validation is not None and (not isinstance(validation, dict)
+            or set(validation) != {"snapshot", "token"}
+            or OID_RE.fullmatch(str(validation.get("snapshot", ""))) is None
+            or SHA256_RE.fullmatch(str(validation.get("token", ""))) is None):
+        return False
+    if report.get("state") not in {"pending", "sent", "denied"}:
+        return False
+    if report.get("reason") is not None and (not isinstance(report.get("reason"), str)
+                                               or not report["reason"].strip()):
+        return False
+    if report.get("state") == "denied" and report.get("reason") is None:
+        return False
+    return RFC3339_RE.fullmatch(str(value.get("updated_at", ""))) is not None
+
+
+def approval_anchor_valid(root: pathlib.Path, spec_path: pathlib.Path, storage: str, manifest: dict) -> bool:
+    commit, tree = manifest.get("approval_commit"), manifest.get("approval_tree")
+    if not isinstance(commit, str) or not isinstance(tree, str):
+        return False
+    try:
+        if str(git(root, "rev-parse", f"{commit}^{{tree}}")) != tree:
+            return False
+    except RuntimeError:
+        return False
+    ev = evidence_dir(spec_path)
+    current_values: dict[str, bytes] = {}
+    for name in ("spec.approved.yaml", "spec.hash", "approval.json"):
+        rel = (ev / name).relative_to(root).as_posix()
+        current, current_mode = snapshot_file(root, storage, rel)
+        anchored = subprocess.run(["git", "show", f"{commit}:{rel}"], cwd=root, capture_output=True)
+        anchor_mode = subprocess.run(["git", "ls-tree", commit, "--", rel], cwd=root,
+                                     capture_output=True, text=True)
+        if (current is None or current_mode != "100644" or anchored.returncode
+                or not anchor_mode.stdout.startswith("100644 ") or anchored.stdout != current):
+            return False
+        current_values[name] = current
+    try:
+        approval = json.loads(current_values["approval.json"])
+        approved_digest = digest(current_values["spec.approved.yaml"])
+        approved_at = approval.get("approved_at")
+        if (not isinstance(approval, dict)
+                or set(approval) != {"schema_version", "source", "source_ref",
+                                     "approved_spec_sha256", "approved_at"}
+                or approval.get("schema_version") != 1
+                or approval.get("source") not in {"owner_chat", "owner_api"}
+                or not isinstance(approval.get("source_ref"), str) or not approval["source_ref"].strip()
+                or approval.get("approved_spec_sha256") != approved_digest
+                or not isinstance(approved_at, str)
+                or RFC3339_RE.fullmatch(approved_at) is None):
+            return False
+        recorded = current_values["spec.hash"].decode().split()[0]
+        if recorded != approved_digest:
+            return False
+    except (AttributeError, IndexError, json.JSONDecodeError, UnicodeDecodeError):
+        return False
+    return True
+
+
+def build_manifest(root: pathlib.Path, spec_path: pathlib.Path) -> dict:
+    spec_rel = str(spec_path.relative_to(root))
+    ev = evidence_dir(spec_path)
+    candidates = [
+        (spec_rel, "spec"),
+        (str((ev / "spec.approved.yaml").relative_to(root)), "approval"),
+        (str((ev / "approval.json").relative_to(root)), "approval"),
+        (str((ev / "spec.hash").relative_to(root)), "freeze"),
+        (str((ev / "tests.hash").relative_to(root)), "freeze"),
+        (str((ev / "red.json").relative_to(root)), "red"),
+        (str((ev / "test-review.json").relative_to(root)), "review"),
+        (str((ev / "autonomy.json").relative_to(root)), "autonomy"),
+    ]
+    for name, source in (("smoke.json", "smoke"), ("findings.json", "finding")):
+        if (ev / name).is_file():
+            candidates.append((str((ev / name).relative_to(root)), source))
+    red_path = ev / "red.json"
+    if red_path.is_file():
+        try:
+            red = json.loads(red_path.read_text())
+            for row in red.get("runner_results") or []:
+                for key in ("stdout_path", "stderr_path"):
+                    rel = row.get(key)
+                    if isinstance(rel, str) and (root / rel).is_file():
+                        candidates.append((rel, "red"))
+        except json.JSONDecodeError:
+            pass
+    files = []
+    seen = set()
+    for rel, source in candidates:
+        if rel in seen or not (root / rel).is_file():
+            continue
+        seen.add(rel)
+        files.append({"path": rel, "sha256": digest((root / rel).read_bytes()), "source": source})
+    head = str(git(root, "rev-parse", "HEAD"))
+    tree = str(git(root, "rev-parse", "HEAD^{tree}"))
+    return {"schema_version": 1, "spec_hash": digest(spec_path.read_bytes()),
+            "approval_commit": head, "approval_tree": tree,
+            "files": sorted(files, key=lambda row: row["path"])}
+
+
+def emit(status: str, reason: str | None, storage: str, snap: str | None,
+         rows: list[dict], invalid: list[dict], code: int,
+         *, token_rows: list[dict] | None = None) -> int:
+    token_source = rows if token_rows is None else token_rows
+    token_payload = [{"path": row["path"], "sha256": row["sha256"]} for row in token_source]
+    payload = {"schema_version": 1, "status": status, "reason": reason, "exit_code": code,
+               "storage": storage, "snapshot": snap,
+               "token": digest(canonical(token_payload)) if token_payload else None,
+               "files": rows, "invalid_files": invalid, "delivery_ready": code == 0}
+    print(json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")))
+    return code
+
+
+def main(argv: list[str]) -> int:
+    if argv == ["--help"]:
+        print(__doc__)
+        return 0
+    if argv == ["--schema"]:
+        print(json.dumps(schema_for("evidence-check"), sort_keys=True, separators=(",", ":")))
+        return 0
+    if (len(argv) not in {2, 3} or argv[1] not in {"--index", "--commit"}
+            or len(argv) == 3 and argv[2] != "--pre-dashboard"):
+        return emit("rejected", "invalid_cli", "unknown", None, [], [], 2)
+    spec_path = pathlib.Path(argv[0]).resolve()
+    root = spec_path.parents[2]
+    storage = argv[1][2:]
+    pre_dashboard = len(argv) == 3
+    try:
+        load_spec(spec_path)
+        manifest_path = evidence_dir(spec_path) / "delivery.json"
+        start_state = index_state(root) if storage == "index" else None
+        start = snapshot(root, storage)
+        manifest_rel = str(manifest_path.relative_to(root))
+        manifest_bytes, manifest_mode = snapshot_file(root, storage, manifest_rel)
+        if manifest_bytes is None or manifest_mode != "100644":
+            return emit("failed", "missing_delivery_manifest", storage, start, [], [], 1)
+        if storage == "index" and (not regular_worktree(root, manifest_rel)
+                                   or manifest_path.read_bytes() != manifest_bytes):
+            return emit("failed", "invalid_delivery_evidence", storage, start, [],
+                        [{"path": manifest_rel, "reason": "snapshot_mismatch"}], 1)
+        manifest = json.loads(manifest_bytes)
+        declared = manifest.get("files")
+        if (not isinstance(manifest, dict)
+                or set(manifest) != {"schema_version", "spec_hash", "approval_commit", "approval_tree", "files"}
+                or manifest.get("schema_version") != 1 or not isinstance(declared, list)):
+            return emit("rejected", "invalid_delivery_schema", storage, start, [], [], 2)
+        if not declared:
+            return emit("failed", "empty_delivery_set", storage, start, [], [], 1)
+        allowed_empty_streams = empty_static_stream_refs(root, spec_path, storage)
+        rows, invalid = [], []
+        seen = set()
+        for item in sorted(declared, key=lambda row: str(row.get("path", "")) if isinstance(row, dict) else ""):
+            if not isinstance(item, dict):
+                invalid.append({"path": "", "reason": "outside_repo"})
+                continue
+            if set(item) != {"path", "sha256", "source"}:
+                invalid.append({"path": str(item.get("path", "")), "reason": "hash_mismatch"})
+                continue
+            rel, expected, source = item.get("path"), item.get("sha256"), item.get("source")
+            if not isinstance(rel, str) or not valid_rel(rel):
+                invalid.append({"path": rel if isinstance(rel, str) else "", "reason": "outside_repo"})
+                continue
+            if rel in seen:
+                invalid.append({"path": rel, "reason": "hash_mismatch"})
+                continue
+            seen.add(rel)
+            payload, mode = snapshot_file(root, storage, rel)
+            if mode not in {None, "100644", "100755"}:
+                invalid.append({"path": rel, "reason": "symlink_or_nonregular"})
+            elif payload is None:
+                invalid.append({"path": rel, "reason": "missing"})
+            elif not payload and not (source == "red" and rel in allowed_empty_streams):
+                invalid.append({"path": rel, "reason": "empty"})
+            elif storage == "index" and not regular_worktree(root, rel):
+                invalid.append({"path": rel, "reason": "symlink_or_nonregular"})
+            elif storage == "index" and (root / rel).read_bytes() != payload:
+                invalid.append({"path": rel, "reason": "snapshot_mismatch"})
+            elif expected != digest(payload):
+                invalid.append({"path": rel, "reason": "hash_mismatch"})
+            elif source not in SOURCES:
+                invalid.append({"path": rel, "reason": "hash_mismatch"})
+            else:
+                rows.append({"path": rel, "sha256": digest(payload), "source": source, "bytes": len(payload)})
+        declared_sources = {row.get("path"): row.get("source") for row in declared if isinstance(row, dict)}
+        for rel, source in required_roots(root, spec_path, storage).items():
+            if declared_sources.get(rel) != source and rel not in {row.get("path") for row in invalid}:
+                invalid.append({"path": rel, "reason": "missing"})
+        ev = evidence_dir(spec_path)
+        manifest_rel = manifest_path.relative_to(root).as_posix()
+        status_rel = (ev / "status.json").relative_to(root).as_posix()
+        dashboard_rel = (ev / "dashboard.json").relative_to(root).as_posix()
+        forbidden_direct = [rel for rel in (manifest_rel, status_rel, dashboard_rel)
+                            if rel in declared_sources]
+        for rel in forbidden_direct:
+            invalid.append({"path": rel, "reason": "hash_mismatch"})
+        spec_rel = spec_path.relative_to(root).as_posix()
+        spec_payload, _ = snapshot_file(root, storage, spec_rel)
+        if spec_payload is None or manifest.get("spec_hash") != digest(spec_payload):
+            invalid.append({"path": spec_rel, "reason": "hash_mismatch"})
+        if not approval_anchor_valid(root, spec_path, storage, manifest):
+            invalid.append({"path": (ev / "approval.json").relative_to(root).as_posix(),
+                            "reason": "hash_mismatch"})
+        status_payload, status_mode = snapshot_file(root, storage, status_rel)
+        if status_payload is None:
+            invalid.append({"path": status_rel, "reason": "missing"})
+        elif status_mode != "100644" or (storage == "index" and not regular_worktree(root, status_rel)):
+            invalid.append({"path": status_rel, "reason": "symlink_or_nonregular"})
+        elif not status_payload:
+            invalid.append({"path": status_rel, "reason": "empty"})
+        elif storage == "index" and (root / status_rel).read_bytes() != status_payload:
+            invalid.append({"path": status_rel, "reason": "snapshot_mismatch"})
+        else:
+            try:
+                status_value = json.loads(status_payload)
+            except json.JSONDecodeError:
+                status_value = None
+            if not valid_status(status_value):
+                invalid.append({"path": status_rel, "reason": "hash_mismatch"})
+            else:
+                rows.append({"path": status_rel, "sha256": digest(status_payload),
+                             "source": "autonomy", "bytes": len(status_payload)})
+        rows.append({"path": manifest_rel, "sha256": digest(manifest_bytes),
+                     "source": "autonomy", "bytes": len(manifest_bytes)})
+        if not pre_dashboard:
+            dashboard_payload, dashboard_mode = snapshot_file(root, storage, dashboard_rel)
+            if dashboard_payload is None:
+                invalid.append({"path": dashboard_rel, "reason": "missing"})
+            elif dashboard_mode != "100644" or (storage == "index" and not regular_worktree(root, dashboard_rel)):
+                invalid.append({"path": dashboard_rel, "reason": "symlink_or_nonregular"})
+            elif not dashboard_payload:
+                invalid.append({"path": dashboard_rel, "reason": "empty"})
+            elif storage == "index" and (root / dashboard_rel).read_bytes() != dashboard_payload:
+                invalid.append({"path": dashboard_rel, "reason": "snapshot_mismatch"})
+            else:
+                rows.append({"path": dashboard_rel, "sha256": digest(dashboard_payload),
+                             "source": "dashboard", "bytes": len(dashboard_payload)})
+        red_rel = (ev / "red.json").relative_to(root).as_posix()
+        red_payload, _ = snapshot_file(root, storage, red_rel)
+        try:
+            red_value = json.loads(red_payload) if red_payload is not None else {}
+        except json.JSONDecodeError:
+            red_value = {}
+        red_rows = red_value.get("runner_results")
+        red_semantics_valid = (isinstance(red_value, dict)
+                               and red_value.get("schema_version") == 1
+                               and red_value.get("status") == "passed"
+                               and isinstance(red_rows, list))
+        exemptions = red_value.get("exemptions") if isinstance(red_value.get("exemptions"), dict) else {}
+        if red_semantics_valid:
+            for result_row in red_rows:
+                failure_class = result_row.get("failure_class") if isinstance(result_row, dict) else None
+                exempt = (failure_class == "exempt" and isinstance(result_row.get("scenario"), str)
+                          and result_row.get("scenario") in exemptions)
+                if (not isinstance(result_row, dict) or result_row.get("schema_version") != 1
+                        or result_row.get("red_valid") is not True or result_row.get("exit_code") != 1
+                        or failure_class not in {"assertion", "exempt"} or failure_class == "exempt" and not exempt
+                        or not isinstance(result_row.get("stdout_path"), str)
+                        or not isinstance(result_row.get("stderr_path"), str)
+                        or ("stdout_sha256" in result_row
+                            and SHA256_RE.fullmatch(str(result_row.get("stdout_sha256", ""))) is None)
+                        or ("stderr_sha256" in result_row
+                            and SHA256_RE.fullmatch(str(result_row.get("stderr_sha256", ""))) is None)):
+                    red_semantics_valid = False
+                    break
+        if not red_semantics_valid:
+            invalid.append({"path": red_rel, "reason": "hash_mismatch"})
+        if red_semantics_valid and red_rows:
+            for result_row in red_rows:
+                if not isinstance(result_row, dict) or result_row.get("red_valid") is not True:
+                    continue
+                stream_payloads = []
+                stream_valid = True
+                for key in ("stdout_path", "stderr_path"):
+                    rel = result_row.get(key)
+                    payload, mode = snapshot_file(root, storage, rel) if isinstance(rel, str) and valid_rel(rel) else (None, None)
+                    expected = result_row.get(key.replace("_path", "_sha256"))
+                    if (payload is None or mode != "100644"
+                            or expected is not None and expected != digest(payload)):
+                        stream_valid = False
+                        break
+                    stream_payloads.append(payload)
+                combined = b"\n".join(stream_payloads)
+                # Missing/hash-mismatched streams are reported by the
+                # reference verifier below.  Shape belongs to red.json only
+                # when both authenticated streams were available.
+                if (stream_valid and (not any(stream_payloads)
+                        or not any(line.startswith(b"STATIC_ASSERTION:") for line in combined.splitlines()))):
+                    invalid.append({"path": red_rel, "reason": "hash_mismatch"})
+                    break
+        references: dict[str, str | None] = {}
+        for result_row in red_value.get("runner_results") or []:
+            if not isinstance(result_row, dict):
+                continue
+            for key in ("stdout_path", "stderr_path"):
+                rel = result_row.get(key)
+                if isinstance(rel, str):
+                    references[rel] = result_row.get(key.replace("_path", "_sha256"))
+        for rel, referenced_hash in sorted(references.items()):
+            if rel in seen:
+                if (declared_sources.get(rel) != "red"
+                        or referenced_hash is not None
+                        and SHA256_RE.fullmatch(str(referenced_hash)) is None):
+                    invalid.append({"path": rel, "reason": "hash_mismatch"})
+                    continue
+                payload, mode = snapshot_file(root, storage, rel)
+                if (payload is None or mode != "100644"
+                        or referenced_hash is not None and referenced_hash != digest(payload)):
+                    invalid.append({"path": rel, "reason": "hash_mismatch"})
+                continue
+            if not valid_rel(rel):
+                invalid.append({"path": rel, "reason": "outside_repo"})
+                continue
+            # A RED reference is part of the manifest's closed world.  A file
+            # existing in the snapshot does not make an undeclared reference
+            # deliverable.
+            invalid.append({"path": rel, "reason": "missing"})
+        end_state = index_state(root) if storage == "index" else None
+        end = snapshot(root, storage)
+        if end != start:
+            if start_state is not None and end_state is not None:
+                drift_paths = {path for path in set(start_state) | set(end_state)
+                               if start_state.get(path) != end_state.get(path)}
+            else:
+                drift_paths = {row.get("path") for row in declared if isinstance(row, dict)}
+            invalid = [{"path": rel, "reason": "snapshot_mismatch"} for rel in sorted(drift_paths) if isinstance(rel, str)]
+            rows = []
+        deduped = {}
+        for row in invalid:
+            deduped.setdefault(row["path"], row)
+        invalid = sorted(deduped.values(), key=lambda row: row["path"])
+        if invalid:
+            return emit("failed", "invalid_delivery_evidence", storage, start, [], invalid, 1)
+        rows.sort(key=lambda row: row["path"])
+        direct = {manifest_rel, status_rel, dashboard_rel}
+        manifest_rows = [row for row in rows if row["path"] not in direct]
+        return emit("passed", None, storage, start, rows, [], 0, token_rows=manifest_rows)
+    except (OSError, RuntimeError, json.JSONDecodeError, ValueError) as exc:
+        return emit("failed", "git_or_evidence_error", storage, None, [],
+                    [{"path": str(spec_path), "reason": "snapshot_mismatch"}], 1)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv[1:]))

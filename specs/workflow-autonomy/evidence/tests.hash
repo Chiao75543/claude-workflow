@@ -1,0 +1,4 @@
+sha256:338690cbd7ea68a510d94ef4b2a460a7873104b19cc1b43beff144cdd4d7add1  scripts/gates/tests/fixtures/workflow-autonomy-red-baseline/autonomy
+sha256:e32643464c9f92d0e935cb7704aed66dae9e100e350946fa19348b9735001ca0  scripts/gates/tests/fixtures/workflow-autonomy-red-baseline/evidence-check
+sha256:389223f920b6868022dc33154e21fe881b083fd199380ccdcc9286454a776ccd  scripts/gates/tests/spec_workflow_autonomy.py
+sha256:131801f06ec27318d419632c96e910f7bdf25426510be57ebf01936d1abd70b3  scripts/gates/tests/workflow_autonomy_red_baseline.py

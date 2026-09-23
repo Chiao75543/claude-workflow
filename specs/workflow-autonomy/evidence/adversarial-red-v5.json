@@ -1,0 +1,96 @@
+{
+  "schema_version": 1,
+  "kind": "workflow_autonomy_adversarial_red",
+  "status": "passed",
+  "red_valid": true,
+  "argv": [
+    "python3",
+    "scripts/gates/tests/spec_workflow_autonomy.py",
+    "--adversarial"
+  ],
+  "exit_code": 1,
+  "failure_class": "assertion",
+  "guard_count": 73,
+  "assertion_red_count": 2,
+  "guard_green_count": 71,
+  "reverse_regression_green_count": 2,
+  "helper_error_count": 0,
+  "traceback_count": 0,
+  "reverse_regressions": [
+    {
+      "guard": "E07",
+      "scenario": "SC-039",
+      "result": "authorized empty static stream with valid passed RED metadata accepted"
+    },
+    {
+      "guard": "E08",
+      "scenario": "SC-031",
+      "result": "ordinary empty evidence rejected"
+    }
+  ],
+  "blocker_map": [
+    {
+      "blocker": 1,
+      "guards": ["E01", "E02", "E03", "E04", "E05", "E06", "E07", "E08", "E09", "E10", "E11", "E12", "E13", "E14", "E15", "E16", "E17", "E18", "E19", "E20", "E21"],
+      "scenarios": ["SC-011", "SC-031", "SC-039", "SC-054"],
+      "coverage": "valid manifest prerequisite, required v1 and 6c roots, spec and approval semantics, status and RED references, manifest snapshot bytes, narrow single-empty-stream exception, double-empty and missing-marker rejection"
+    },
+    {
+      "blocker": 2,
+      "guards": ["D01", "D02"],
+      "scenarios": ["SC-041"],
+      "coverage": "dashboard and pr-comment must report autonomy, status, delivery and evidence-check prerequisites and cannot authorize auto push when any is absent"
+    },
+    {
+      "blocker": 3,
+      "guards": ["T01", "T02", "T03", "T04", "T05", "T06", "R01", "R02", "Z01", "Z02", "Z03", "Z04", "Z05"],
+      "scenarios": ["SC-029", "SC-030", "SC-035", "SC-042", "SC-054"],
+      "coverage": "independent before/after/assertion review, dispatch-agent-review cross consistency, exact 59/85 coverage, RED raw references and bytes, recomputed token, safe refreeze and missing-test rejection"
+    },
+    {
+      "blocker": 4,
+      "guards": ["A01", "A02", "A03", "A04", "A05", "A06", "A07", "A08", "A09", "A10", "A11", "A12", "A13"],
+      "scenarios": ["SC-027", "SC-041", "SC-047", "SC-058"],
+      "coverage": "fixed completion snapshot, all deltas including static-red, approval and ledger spec hash, nonempty evidence, tree token, Git blob, mode, content hash, replay and verify-tests"
+    },
+    {
+      "blocker": 5,
+      "guards": ["F01", "F02", "F03", "F04", "F05", "F06", "F07", "F08", "F09", "F10", "F11", "F12", "F13", "F14", "F15", "C04", "C08"],
+      "scenarios": ["SC-031", "SC-036", "SC-038", "SC-044", "SC-057"],
+      "coverage": "findings add-time and revalidate schema, argv, path indices, cwd, stdin digest, environment allowlist, inputs, parent symlinks, snapshot drift, canonical path:line location, trailing args and fixed verb-spec order"
+    },
+    {
+      "blocker": 6,
+      "guards": ["C01", "C02", "C03", "C05", "C06", "C07"],
+      "scenarios": ["SC-032", "SC-035", "SC-057"],
+      "coverage": "version-zero mutation rejection before writes, unknown top-level and nested CLI rejection, nonempty merged ref, full evidence-tree zero-side-effect snapshots, and exact canonical 12-gate stdout/record schemas with every fixed field required, exact nested objects and array items, nullable oneOf, enums, patterns and additionalProperties false"
+    },
+    {
+      "blocker": 7,
+      "guards": ["X01"],
+      "scenarios": ["SC-039"],
+      "coverage": "process versus reported exit mismatch"
+    }
+  ],
+  "test_file": {
+    "path": "scripts/gates/tests/spec_workflow_autonomy.py",
+    "sha256": "sha256:fa70a8a5b6de093739be51878c1aa164d77fd8d9400ad160116fe435e990efb2"
+  },
+  "raw": {
+    "path": "specs/workflow-autonomy/evidence/adversarial-red-v5.stdout.log",
+    "sha256": "sha256:dd7de3384fccc10d7742b3ab107ed4ac2bb7dee208c88cb045565509f6f0f356",
+    "bytes": 26662
+  },
+  "production_wip_sha256": {
+    "scripts/gates/evidence-check": "sha256:2952f44177c06783122cae645131d64258d3542e544514e8ea3471d06b6a5869",
+    "scripts/gates/dashboard": "sha256:397f13a6426d86076fb876c5eb2a4844790e53109e9995b1361ffdaac1814b06",
+    "scripts/gates/pr-comment": "sha256:c01ac017272edfda9d9f1e0cdde884a4498dddb54a1fca1b3e6fd4917804a348",
+    "scripts/gates/test-review": "sha256:b4ac53a80163368b736dff2e6c994129c5febe261230343b1c406bf233dbfb3c",
+    "scripts/gates/autonomy": "sha256:12f71a445c9b5b62916713781bba0fe0bcf8e7dd2ff051736b19e5d66068b181",
+    "scripts/gates/red-capture": "sha256:6861e6a59ccdedae7995225326988df4bde1c28f162497a2b519246d75f25712",
+    "scripts/gates/findings": "sha256:0bf579bc4bcc3bdbb4c67c4850f0f64873ced206ad135c5587e2749e908c430e",
+    "scripts/gates/freeze-check": "sha256:c30d1b347d57c0982cc2abae34eb120fc16fe7ce153dc171801b36882eafacee",
+    "scripts/gates/runs": "sha256:0e080057367711d6300241210da2de1fa72600513420d14bb461c003a625222f"
+  },
+  "created_at": "2026-09-15T13:45:24+08:00"
+}

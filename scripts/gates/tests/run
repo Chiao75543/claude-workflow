@@ -23,6 +23,8 @@ import subprocess
 import sys
 import tempfile
 
+import spec_workflow_autonomy
+
 HERE = pathlib.Path(__file__).resolve().parent
 GATES = HERE.parent
 FIXTURES = HERE / "fixtures"
@@ -1810,6 +1812,8 @@ def main() -> int:
                 fn(tmp)
             except Exception as exc:  # noqa: BLE001
                 check(f"{fn.__name__} 執行時爆炸", False, repr(exc)[:200])
+
+        spec_workflow_autonomy.register(check)
 
     width = max(len(n) for _, n, _ in RESULTS)
     failed = 0

@@ -1,6 +1,6 @@
 {
-  "stage": "S5",
-  "label": "Owner 已核准 SC-039 empty static stream 窄例外；待重建 RED 與測試審查",
+  "stage": "closed",
+  "label": "已關閉:狀態自動回報由 #22 取代、ask_user 預設由 #25 取代;其餘(證據進 index、finding 重開規則)日後各開 <800 行小卡走 lite",
   "blocked_on": null,
-  "updated_at": "2026-09-15T09:30:00+08:00"
+  "updated_at": "2026-09-23T21:47:31+08:00"
 }

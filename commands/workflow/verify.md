@@ -9,16 +9,21 @@ tags: [workflow, verify, gates]
 
 **動作**
 
-1. `scripts/gates/` 的 G0–G7 依序跑;沒過退回 S8
+1. version 1 先跑 `scripts/gates/autonomy <spec> check`，再跑 `scripts/gates/` 的 G0–G7；沒過退回 S8
 2. `scripts/gates/smoke specs/{name}/spec.yaml`;**沒過就停,不派審查**
-3. 派 `spec-oracle` 與 `code-adversary`(fable),派完立刻 `scripts/gates/findings dispatched --gate G9|G10`;
+3. 派 `spec-oracle` 與 `code-adversary`(fable)，各自完成後記錄
+   `scripts/gates/findings specs/{name}/spec.yaml dispatched --gate G9|G10 --status completed`；
+   平台拒絕則記 `--status denied` 並停止，不得換 wording／channel 重派；
    每條 finding 用 `findings add` 收,實跑重現 → `set confirmed` / `set void`(停在 proposed 算沒處理完)
 4. `must_fix` / `overbuilt` → `scripts/gates/loop fix F-n` → 修 → 重跑 G0–G7 + 重現 → `loop resolved`
 5. `ask_user` **不修**,留給 PR 留言問人;`style` 記下不動
-6. `scripts/gates/findings check` 乾淨(或只剩 ask_user)後，stage 這次 commit 的完整內容（含
+6. `scripts/gates/findings check` 乾淨(或只剩 ask_user)後，先以 `runs --set` 寫入 local status/delivery
+   並產生 delivery manifest；stage 這次 commit 的完整內容（含
    `evidence/spec.approved.yaml`），再跑 `scripts/gates/dashboard specs/{name}/spec.yaml --pre-commit`
 7. pre-commit 全綠才進 S10；它只允許 commit，絕不允許 auto-push。commit 後立即重跑不帶
-   `--pre-commit` 的 delivery dashboard，只有已 commit 且乾淨的批准快照才可推送
+   `--pre-commit` 的 delivery dashboard（內部先以 `--pre-dashboard` 驗其餘 roots），並用
+   `evidence-check <spec> --commit` 取得 token；只有
+   HEAD 內 manifest、status、核准根、適用 gate roots 與引用檔全部 byte-exact 才可更新 committed/pr 狀態
 
 **注意**
 

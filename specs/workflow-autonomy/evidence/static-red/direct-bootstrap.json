@@ -1,0 +1,73 @@
+{
+  "schema_version": 1,
+  "kind": "direct_assertion_bootstrap",
+  "status": "passed",
+  "red_valid": true,
+  "baseline_commit": "8dbf16f",
+  "baseline_method": "git_show_tracked_production_gates_excluding_tests",
+  "argv": [
+    "python3",
+    "scripts/gates/tests/workflow_autonomy_red_baseline.py"
+  ],
+  "exit_code": 1,
+  "failure_class": "assertion",
+  "parser_used": false,
+  "scenario_count": 59,
+  "example_count": 85,
+  "assertion_failure_count": 83,
+  "exempt_green_count": 2,
+  "error_count": 0,
+  "traceback_count": 0,
+  "exempt_green_examples": [
+    {
+      "scenario": "SC-035",
+      "example": 1,
+      "reason": "既有 test-review、traceability 與 freeze-check 已能證明此相容性基準；本變更不得刻意破壞後再修回"
+    },
+    {
+      "scenario": "SC-046",
+      "example": 1,
+      "reason": "version 0 必須與 approval-source baseline 相同；既有行為已綠正是此回歸案例的必要前提"
+    }
+  ],
+  "test_files": [
+    {
+      "path": "scripts/gates/tests/workflow_autonomy_red_baseline.py",
+      "sha256": "sha256:131801f06ec27318d419632c96e910f7bdf25426510be57ebf01936d1abd70b3"
+    },
+    {
+      "path": "scripts/gates/tests/spec_workflow_autonomy.py",
+      "sha256": "sha256:fa70a8a5b6de093739be51878c1aa164d77fd8d9400ad160116fe435e990efb2"
+    },
+    {
+      "path": "scripts/gates/tests/fixtures/workflow-autonomy-red-baseline/autonomy",
+      "sha256": "sha256:338690cbd7ea68a510d94ef4b2a460a7873104b19cc1b43beff144cdd4d7add1"
+    },
+    {
+      "path": "scripts/gates/tests/fixtures/workflow-autonomy-red-baseline/evidence-check",
+      "sha256": "sha256:e32643464c9f92d0e935cb7704aed66dae9e100e350946fa19348b9735001ca0"
+    }
+  ],
+  "production_baseline": {
+    "red_capture_sha256": "sha256:577b45672b0f161c24fdef2011795086453b817c467fd290bf57795f837aa70e",
+    "supplemental_stubs": [
+      {
+        "path": "scripts/gates/tests/fixtures/workflow-autonomy-red-baseline/autonomy",
+        "sha256": "sha256:338690cbd7ea68a510d94ef4b2a460a7873104b19cc1b43beff144cdd4d7add1"
+      },
+      {
+        "path": "scripts/gates/tests/fixtures/workflow-autonomy-red-baseline/evidence-check",
+        "sha256": "sha256:e32643464c9f92d0e935cb7704aed66dae9e100e350946fa19348b9735001ca0"
+      }
+    ]
+  },
+  "stdout": {
+    "path": "specs/workflow-autonomy/evidence/static-red/direct-bootstrap.stdout.log",
+    "sha256": "sha256:d7c8526360872aa7378c00bb3307a7d584b57680f2d0c06969152c251315c228",
+    "bytes": 52062
+  },
+  "stderr": {
+    "bytes": 0
+  },
+  "created_at": "2026-09-15T13:45:24+08:00"
+}

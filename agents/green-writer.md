@@ -23,6 +23,11 @@ checklist 只是計畫,不能當通過證據。
 
 不能動的兩樣靠指紋在 S9 擋。**你改了也會被抓到,而且會被視為繞過凍結。**
 
+若派遣指定 autonomy version 1，你只能在有效 `autonomy plan` 的 `repair.files` 內寫入。每次實際寫入前
+重跑 plan/check 並逐段拒絕 symlink；完成證據必須是該 spec evidence 目錄內、固定 Git snapshot 的
+一般非空檔，交給 `autonomy complete` 保存 hash/bytes/tree token。generation conflict、未宣告 delta 或
+`autonomy check` blocker 都要停下來回報；這個 ledger 不取代 sandbox 權限。
+
 ## 遇到「規格與現實衝突」,停下來回報 —— 這是你最重要的一條規則
 
 實作到一半發現規格對環境的假設是錯的:SDK 行為跟規格寫的不一樣、既有慣例跟規格牴觸、

@@ -1,0 +1,13 @@
+{
+  "ok": false,
+  "exit_code": 1,
+  "timed_out": false,
+  "command": "scripts/gates/tests/run",
+  "duration_s": 264.8,
+  "screenshots": [],
+  "required_scenarios": [],
+  "scenario_results": [],
+  "evidence_errors": [],
+  "at": "2026-09-15T14:18:12+08:00",
+  "tree": "tree:b34816bb63d41d843ca7659cea1a66d2251d0dda"
+}

@@ -1,0 +1,399 @@
+[
+  {
+    "layer": "workflow-autonomy",
+    "runner": "static-command",
+    "argv": [
+      "python3",
+      "scripts/gates/tests/workflow_autonomy_red_baseline.py"
+    ],
+    "timeout_seconds": 120,
+    "tests": [
+      "scripts/gates/tests/workflow_autonomy_red_baseline.py",
+      "scripts/gates/tests/spec_workflow_autonomy.py",
+      "scripts/gates/tests/fixtures/workflow-autonomy-red-baseline/autonomy",
+      "scripts/gates/tests/fixtures/workflow-autonomy-red-baseline/evidence-check"
+    ],
+    "checks": [
+      {
+        "scenario": "SC-021",
+        "examples": [
+          1,
+          2
+        ]
+      },
+      {
+        "scenario": "SC-022",
+        "examples": [
+          1
+        ]
+      },
+      {
+        "scenario": "SC-023",
+        "examples": [
+          1
+        ]
+      },
+      {
+        "scenario": "SC-040",
+        "examples": [
+          1,
+          2
+        ]
+      },
+      {
+        "scenario": "SC-001",
+        "examples": [
+          1,
+          2,
+          3,
+          4
+        ]
+      },
+      {
+        "scenario": "SC-002",
+        "examples": [
+          1,
+          2,
+          3,
+          4
+        ]
+      },
+      {
+        "scenario": "SC-003",
+        "examples": [
+          1
+        ]
+      },
+      {
+        "scenario": "SC-004",
+        "examples": [
+          1
+        ]
+      },
+      {
+        "scenario": "SC-024",
+        "examples": [
+          1
+        ]
+      },
+      {
+        "scenario": "SC-025",
+        "examples": [
+          1
+        ]
+      },
+      {
+        "scenario": "SC-026",
+        "examples": [
+          1
+        ]
+      },
+      {
+        "scenario": "SC-027",
+        "examples": [
+          1
+        ]
+      },
+      {
+        "scenario": "SC-028",
+        "examples": [
+          1
+        ]
+      },
+      {
+        "scenario": "SC-041",
+        "examples": [
+          1,
+          2
+        ]
+      },
+      {
+        "scenario": "SC-047",
+        "examples": [
+          1,
+          2,
+          3,
+          4
+        ]
+      },
+      {
+        "scenario": "SC-050",
+        "examples": [
+          1
+        ]
+      },
+      {
+        "scenario": "SC-056",
+        "examples": [
+          1
+        ]
+      },
+      {
+        "scenario": "SC-057",
+        "examples": [
+          1
+        ]
+      },
+      {
+        "scenario": "SC-051",
+        "examples": [
+          1
+        ]
+      },
+      {
+        "scenario": "SC-058",
+        "examples": [
+          1
+        ]
+      },
+      {
+        "scenario": "SC-059",
+        "examples": [
+          1
+        ]
+      },
+      {
+        "scenario": "SC-005",
+        "examples": [
+          1,
+          2,
+          3,
+          4
+        ]
+      },
+      {
+        "scenario": "SC-006",
+        "examples": [
+          1
+        ]
+      },
+      {
+        "scenario": "SC-007",
+        "examples": [
+          1
+        ]
+      },
+      {
+        "scenario": "SC-029",
+        "examples": [
+          1
+        ]
+      },
+      {
+        "scenario": "SC-030",
+        "examples": [
+          1
+        ]
+      },
+      {
+        "scenario": "SC-042",
+        "examples": [
+          1
+        ]
+      },
+      {
+        "scenario": "SC-052",
+        "examples": [
+          1
+        ]
+      },
+      {
+        "scenario": "SC-053",
+        "examples": [
+          1
+        ]
+      },
+      {
+        "scenario": "SC-008",
+        "examples": [
+          1
+        ]
+      },
+      {
+        "scenario": "SC-009",
+        "examples": [
+          1
+        ]
+      },
+      {
+        "scenario": "SC-010",
+        "examples": [
+          1
+        ]
+      },
+      {
+        "scenario": "SC-011",
+        "examples": [
+          1
+        ]
+      },
+      {
+        "scenario": "SC-012",
+        "examples": [
+          1
+        ]
+      },
+      {
+        "scenario": "SC-031",
+        "examples": [
+          1,
+          2,
+          3,
+          4,
+          5,
+          6
+        ]
+      },
+      {
+        "scenario": "SC-043",
+        "examples": [
+          1
+        ]
+      },
+      {
+        "scenario": "SC-013",
+        "examples": [
+          1
+        ]
+      },
+      {
+        "scenario": "SC-014",
+        "examples": [
+          1
+        ]
+      },
+      {
+        "scenario": "SC-015",
+        "examples": [
+          1
+        ]
+      },
+      {
+        "scenario": "SC-032",
+        "examples": [
+          1,
+          2
+        ]
+      },
+      {
+        "scenario": "SC-048",
+        "examples": [
+          1
+        ]
+      },
+      {
+        "scenario": "SC-016",
+        "examples": [
+          1
+        ]
+      },
+      {
+        "scenario": "SC-017",
+        "examples": [
+          1
+        ]
+      },
+      {
+        "scenario": "SC-018",
+        "examples": [
+          1
+        ]
+      },
+      {
+        "scenario": "SC-019",
+        "examples": [
+          1
+        ]
+      },
+      {
+        "scenario": "SC-020",
+        "examples": [
+          1
+        ]
+      },
+      {
+        "scenario": "SC-033",
+        "examples": [
+          1
+        ]
+      },
+      {
+        "scenario": "SC-034",
+        "examples": [
+          1,
+          2,
+          3,
+          4
+        ]
+      },
+      {
+        "scenario": "SC-035",
+        "examples": [
+          1
+        ]
+      },
+      {
+        "scenario": "SC-054",
+        "examples": [
+          1,
+          2
+        ]
+      },
+      {
+        "scenario": "SC-055",
+        "examples": [
+          1
+        ]
+      },
+      {
+        "scenario": "SC-036",
+        "examples": [
+          1
+        ]
+      },
+      {
+        "scenario": "SC-037",
+        "examples": [
+          1
+        ]
+      },
+      {
+        "scenario": "SC-038",
+        "examples": [
+          1
+        ]
+      },
+      {
+        "scenario": "SC-044",
+        "examples": [
+          1
+        ]
+      },
+      {
+        "scenario": "SC-045",
+        "examples": [
+          1,
+          2
+        ]
+      },
+      {
+        "scenario": "SC-049",
+        "examples": [
+          1
+        ]
+      },
+      {
+        "scenario": "SC-039",
+        "examples": [
+          1
+        ]
+      },
+      {
+        "scenario": "SC-046",
+        "examples": [
+          1
+        ]
+      }
+    ]
+  }
+]

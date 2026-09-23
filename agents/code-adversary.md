@@ -62,6 +62,10 @@ F-003 · overbuilt
   repro: grep -rn "FavoritesSyncCoordinator(" App/ → 只有自己的檔案
 ```
 
+version 1 的收錄語法固定為 `findings add <spec> ... --repro-json PATH`。repro JSON 必須在 repository
+內且是一般檔；`cwd`、`argv` 的 path indices、environment 與 inputs 都用 canonical repo-relative path，
+inputs 附 SHA-256。重現前後任一 input snapshot 漂移就要求 full rerun，不能沿用舊 PASS。
+
 ## 一個已知的盲點,請額外留意
 
 「必須附重現」這條規則會系統性低估**缺席類**的問題 ——

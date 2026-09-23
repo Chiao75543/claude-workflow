@@ -1,0 +1,2497 @@
+{
+  "schema_version": 1,
+  "spec_hash": "sha256:fe5a28c60d24f65f0ef4eb8c512c969f2e378fbb33327a2498f88bed58b364a6",
+  "generated_at": "2026-09-15T14:06:26+08:00",
+  "runner": "static-command",
+  "marker": "STUB-NOT-IMPLEMENTED",
+  "exemptions": {
+    "SC-035": "既有 test-review、traceability 與 freeze-check 已能證明此相容性基準；本變更不得刻意破壞後再修回",
+    "SC-046": "version 0 必須與 approval-source baseline 相同；既有行為已綠正是此回歸案例的必要前提"
+  },
+  "required_modes": [
+    "6a",
+    "6b"
+  ],
+  "deferred_smoke": [],
+  "manual": [],
+  "reconciliation": [
+    {
+      "layer": "workflow-autonomy",
+      "declared_in_source": 85,
+      "reported_by_runner": 85,
+      "started": 85,
+      "reconciled": true
+    }
+  ],
+  "counts": {
+    "assertion": 83,
+    "exempt": 2
+  },
+  "tests": [
+    {
+      "layer": "workflow-autonomy",
+      "scenario": "SC-021",
+      "test": "SC-021 example #1",
+      "failure_class": "assertion",
+      "message": "STATIC_ASSERTION: SC-021 example #1 expected={\"effective_version\":0,\"exit_code\":0,\"legacy_behavior_preserved\":true,\"status\":\"passed\"} actual={\"exit_code\":0,\"stderr\":\"\",\"stdout\":\"  runner               'static-command'\\n  lint                 'git diff --check --'\\n  test                 'scripts/gates/tests/run'\\n  smoke                'scripts/gates/tests/run'\\n  integration_branch   'main'\\n  ci                   'none'\\n  auto_push            True\\n\\nconfig-check: PASS\\n\"}"
+    },
+    {
+      "layer": "workflow-autonomy",
+      "scenario": "SC-021",
+      "test": "SC-021 example #2",
+      "failure_class": "assertion",
+      "message": "STATIC_ASSERTION: SC-021 example #2 expected={\"effective_version\":0,\"exit_code\":0,\"legacy_behavior_preserved\":true,\"status\":\"passed\"} actual={\"exit_code\":0,\"stderr\":\"\",\"stdout\":\"  runner               'static-command'\\n  lint                 'git diff --check --'\\n  test                 'scripts/gates/tests/run'\\n  smoke                'scripts/gates/tests/run'\\n  integration_branch   'main'\\n  ci                   'none'\\n  auto_push            True\\n\\nconfig-check: PASS\\n\"}"
+    },
+    {
+      "layer": "workflow-autonomy",
+      "scenario": "SC-022",
+      "test": "SC-022 example #1",
+      "failure_class": "assertion",
+      "message": "STATIC_ASSERTION: SC-022 example #1 expected={\"effective_version\":1,\"exit_code\":0,\"models\":{\"build\":\"opus\",\"draft\":\"fable\",\"review\":\"fable\"},\"status\":\"passed\"} actual={\"exit_code\":0,\"stderr\":\"\",\"stdout\":\"  runner               'static-command'\\n  lint                 'git diff --check --'\\n  test                 'scripts/gates/tests/run'\\n  smoke                'scripts/gates/tests/run'\\n  integration_branch   'main'\\n  ci                   'none'\\n  auto_push            True\\n\\nconfig-check: PASS\\n\"}"
+    },
+    {
+      "layer": "workflow-autonomy",
+      "scenario": "SC-023",
+      "test": "SC-023 example #1",
+      "failure_class": "assertion",
+      "message": "STATIC_ASSERTION: SC-023 example #1 expected={\"exit_code\":1,\"reason\":\"unsupported_autonomy_version\",\"status\":\"rejected\"} actual={\"exit_code\":0,\"stderr\":\"\",\"stdout\":\"  runner               'static-command'\\n  lint                 'git diff --check --'\\n  test                 'scripts/gates/tests/run'\\n  smoke                'scripts/gates/tests/run'\\n  integration_branch   'main'\\n  ci                   'none'\\n  auto_push            True\\n\\nconfig-check: PASS\\n\"}"
+    },
+    {
+      "layer": "workflow-autonomy",
+      "scenario": "SC-040",
+      "test": "SC-040 example #1",
+      "failure_class": "assertion",
+      "message": "STATIC_ASSERTION: SC-040 example #1 expected={\"exit_code\":2,\"reason\":\"invalid_autonomy_schema\",\"status\":\"rejected\"} actual={\"exit_code\":0,\"stderr\":\"\",\"stdout\":\"  runner               'static-command'\\n  lint                 'git diff --check --'\\n  test                 'scripts/gates/tests/run'\\n  smoke                'scripts/gates/tests/run'\\n  integration_branch   'main'\\n  ci                   'none'\\n  auto_push            True\\n\\nconfig-check: PASS\\n\"}"
+    },
+    {
+      "layer": "workflow-autonomy",
+      "scenario": "SC-040",
+      "test": "SC-040 example #2",
+      "failure_class": "assertion",
+      "message": "STATIC_ASSERTION: SC-040 example #2 expected={\"exit_code\":2,\"reason\":\"invalid_autonomy_schema\",\"status\":\"rejected\"} actual={\"exit_code\":0,\"stderr\":\"\",\"stdout\":\"  runner               'static-command'\\n  lint                 'git diff --check --'\\n  test                 'scripts/gates/tests/run'\\n  smoke                'scripts/gates/tests/run'\\n  integration_branch   'main'\\n  ci                   'none'\\n  auto_push            True\\n\\nconfig-check: PASS\\n\"}"
+    },
+    {
+      "layer": "workflow-autonomy",
+      "scenario": "SC-001",
+      "test": "SC-001 example #1",
+      "failure_class": "assertion",
+      "message": "STATIC_ASSERTION: SC-001 example #1 expected={\"blocked_on\":null,\"exit_code\":0,\"may_continue\":true,\"status\":\"planned\"} actual={\"exit_code\":0,\"reason\":\"workflow_autonomy_gate_missing\",\"status\":\"STUB-NOT-IMPLEMENTED\"}"
+    },
+    {
+      "layer": "workflow-autonomy",
+      "scenario": "SC-001",
+      "test": "SC-001 example #2",
+      "failure_class": "assertion",
+      "message": "STATIC_ASSERTION: SC-001 example #2 expected={\"blocked_on\":null,\"exit_code\":0,\"may_continue\":true,\"status\":\"planned\"} actual={\"exit_code\":0,\"reason\":\"workflow_autonomy_gate_missing\",\"status\":\"STUB-NOT-IMPLEMENTED\"}"
+    },
+    {
+      "layer": "workflow-autonomy",
+      "scenario": "SC-001",
+      "test": "SC-001 example #3",
+      "failure_class": "assertion",
+      "message": "STATIC_ASSERTION: SC-001 example #3 expected={\"blocked_on\":null,\"exit_code\":0,\"may_continue\":true,\"status\":\"planned\"} actual={\"exit_code\":0,\"reason\":\"workflow_autonomy_gate_missing\",\"status\":\"STUB-NOT-IMPLEMENTED\"}"
+    },
+    {
+      "layer": "workflow-autonomy",
+      "scenario": "SC-001",
+      "test": "SC-001 example #4",
+      "failure_class": "assertion",
+      "message": "STATIC_ASSERTION: SC-001 example #4 expected={\"blocked_on\":null,\"exit_code\":0,\"may_continue\":true,\"status\":\"planned\"} actual={\"exit_code\":0,\"reason\":\"workflow_autonomy_gate_missing\",\"status\":\"STUB-NOT-IMPLEMENTED\"}"
+    },
+    {
+      "layer": "workflow-autonomy",
+      "scenario": "SC-002",
+      "test": "SC-002 example #1",
+      "failure_class": "assertion",
+      "message": "STATIC_ASSERTION: SC-002 example #1 expected={\"exit_code\":1,\"reason\":\"outside_approved_scope\",\"status\":\"rejected\"} actual={\"exit_code\":0,\"reason\":\"workflow_autonomy_gate_missing\",\"status\":\"STUB-NOT-IMPLEMENTED\"}"
+    },
+    {
+      "layer": "workflow-autonomy",
+      "scenario": "SC-002",
+      "test": "SC-002 example #2",
+      "failure_class": "assertion",
+      "message": "STATIC_ASSERTION: SC-002 example #2 expected={\"exit_code\":1,\"reason\":\"outside_approved_scope\",\"status\":\"rejected\"} actual={\"exit_code\":0,\"reason\":\"workflow_autonomy_gate_missing\",\"status\":\"STUB-NOT-IMPLEMENTED\"}"
+    },
+    {
+      "layer": "workflow-autonomy",
+      "scenario": "SC-002",
+      "test": "SC-002 example #3",
+      "failure_class": "assertion",
+      "message": "STATIC_ASSERTION: SC-002 example #3 expected={\"exit_code\":1,\"reason\":\"outside_approved_scope\",\"status\":\"rejected\"} actual={\"exit_code\":0,\"reason\":\"workflow_autonomy_gate_missing\",\"status\":\"STUB-NOT-IMPLEMENTED\"}"
+    },
+    {
+      "layer": "workflow-autonomy",
+      "scenario": "SC-002",
+      "test": "SC-002 example #4",
+      "failure_class": "assertion",
+      "message": "STATIC_ASSERTION: SC-002 example #4 expected={\"exit_code\":1,\"reason\":\"outside_approved_scope\",\"status\":\"rejected\"} actual={\"exit_code\":0,\"reason\":\"workflow_autonomy_gate_missing\",\"status\":\"STUB-NOT-IMPLEMENTED\"}"
+    },
+    {
+      "layer": "workflow-autonomy",
+      "scenario": "SC-003",
+      "test": "SC-003 example #1",
+      "failure_class": "assertion",
+      "message": "STATIC_ASSERTION: SC-003 example #1 expected={\"blocked_on\":\"owner\",\"exit_code\":1,\"may_continue\":false,\"status\":\"blocked\"} actual={\"exit_code\":0,\"reason\":\"workflow_autonomy_gate_missing\",\"status\":\"STUB-NOT-IMPLEMENTED\"}"
+    },
+    {
+      "layer": "workflow-autonomy",
+      "scenario": "SC-004",
+      "test": "SC-004 example #1",
+      "failure_class": "assertion",
+      "message": "STATIC_ASSERTION: SC-004 example #1 expected={\"blocked_on\":\"permission\",\"bypass_attempted\":false,\"exit_code\":1,\"status\":\"blocked\"} actual={\"exit_code\":0,\"reason\":\"workflow_autonomy_gate_missing\",\"status\":\"STUB-NOT-IMPLEMENTED\"}"
+    },
+    {
+      "layer": "workflow-autonomy",
+      "scenario": "SC-024",
+      "test": "SC-024 example #1",
+      "failure_class": "assertion",
+      "message": "STATIC_ASSERTION: SC-024 example #1 expected={\"exit_code\":1,\"may_continue\":false,\"reason\":\"missing_approved_snapshot\",\"status\":\"rejected\"} actual={\"exit_code\":0,\"reason\":\"workflow_autonomy_gate_missing\",\"status\":\"STUB-NOT-IMPLEMENTED\"}"
+    },
+    {
+      "layer": "workflow-autonomy",
+      "scenario": "SC-025",
+      "test": "SC-025 example #1",
+      "failure_class": "assertion",
+      "message": "STATIC_ASSERTION: SC-025 example #1 expected={\"exit_code\":1,\"may_continue\":false,\"reason\":\"spec_hash_mismatch\",\"status\":\"rejected\"} actual={\"exit_code\":0,\"reason\":\"workflow_autonomy_gate_missing\",\"status\":\"STUB-NOT-IMPLEMENTED\"}"
+    },
+    {
+      "layer": "workflow-autonomy",
+      "scenario": "SC-026",
+      "test": "SC-026 example #1",
+      "failure_class": "assertion",
+      "message": "STATIC_ASSERTION: SC-026 example #1 expected={\"evidence_saved\":true,\"exit_code\":0,\"status\":\"complete\"} actual={\"exit_code\":0,\"reason\":\"workflow_autonomy_gate_missing\",\"status\":\"STUB-NOT-IMPLEMENTED\"}"
+    },
+    {
+      "layer": "workflow-autonomy",
+      "scenario": "SC-027",
+      "test": "SC-027 example #1",
+      "failure_class": "assertion",
+      "message": "STATIC_ASSERTION: SC-027 example #1 expected={\"exit_code\":1,\"reason\":\"invalid_completion_evidence\",\"status\":\"rejected\"} actual={\"exit_code\":0,\"reason\":\"workflow_autonomy_gate_missing\",\"status\":\"STUB-NOT-IMPLEMENTED\"}"
+    },
+    {
+      "layer": "workflow-autonomy",
+      "scenario": "SC-028",
+      "test": "SC-028 example #1",
+      "failure_class": "assertion",
+      "message": "STATIC_ASSERTION: SC-028 example #1 expected={\"exit_code\":0,\"may_continue\":true,\"status\":\"passed\"} actual={\"exit_code\":0,\"reason\":\"workflow_autonomy_gate_missing\",\"status\":\"STUB-NOT-IMPLEMENTED\"}"
+    },
+    {
+      "layer": "workflow-autonomy",
+      "scenario": "SC-041",
+      "test": "SC-041 example #1",
+      "failure_class": "assertion",
+      "message": "STATIC_ASSERTION: SC-041 example #1 expected={\"exit_code\":1,\"may_continue\":false,\"status\":\"blocked\"} actual={\"exit_code\":0,\"reason\":\"workflow_autonomy_gate_missing\",\"status\":\"STUB-NOT-IMPLEMENTED\"}"
+    },
+    {
+      "layer": "workflow-autonomy",
+      "scenario": "SC-041",
+      "test": "SC-041 example #2",
+      "failure_class": "assertion",
+      "message": "STATIC_ASSERTION: SC-041 example #2 expected={\"exit_code\":1,\"may_continue\":false,\"status\":\"blocked\"} actual={\"exit_code\":0,\"reason\":\"workflow_autonomy_gate_missing\",\"status\":\"STUB-NOT-IMPLEMENTED\"}"
+    },
+    {
+      "layer": "workflow-autonomy",
+      "scenario": "SC-047",
+      "test": "SC-047 example #1",
+      "failure_class": "assertion",
+      "message": "STATIC_ASSERTION: SC-047 example #1 expected={\"exit_code\":1,\"reason\":\"invalid_repair_transition\",\"status\":\"rejected\",\"written\":false} actual={\"exit_code\":0,\"reason\":\"workflow_autonomy_gate_missing\",\"status\":\"STUB-NOT-IMPLEMENTED\"}"
+    },
+    {
+      "layer": "workflow-autonomy",
+      "scenario": "SC-047",
+      "test": "SC-047 example #2",
+      "failure_class": "assertion",
+      "message": "STATIC_ASSERTION: SC-047 example #2 expected={\"exit_code\":1,\"reason\":\"invalid_repair_transition\",\"status\":\"rejected\",\"written\":false} actual={\"exit_code\":0,\"reason\":\"workflow_autonomy_gate_missing\",\"status\":\"STUB-NOT-IMPLEMENTED\"}"
+    },
+    {
+      "layer": "workflow-autonomy",
+      "scenario": "SC-047",
+      "test": "SC-047 example #3",
+      "failure_class": "assertion",
+      "message": "STATIC_ASSERTION: SC-047 example #3 expected={\"exit_code\":1,\"reason\":\"invalid_repair_transition\",\"status\":\"rejected\",\"written\":false} actual={\"exit_code\":0,\"reason\":\"workflow_autonomy_gate_missing\",\"status\":\"STUB-NOT-IMPLEMENTED\"}"
+    },
+    {
+      "layer": "workflow-autonomy",
+      "scenario": "SC-047",
+      "test": "SC-047 example #4",
+      "failure_class": "assertion",
+      "message": "STATIC_ASSERTION: SC-047 example #4 expected={\"exit_code\":1,\"reason\":\"invalid_repair_transition\",\"status\":\"rejected\",\"written\":false} actual={\"exit_code\":0,\"reason\":\"workflow_autonomy_gate_missing\",\"status\":\"STUB-NOT-IMPLEMENTED\"}"
+    },
+    {
+      "layer": "workflow-autonomy",
+      "scenario": "SC-050",
+      "test": "SC-050 example #1",
+      "failure_class": "assertion",
+      "message": "STATIC_ASSERTION: SC-050 example #1 expected={\"exit_code\":0,\"generation\":1,\"idempotent\":true,\"status\":\"planned\"} actual={\"exit_code\":0,\"reason\":\"workflow_autonomy_gate_missing\",\"status\":\"STUB-NOT-IMPLEMENTED\"}"
+    },
+    {
+      "layer": "workflow-autonomy",
+      "scenario": "SC-056",
+      "test": "SC-056 example #1",
+      "failure_class": "assertion",
+      "message": "STATIC_ASSERTION: SC-056 example #1 expected={\"exit_code\":1,\"generation\":1,\"reason\":\"repair_id_conflict\",\"status\":\"rejected\",\"written\":false} actual={\"exit_code\":0,\"reason\":\"workflow_autonomy_gate_missing\",\"status\":\"STUB-NOT-IMPLEMENTED\"}"
+    },
+    {
+      "layer": "workflow-autonomy",
+      "scenario": "SC-057",
+      "test": "SC-057 example #1",
+      "failure_class": "assertion",
+      "message": "STATIC_ASSERTION: SC-057 example #1 expected={\"exit_code\":2,\"reason\":\"invalid_cli\",\"status\":\"rejected\",\"written\":false} actual={\"exit_code\":0,\"reason\":\"workflow_autonomy_gate_missing\",\"status\":\"STUB-NOT-IMPLEMENTED\"}"
+    },
+    {
+      "layer": "workflow-autonomy",
+      "scenario": "SC-051",
+      "test": "SC-051 example #1",
+      "failure_class": "assertion",
+      "message": "STATIC_ASSERTION: SC-051 example #1 expected={\"actual_generation\":3,\"exit_code\":1,\"expected_generation\":2,\"status\":\"conflict\",\"written\":false} actual={\"exit_code\":0,\"reason\":\"workflow_autonomy_gate_missing\",\"status\":\"STUB-NOT-IMPLEMENTED\"}"
+    },
+    {
+      "layer": "workflow-autonomy",
+      "scenario": "SC-058",
+      "test": "SC-058 example #1",
+      "failure_class": "assertion",
+      "message": "STATIC_ASSERTION: SC-058 example #1 expected={\"exit_code\":1,\"reason\":\"changed_path_outside_repair\",\"status\":\"rejected\",\"written\":false} actual={\"exit_code\":0,\"reason\":\"workflow_autonomy_gate_missing\",\"status\":\"STUB-NOT-IMPLEMENTED\"}"
+    },
+    {
+      "layer": "workflow-autonomy",
+      "scenario": "SC-059",
+      "test": "SC-059 example #1",
+      "failure_class": "assertion",
+      "message": "STATIC_ASSERTION: SC-059 example #1 expected={\"exit_code\":1,\"reason\":\"invalid_completion_evidence\",\"status\":\"rejected\",\"written\":false} actual={\"exit_code\":0,\"reason\":\"workflow_autonomy_gate_missing\",\"status\":\"STUB-NOT-IMPLEMENTED\"}"
+    },
+    {
+      "layer": "workflow-autonomy",
+      "scenario": "SC-005",
+      "test": "SC-005 example #1",
+      "failure_class": "assertion",
+      "message": "STATIC_ASSERTION: SC-005 example #1 expected={\"exit_code\":1,\"required_action\":\"verify_tests\",\"status\":\"rejected\"} actual={\"exit_code\":0,\"reason\":\"workflow_autonomy_gate_missing\",\"status\":\"STUB-NOT-IMPLEMENTED\"}"
+    },
+    {
+      "layer": "workflow-autonomy",
+      "scenario": "SC-005",
+      "test": "SC-005 example #2",
+      "failure_class": "assertion",
+      "message": "STATIC_ASSERTION: SC-005 example #2 expected={\"exit_code\":1,\"required_action\":\"verify_tests\",\"status\":\"rejected\"} actual={\"exit_code\":0,\"reason\":\"workflow_autonomy_gate_missing\",\"status\":\"STUB-NOT-IMPLEMENTED\"}"
+    },
+    {
+      "layer": "workflow-autonomy",
+      "scenario": "SC-005",
+      "test": "SC-005 example #3",
+      "failure_class": "assertion",
+      "message": "STATIC_ASSERTION: SC-005 example #3 expected={\"exit_code\":1,\"required_action\":\"verify_tests\",\"status\":\"rejected\"} actual={\"exit_code\":0,\"reason\":\"workflow_autonomy_gate_missing\",\"status\":\"STUB-NOT-IMPLEMENTED\"}"
+    },
+    {
+      "layer": "workflow-autonomy",
+      "scenario": "SC-005",
+      "test": "SC-005 example #4",
+      "failure_class": "assertion",
+      "message": "STATIC_ASSERTION: SC-005 example #4 expected={\"exit_code\":1,\"required_action\":\"verify_tests\",\"status\":\"rejected\"} actual={\"exit_code\":0,\"reason\":\"workflow_autonomy_gate_missing\",\"status\":\"STUB-NOT-IMPLEMENTED\"}"
+    },
+    {
+      "layer": "workflow-autonomy",
+      "scenario": "SC-006",
+      "test": "SC-006 example #1",
+      "failure_class": "assertion",
+      "message": "STATIC_ASSERTION: SC-006 example #1 expected={\"exit_code\":0,\"status\":\"complete\",\"test_contract_rebuilt\":true} actual={\"exit_code\":0,\"reason\":\"workflow_autonomy_gate_missing\",\"status\":\"STUB-NOT-IMPLEMENTED\"}"
+    },
+    {
+      "layer": "workflow-autonomy",
+      "scenario": "SC-007",
+      "test": "SC-007 example #1",
+      "failure_class": "assertion",
+      "message": "STATIC_ASSERTION: SC-007 example #1 expected={\"exit_code\":1,\"status\":\"rejected\",\"test_contract_rebuilt\":false} actual={\"exit_code\":0,\"reason\":\"workflow_autonomy_gate_missing\",\"status\":\"STUB-NOT-IMPLEMENTED\"}"
+    },
+    {
+      "layer": "workflow-autonomy",
+      "scenario": "SC-029",
+      "test": "SC-029 example #1",
+      "failure_class": "assertion",
+      "message": "STATIC_ASSERTION: SC-029 example #1 expected={\"exit_code\":1,\"reason\":\"stale_red_evidence\",\"status\":\"rejected\",\"test_contract_rebuilt\":false} actual={\"exit_code\":0,\"reason\":\"workflow_autonomy_gate_missing\",\"status\":\"STUB-NOT-IMPLEMENTED\"}"
+    },
+    {
+      "layer": "workflow-autonomy",
+      "scenario": "SC-030",
+      "test": "SC-030 example #1",
+      "failure_class": "assertion",
+      "message": "STATIC_ASSERTION: SC-030 example #1 expected={\"exit_code\":1,\"reason\":\"invalid_independent_review\",\"status\":\"rejected\",\"test_contract_rebuilt\":false} actual={\"exit_code\":0,\"reason\":\"workflow_autonomy_gate_missing\",\"status\":\"STUB-NOT-IMPLEMENTED\"}"
+    },
+    {
+      "layer": "workflow-autonomy",
+      "scenario": "SC-042",
+      "test": "SC-042 example #1",
+      "failure_class": "assertion",
+      "message": "STATIC_ASSERTION: SC-042 example #1 expected={\"exit_code\":1,\"reason\":\"assertion_weakened\",\"status\":\"rejected\",\"test_contract_rebuilt\":false} actual={\"exit_code\":0,\"reason\":\"workflow_autonomy_gate_missing\",\"status\":\"STUB-NOT-IMPLEMENTED\"}"
+    },
+    {
+      "layer": "workflow-autonomy",
+      "scenario": "SC-052",
+      "test": "SC-052 example #1",
+      "failure_class": "assertion",
+      "message": "STATIC_ASSERTION: SC-052 example #1 expected={\"exit_code\":1,\"reason\":\"tests_hash_mismatch\",\"status\":\"rejected\",\"test_contract_rebuilt\":false} actual={\"exit_code\":0,\"reason\":\"workflow_autonomy_gate_missing\",\"status\":\"STUB-NOT-IMPLEMENTED\"}"
+    },
+    {
+      "layer": "workflow-autonomy",
+      "scenario": "SC-053",
+      "test": "SC-053 example #1",
+      "failure_class": "assertion",
+      "message": "STATIC_ASSERTION: SC-053 example #1 expected={\"exit_code\":1,\"reason\":\"snapshot_drift\",\"status\":\"rejected\",\"test_contract_rebuilt\":false} actual={\"exit_code\":0,\"reason\":\"workflow_autonomy_gate_missing\",\"status\":\"STUB-NOT-IMPLEMENTED\"}"
+    },
+    {
+      "layer": "workflow-autonomy",
+      "scenario": "SC-008",
+      "test": "SC-008 example #1",
+      "failure_class": "assertion",
+      "message": "STATIC_ASSERTION: SC-008 example #1 expected={\"exit_code\":1,\"files\":[],\"invalid_files\":[{\"path\":\"data.log\",\"reason\":\"missing\"},{\"path\":\"domain.log\",\"reason\":\"missing\"},{\"path\":\"integration.log\",\"reason\":\"missing\"},{\"path\":\"view.log\",\"reason\":\"missing\"}],\"status\":\"failed\"} actual={\"exit_code\":0,\"reason\":\"workflow_evidence_gate_missing\",\"status\":\"STUB-NOT-IMPLEMENTED\"}"
+    },
+    {
+      "layer": "workflow-autonomy",
+      "scenario": "SC-009",
+      "test": "SC-009 example #1",
+      "failure_class": "assertion",
+      "message": "STATIC_ASSERTION: SC-009 example #1 expected={\"exit_code\":1,\"reason\":\"fingerprint_mismatch\",\"status\":\"failed\"} actual={\"exit_code\":1,\"stderr\":\"\",\"stdout\":\"  ✘ scripts/gates/tests/run  測試檔已被改動 —— 實作階段不得動規格測試\\n\\nfreeze-check: FAIL  (1 錯誤, 0 警告)\\n\"}"
+    },
+    {
+      "layer": "workflow-autonomy",
+      "scenario": "SC-010",
+      "test": "SC-010 example #1",
+      "failure_class": "assertion",
+      "message": "STATIC_ASSERTION: SC-010 example #1 expected={\"exit_code\":0,\"status\":\"passed\",\"storage\":\"index\"} actual={\"exit_code\":0,\"reason\":\"workflow_evidence_gate_missing\",\"status\":\"STUB-NOT-IMPLEMENTED\"}"
+    },
+    {
+      "layer": "workflow-autonomy",
+      "scenario": "SC-011",
+      "test": "SC-011 example #1",
+      "failure_class": "assertion",
+      "message": "STATIC_ASSERTION: SC-011 example #1 expected={\"delivery_ready\":false,\"exit_code\":1,\"status\":\"failed\"} actual={\"exit_code\":0,\"reason\":\"workflow_evidence_gate_missing\",\"status\":\"STUB-NOT-IMPLEMENTED\"}"
+    },
+    {
+      "layer": "workflow-autonomy",
+      "scenario": "SC-012",
+      "test": "SC-012 example #1",
+      "failure_class": "assertion",
+      "message": "STATIC_ASSERTION: SC-012 example #1 expected={\"delivery_ready\":true,\"exit_code\":0,\"status\":\"passed\"} actual={\"exit_code\":0,\"reason\":\"workflow_evidence_gate_missing\",\"status\":\"STUB-NOT-IMPLEMENTED\"}"
+    },
+    {
+      "layer": "workflow-autonomy",
+      "scenario": "SC-031",
+      "test": "SC-031 example #1",
+      "failure_class": "assertion",
+      "message": "STATIC_ASSERTION: SC-031 example #1 expected={\"exit_code\":1,\"invalid_files\":[{\"path\":\"specs/workflow-autonomy/evidence/missing.log\",\"reason\":\"missing\"}],\"status\":\"failed\"} actual={\"exit_code\":0,\"reason\":\"workflow_evidence_gate_missing\",\"status\":\"STUB-NOT-IMPLEMENTED\"}"
+    },
+    {
+      "layer": "workflow-autonomy",
+      "scenario": "SC-031",
+      "test": "SC-031 example #2",
+      "failure_class": "assertion",
+      "message": "STATIC_ASSERTION: SC-031 example #2 expected={\"exit_code\":1,\"invalid_files\":[{\"path\":\"specs/workflow-autonomy/evidence/empty.log\",\"reason\":\"empty\"}],\"status\":\"failed\"} actual={\"exit_code\":0,\"reason\":\"workflow_evidence_gate_missing\",\"status\":\"STUB-NOT-IMPLEMENTED\"}"
+    },
+    {
+      "layer": "workflow-autonomy",
+      "scenario": "SC-031",
+      "test": "SC-031 example #3",
+      "failure_class": "assertion",
+      "message": "STATIC_ASSERTION: SC-031 example #3 expected={\"exit_code\":1,\"invalid_files\":[{\"path\":\"specs/workflow-autonomy/evidence/stale.log\",\"reason\":\"hash_mismatch\"}],\"status\":\"failed\"} actual={\"exit_code\":0,\"reason\":\"workflow_evidence_gate_missing\",\"status\":\"STUB-NOT-IMPLEMENTED\"}"
+    },
+    {
+      "layer": "workflow-autonomy",
+      "scenario": "SC-031",
+      "test": "SC-031 example #4",
+      "failure_class": "assertion",
+      "message": "STATIC_ASSERTION: SC-031 example #4 expected={\"exit_code\":1,\"invalid_files\":[{\"path\":\"../outside.log\",\"reason\":\"outside_repo\"}],\"status\":\"failed\"} actual={\"exit_code\":0,\"reason\":\"workflow_evidence_gate_missing\",\"status\":\"STUB-NOT-IMPLEMENTED\"}"
+    },
+    {
+      "layer": "workflow-autonomy",
+      "scenario": "SC-031",
+      "test": "SC-031 example #5",
+      "failure_class": "assertion",
+      "message": "STATIC_ASSERTION: SC-031 example #5 expected={\"exit_code\":1,\"invalid_files\":[{\"path\":\"specs/workflow-autonomy/evidence/link.log\",\"reason\":\"symlink_or_nonregular\"}],\"status\":\"failed\"} actual={\"exit_code\":0,\"reason\":\"workflow_evidence_gate_missing\",\"status\":\"STUB-NOT-IMPLEMENTED\"}"
+    },
+    {
+      "layer": "workflow-autonomy",
+      "scenario": "SC-031",
+      "test": "SC-031 example #6",
+      "failure_class": "assertion",
+      "message": "STATIC_ASSERTION: SC-031 example #6 expected={\"exit_code\":1,\"invalid_files\":[{\"path\":\"specs/workflow-autonomy/evidence/drift.log\",\"reason\":\"snapshot_mismatch\"}],\"status\":\"failed\"} actual={\"exit_code\":0,\"reason\":\"workflow_evidence_gate_missing\",\"status\":\"STUB-NOT-IMPLEMENTED\"}"
+    },
+    {
+      "layer": "workflow-autonomy",
+      "scenario": "SC-043",
+      "test": "SC-043 example #1",
+      "failure_class": "assertion",
+      "message": "STATIC_ASSERTION: SC-043 example #1 expected={\"exit_code\":1,\"reason\":\"empty_delivery_set\",\"status\":\"failed\"} actual={\"exit_code\":0,\"reason\":\"workflow_evidence_gate_missing\",\"status\":\"STUB-NOT-IMPLEMENTED\"}"
+    },
+    {
+      "layer": "workflow-autonomy",
+      "scenario": "SC-013",
+      "test": "SC-013 example #1",
+      "failure_class": "assertion",
+      "message": "STATIC_ASSERTION: SC-013 example #1 expected={\"blocked_on\":null,\"delivery\":{\"ref\":null,\"state\":\"local\"},\"exit_code\":0,\"generation\":1,\"next_step\":\"run_tests\",\"pipeline_state\":\"running\",\"report\":{\"reason\":null,\"state\":\"pending\"},\"schema_version\":1,\"stage\":\"S8\"} actual={\"exit_code\":0,\"stderr\":\"\",\"stdout\":\"workflow-autonomy: --expect-generation 0\\n\"}"
+    },
+    {
+      "layer": "workflow-autonomy",
+      "scenario": "SC-014",
+      "test": "SC-014 example #1",
+      "failure_class": "assertion",
+      "message": "STATIC_ASSERTION: SC-014 example #1 expected={\"blocked_on\":null,\"delivery\":{\"ref\":null,\"state\":\"local\"},\"exit_code\":0,\"pipeline_state\":\"running\",\"report\":{\"reason\":\"platform_denied\",\"state\":\"denied\"},\"retry_via_other_channel\":false} actual={\"exit_code\":0,\"stderr\":\"\",\"stdout\":\"workflow-autonomy: --expect-generation 4\\n\"}"
+    },
+    {
+      "layer": "workflow-autonomy",
+      "scenario": "SC-015",
+      "test": "SC-015 example #1",
+      "failure_class": "assertion",
+      "message": "STATIC_ASSERTION: SC-015 example #1 expected={\"delivery\":{\"ref\":\"https://github.example/pull/17\",\"state\":\"pr_open\"},\"exit_code\":0,\"owner_merge_required\":true} actual={\"exit_code\":0,\"stderr\":\"\",\"stdout\":\"workflow-autonomy: --expect-generation 5\\n\"}"
+    },
+    {
+      "layer": "workflow-autonomy",
+      "scenario": "SC-032",
+      "test": "SC-032 example #1",
+      "failure_class": "assertion",
+      "message": "STATIC_ASSERTION: SC-032 example #1 expected={\"exit_code\":2,\"reason\":\"invalid_status_schema\",\"status\":\"rejected\",\"written\":false} actual={\"exit_code\":0,\"stderr\":\"\",\"stdout\":\"workflow-autonomy: --expect-generation 1\\n\"}"
+    },
+    {
+      "layer": "workflow-autonomy",
+      "scenario": "SC-032",
+      "test": "SC-032 example #2",
+      "failure_class": "assertion",
+      "message": "STATIC_ASSERTION: SC-032 example #2 expected={\"exit_code\":2,\"reason\":\"invalid_status_schema\",\"status\":\"rejected\",\"written\":false} actual={\"exit_code\":0,\"stderr\":\"\",\"stdout\":\"workflow-autonomy: --expect-generation 1\\n\"}"
+    },
+    {
+      "layer": "workflow-autonomy",
+      "scenario": "SC-048",
+      "test": "SC-048 example #1",
+      "failure_class": "assertion",
+      "message": "STATIC_ASSERTION: SC-048 example #1 expected={\"actual_generation\":6,\"exit_code\":1,\"expected_generation\":5,\"status\":\"conflict\",\"written\":false} actual={\"exit_code\":0,\"stderr\":\"\",\"stdout\":\"workflow-autonomy: --expect-generation 5\\n\"}"
+    },
+    {
+      "layer": "workflow-autonomy",
+      "scenario": "SC-016",
+      "test": "SC-016 example #1",
+      "failure_class": "assertion",
+      "message": "STATIC_ASSERTION: SC-016 example #1 expected={\"failure_class\":\"assertion\",\"gate_exit_code\":0,\"red_valid\":true} actual={\"gate_exit_code\":1,\"stderr\":\"✘ 沒有 'static-command' 的輸出解析器。已支援: swift-testing\\n\",\"stdout\":\"\"}"
+    },
+    {
+      "layer": "workflow-autonomy",
+      "scenario": "SC-017",
+      "test": "SC-017 example #1",
+      "failure_class": "assertion",
+      "message": "STATIC_ASSERTION: SC-017 example #1 expected={\"failure_class\":\"passed\",\"gate_exit_code\":1,\"red_valid\":false} actual={\"gate_exit_code\":1,\"stderr\":\"✘ 沒有 'static-command' 的輸出解析器。已支援: swift-testing\\n\",\"stdout\":\"\"}"
+    },
+    {
+      "layer": "workflow-autonomy",
+      "scenario": "SC-018",
+      "test": "SC-018 example #1",
+      "failure_class": "assertion",
+      "message": "STATIC_ASSERTION: SC-018 example #1 expected={\"failure_class\":\"error\",\"gate_exit_code\":1,\"red_valid\":false} actual={\"gate_exit_code\":1,\"stderr\":\"✘ 沒有 'static-command' 的輸出解析器。已支援: swift-testing\\n\",\"stdout\":\"\"}"
+    },
+    {
+      "layer": "workflow-autonomy",
+      "scenario": "SC-019",
+      "test": "SC-019 example #1",
+      "failure_class": "assertion",
+      "message": "STATIC_ASSERTION: SC-019 example #1 expected={\"gate_exit_code\":1,\"reason\":\"missing_example_check\",\"status\":\"failed\"} actual={\"gate_exit_code\":1,\"stderr\":\"✘ 沒有 'static-command' 的輸出解析器。已支援: swift-testing\\n\",\"stdout\":\"\"}"
+    },
+    {
+      "layer": "workflow-autonomy",
+      "scenario": "SC-020",
+      "test": "SC-020 example #1",
+      "failure_class": "assertion",
+      "message": "STATIC_ASSERTION: SC-020 example #1 expected={\"behavior_preserved\":true,\"gate_exit_code\":0,\"legacy_parser_used\":true} actual={\"failure_class\":\"assertion\",\"gate_exit_code\":0,\"layer\":\"workflow-autonomy\",\"message\":\"Expectation failed: 1 == 2\",\"scenario\":\"SC-020\",\"stderr\":\"\",\"stdout\":\"  assertion 1\\n  workflow-autonomy 宣告   1 · runner 1 · 啟動   1  OK\\n  → specs/workflow-autonomy/evidence/red.json\\nred-capture: PASS\\n\",\"test\":\"SC-020 legacy parser\"}"
+    },
+    {
+      "layer": "workflow-autonomy",
+      "scenario": "SC-033",
+      "test": "SC-033 example #1",
+      "failure_class": "assertion",
+      "message": "STATIC_ASSERTION: SC-033 example #1 expected={\"failure_class\":\"hang\",\"gate_exit_code\":1,\"red_valid\":false} actual={\"gate_exit_code\":1,\"stderr\":\"✘ 沒有 'static-command' 的輸出解析器。已支援: swift-testing\\n\",\"stdout\":\"\"}"
+    },
+    {
+      "layer": "workflow-autonomy",
+      "scenario": "SC-034",
+      "test": "SC-034 example #1",
+      "failure_class": "assertion",
+      "message": "STATIC_ASSERTION: SC-034 example #1 expected={\"gate_exit_code\":2,\"reason\":\"invalid_static_schema\",\"status\":\"rejected\"} actual={\"gate_exit_code\":1,\"stderr\":\"✘ 沒有 'static-command' 的輸出解析器。已支援: swift-testing\\n\",\"stdout\":\"\"}"
+    },
+    {
+      "layer": "workflow-autonomy",
+      "scenario": "SC-034",
+      "test": "SC-034 example #2",
+      "failure_class": "assertion",
+      "message": "STATIC_ASSERTION: SC-034 example #2 expected={\"gate_exit_code\":2,\"reason\":\"invalid_static_schema\",\"status\":\"rejected\"} actual={\"gate_exit_code\":1,\"stderr\":\"✘ 沒有 'static-command' 的輸出解析器。已支援: swift-testing\\n\",\"stdout\":\"\"}"
+    },
+    {
+      "layer": "workflow-autonomy",
+      "scenario": "SC-034",
+      "test": "SC-034 example #3",
+      "failure_class": "assertion",
+      "message": "STATIC_ASSERTION: SC-034 example #3 expected={\"gate_exit_code\":2,\"reason\":\"invalid_static_schema\",\"status\":\"rejected\"} actual={\"gate_exit_code\":1,\"stderr\":\"✘ 沒有 'static-command' 的輸出解析器。已支援: swift-testing\\n\",\"stdout\":\"\"}"
+    },
+    {
+      "layer": "workflow-autonomy",
+      "scenario": "SC-034",
+      "test": "SC-034 example #4",
+      "failure_class": "assertion",
+      "message": "STATIC_ASSERTION: SC-034 example #4 expected={\"gate_exit_code\":2,\"reason\":\"invalid_static_schema\",\"status\":\"rejected\"} actual={\"gate_exit_code\":1,\"stderr\":\"✘ 沒有 'static-command' 的輸出解析器。已支援: swift-testing\\n\",\"stdout\":\"\"}"
+    },
+    {
+      "layer": "workflow-autonomy",
+      "scenario": "SC-035",
+      "test": "SC-035 example #1",
+      "failure_class": "exempt",
+      "message": null
+    },
+    {
+      "layer": "workflow-autonomy",
+      "scenario": "SC-054",
+      "test": "SC-054 example #1",
+      "failure_class": "assertion",
+      "message": "STATIC_ASSERTION: SC-054 example #1 expected={\"failure_class\":\"error\",\"gate_exit_code\":1,\"red_valid\":false} actual={\"gate_exit_code\":1,\"stderr\":\"✘ 沒有 'static-command' 的輸出解析器。已支援: swift-testing\\n\",\"stdout\":\"\"}"
+    },
+    {
+      "layer": "workflow-autonomy",
+      "scenario": "SC-054",
+      "test": "SC-054 example #2",
+      "failure_class": "assertion",
+      "message": "STATIC_ASSERTION: SC-054 example #2 expected={\"failure_class\":\"error\",\"gate_exit_code\":1,\"red_valid\":false} actual={\"gate_exit_code\":1,\"stderr\":\"✘ 沒有 'static-command' 的輸出解析器。已支援: swift-testing\\n\",\"stdout\":\"\"}"
+    },
+    {
+      "layer": "workflow-autonomy",
+      "scenario": "SC-055",
+      "test": "SC-055 example #1",
+      "failure_class": "assertion",
+      "message": "STATIC_ASSERTION: SC-055 example #1 expected={\"gate_exit_code\":1,\"reason\":\"undeclared_static_dependency\",\"status\":\"rejected\"} actual={\"exit_code\":0,\"gate_exit_code\":0,\"stderr\":\"\",\"stdout\":\"test-review: PASS\\n\"}"
+    },
+    {
+      "layer": "workflow-autonomy",
+      "scenario": "SC-036",
+      "test": "SC-036 example #1",
+      "failure_class": "assertion",
+      "message": "STATIC_ASSERTION: SC-036 example #1 expected={\"action\":\"preserve\",\"exit_code\":0,\"fixes\":1,\"id\":\"F-7\",\"status\":\"fixed\"} actual={\"exit_code\":2,\"stderr\":\"\",\"stdout\":\"findings — 審查結果的四類分流。這就是迴圈不會無限的原因。\\n\\n  must_fix   違反某組 example / 資安或架構違規   必附重現(會紅的測試、會命中的指令)→ 必修\\n  ask_user   example 沒涵蓋的 bug、極端 edge case   必附重現 + 問句 → 問人,不自動修\\n  overbuilt  example 外的公開介面、多一層抽象       必指名哪個介面沒有任何 example 用到 → 擋,拿掉\\n  style      內部囉嗦、命名                          不需證明 → 提醒,不擋\\n\\n沒附重現的 must_fix / ask_user / overbuilt **收不進來**(證據規則)。\\n狀態:proposed → confirmed(重現實跑會紅)/ void(跑不紅)→ fixed / accepted_risk / added_example\\n\\n用法:\\n  findings <spec.yaml> add --id F-001 --gate G10 --class must_fix --title \\\"…\\\" --repro \\\"指令或測試路徑\\\"\\n                           [--sc SC-003] [--question \\\"要不要防這個?\\\"]\\n  findings <spec.yaml> set F-001 confirmed|void|fixed|accepted_risk|added_example\\n  findings <spec.yaml> dispatched --gate G9|G10   記「派過了」—— 零 finding 的乾淨審查也要留下派過的紀錄\\n  findings <spec.yaml> list\\n  findings <spec.yaml> check     還有沒有沒處理完的(proposed 也算)、或等人回答的 ask_user\\n\\n同一個重現(repro)只能有一個 id:換 id 重 add 會被拒 —— 否則 loop 的計數會歸零。\\n退出碼(check): 0 乾淨 / 1 還有待處理或待決\\n\\n\"}"
+    },
+    {
+      "layer": "workflow-autonomy",
+      "scenario": "SC-037",
+      "test": "SC-037 example #1",
+      "failure_class": "assertion",
+      "message": "STATIC_ASSERTION: SC-037 example #1 expected={\"action\":\"reappear\",\"exit_code\":1,\"finding_id_reused\":true,\"fixes\":1,\"id\":\"F-7\",\"result\":\"flipflop\"} actual={\"exit_code\":2,\"stderr\":\"\",\"stdout\":\"findings — 審查結果的四類分流。這就是迴圈不會無限的原因。\\n\\n  must_fix   違反某組 example / 資安或架構違規   必附重現(會紅的測試、會命中的指令)→ 必修\\n  ask_user   example 沒涵蓋的 bug、極端 edge case   必附重現 + 問句 → 問人,不自動修\\n  overbuilt  example 外的公開介面、多一層抽象       必指名哪個介面沒有任何 example 用到 → 擋,拿掉\\n  style      內部囉嗦、命名                          不需證明 → 提醒,不擋\\n\\n沒附重現的 must_fix / ask_user / overbuilt **收不進來**(證據規則)。\\n狀態:proposed → confirmed(重現實跑會紅)/ void(跑不紅)→ fixed / accepted_risk / added_example\\n\\n用法:\\n  findings <spec.yaml> add --id F-001 --gate G10 --class must_fix --title \\\"…\\\" --repro \\\"指令或測試路徑\\\"\\n                           [--sc SC-003] [--question \\\"要不要防這個?\\\"]\\n  findings <spec.yaml> set F-001 confirmed|void|fixed|accepted_risk|added_example\\n  findings <spec.yaml> dispatched --gate G9|G10   記「派過了」—— 零 finding 的乾淨審查也要留下派過的紀錄\\n  findings <spec.yaml> list\\n  findings <spec.yaml> check     還有沒有沒處理完的(proposed 也算)、或等人回答的 ask_user\\n\\n同一個重現(repro)只能有一個 id:換 id 重 add 會被拒 —— 否則 loop 的計數會歸零。\\n退出碼(check): 0 乾淨 / 1 還有待處理或待決\\n\\n\"}"
+    },
+    {
+      "layer": "workflow-autonomy",
+      "scenario": "SC-038",
+      "test": "SC-038 example #1",
+      "failure_class": "assertion",
+      "message": "STATIC_ASSERTION: SC-038 example #1 expected={\"exit_code\":1,\"gates\":[\"G0-G7\",\"smoke\",\"G9\",\"G10\"],\"may_claim_pass\":false,\"required_action\":\"full_rerun\"} actual={\"exit_code\":2,\"stderr\":\"\",\"stdout\":\"findings — 審查結果的四類分流。這就是迴圈不會無限的原因。\\n\\n  must_fix   違反某組 example / 資安或架構違規   必附重現(會紅的測試、會命中的指令)→ 必修\\n  ask_user   example 沒涵蓋的 bug、極端 edge case   必附重現 + 問句 → 問人,不自動修\\n  overbuilt  example 外的公開介面、多一層抽象       必指名哪個介面沒有任何 example 用到 → 擋,拿掉\\n  style      內部囉嗦、命名                          不需證明 → 提醒,不擋\\n\\n沒附重現的 must_fix / ask_user / overbuilt **收不進來**(證據規則)。\\n狀態:proposed → confirmed(重現實跑會紅)/ void(跑不紅)→ fixed / accepted_risk / added_example\\n\\n用法:\\n  findings <spec.yaml> add --id F-001 --gate G10 --class must_fix --title \\\"…\\\" --repro \\\"指令或測試路徑\\\"\\n                           [--sc SC-003] [--question \\\"要不要防這個?\\\"]\\n  findings <spec.yaml> set F-001 confirmed|void|fixed|accepted_risk|added_example\\n  findings <spec.yaml> dispatched --gate G9|G10   記「派過了」—— 零 finding 的乾淨審查也要留下派過的紀錄\\n  findings <spec.yaml> list\\n  findings <spec.yaml> check     還有沒有沒處理完的(proposed 也算)、或等人回答的 ask_user\\n\\n同一個重現(repro)只能有一個 id:換 id 重 add 會被拒 —— 否則 loop 的計數會歸零。\\n退出碼(check): 0 乾淨 / 1 還有待處理或待決\\n\\n\"}"
+    },
+    {
+      "layer": "workflow-autonomy",
+      "scenario": "SC-044",
+      "test": "SC-044 example #1",
+      "failure_class": "assertion",
+      "message": "STATIC_ASSERTION: SC-044 example #1 expected={\"canonical_id\":\"F-7\",\"exit_code\":1,\"fixes_preserved\":true,\"status\":\"rejected\"} actual={\"exit_code\":2,\"stderr\":\"\",\"stdout\":\"findings — 審查結果的四類分流。這就是迴圈不會無限的原因。\\n\\n  must_fix   違反某組 example / 資安或架構違規   必附重現(會紅的測試、會命中的指令)→ 必修\\n  ask_user   example 沒涵蓋的 bug、極端 edge case   必附重現 + 問句 → 問人,不自動修\\n  overbuilt  example 外的公開介面、多一層抽象       必指名哪個介面沒有任何 example 用到 → 擋,拿掉\\n  style      內部囉嗦、命名                          不需證明 → 提醒,不擋\\n\\n沒附重現的 must_fix / ask_user / overbuilt **收不進來**(證據規則)。\\n狀態:proposed → confirmed(重現實跑會紅)/ void(跑不紅)→ fixed / accepted_risk / added_example\\n\\n用法:\\n  findings <spec.yaml> add --id F-001 --gate G10 --class must_fix --title \\\"…\\\" --repro \\\"指令或測試路徑\\\"\\n                           [--sc SC-003] [--question \\\"要不要防這個?\\\"]\\n  findings <spec.yaml> set F-001 confirmed|void|fixed|accepted_risk|added_example\\n  findings <spec.yaml> dispatched --gate G9|G10   記「派過了」—— 零 finding 的乾淨審查也要留下派過的紀錄\\n  findings <spec.yaml> list\\n  findings <spec.yaml> check     還有沒有沒處理完的(proposed 也算)、或等人回答的 ask_user\\n\\n同一個重現(repro)只能有一個 id:換 id 重 add 會被拒 —— 否則 loop 的計數會歸零。\\n退出碼(check): 0 乾淨 / 1 還有待處理或待決\\n\\n\"}"
+    },
+    {
+      "layer": "workflow-autonomy",
+      "scenario": "SC-045",
+      "test": "SC-045 example #1",
+      "failure_class": "assertion",
+      "message": "STATIC_ASSERTION: SC-045 example #1 expected={\"exit_code\":1,\"fixes\":2,\"id\":\"F-7\",\"owner_decision_required\":true,\"status\":\"parked\"} actual={\"exit_code\":2,\"stderr\":\"\",\"stdout\":\"loop — 審查迴圈的計數器。有人在數,才不會在同一個地方打轉。\\n\\n規則(寫在這裡,不靠自律):\\n  · 同一條 finding 修 2 次還沒解 → parked,停\\n  · 同一條 finding 解了又出現       → flipflop,立即停\\n  · G10 對抗審查最多重派 1 次\\n\\n狀態在 evidence/loop.json。停下來不是叫人看程式碼,是在 PR 上列一行「需要你決定」。\\n\\n用法:\\n  loop <spec.yaml> fix <finding-id>         要開始修這條了(第 3 次會被拒)\\n  loop <spec.yaml> resolved <finding-id>    重現跑不出來了,這條解了\\n  loop <spec.yaml> reappear <finding-id>    解過的又冒出來 → flipflop\\n  loop <spec.yaml> redispatch <gate>        重派某道付費關卡(G10 上限 1)\\n  loop <spec.yaml> decided <finding-id> ship|hold|respec   人決定了(唯一能解除 parked/flipflop 的動詞)\\n  loop <spec.yaml> check                    有沒有任何一條停住\\n退出碼: 0 可以繼續 / 1 停,交給人\\n\\nfinding-id 必須存在於 evidence/findings.json —— 幽靈 id 不收,換 id 重修同一條也不行。\\nparked / flipflop 之後 AI 不能自己 `resolved` 解除;只有 `decided` 能,而那是人的決定。\\n\\n\"}"
+    },
+    {
+      "layer": "workflow-autonomy",
+      "scenario": "SC-045",
+      "test": "SC-045 example #2",
+      "failure_class": "assertion",
+      "message": "STATIC_ASSERTION: SC-045 example #2 expected={\"exit_code\":1,\"gate\":\"G10\",\"owner_decision_required\":true,\"prior_redispatches\":1,\"status\":\"blocked\"} actual={\"exit_code\":2,\"stderr\":\"\",\"stdout\":\"loop — 審查迴圈的計數器。有人在數,才不會在同一個地方打轉。\\n\\n規則(寫在這裡,不靠自律):\\n  · 同一條 finding 修 2 次還沒解 → parked,停\\n  · 同一條 finding 解了又出現       → flipflop,立即停\\n  · G10 對抗審查最多重派 1 次\\n\\n狀態在 evidence/loop.json。停下來不是叫人看程式碼,是在 PR 上列一行「需要你決定」。\\n\\n用法:\\n  loop <spec.yaml> fix <finding-id>         要開始修這條了(第 3 次會被拒)\\n  loop <spec.yaml> resolved <finding-id>    重現跑不出來了,這條解了\\n  loop <spec.yaml> reappear <finding-id>    解過的又冒出來 → flipflop\\n  loop <spec.yaml> redispatch <gate>        重派某道付費關卡(G10 上限 1)\\n  loop <spec.yaml> decided <finding-id> ship|hold|respec   人決定了(唯一能解除 parked/flipflop 的動詞)\\n  loop <spec.yaml> check                    有沒有任何一條停住\\n退出碼: 0 可以繼續 / 1 停,交給人\\n\\nfinding-id 必須存在於 evidence/findings.json —— 幽靈 id 不收,換 id 重修同一條也不行。\\nparked / flipflop 之後 AI 不能自己 `resolved` 解除;只有 `decided` 能,而那是人的決定。\\n\\n\"}"
+    },
+    {
+      "layer": "workflow-autonomy",
+      "scenario": "SC-049",
+      "test": "SC-049 example #1",
+      "failure_class": "assertion",
+      "message": "STATIC_ASSERTION: SC-049 example #1 expected={\"existing_finding_preserved\":true,\"exit_code\":1,\"reason\":\"finding_id_conflict\",\"status\":\"rejected\"} actual={\"exit_code\":2,\"stderr\":\"\",\"stdout\":\"findings — 審查結果的四類分流。這就是迴圈不會無限的原因。\\n\\n  must_fix   違反某組 example / 資安或架構違規   必附重現(會紅的測試、會命中的指令)→ 必修\\n  ask_user   example 沒涵蓋的 bug、極端 edge case   必附重現 + 問句 → 問人,不自動修\\n  overbuilt  example 外的公開介面、多一層抽象       必指名哪個介面沒有任何 example 用到 → 擋,拿掉\\n  style      內部囉嗦、命名                          不需證明 → 提醒,不擋\\n\\n沒附重現的 must_fix / ask_user / overbuilt **收不進來**(證據規則)。\\n狀態:proposed → confirmed(重現實跑會紅)/ void(跑不紅)→ fixed / accepted_risk / added_example\\n\\n用法:\\n  findings <spec.yaml> add --id F-001 --gate G10 --class must_fix --title \\\"…\\\" --repro \\\"指令或測試路徑\\\"\\n                           [--sc SC-003] [--question \\\"要不要防這個?\\\"]\\n  findings <spec.yaml> set F-001 confirmed|void|fixed|accepted_risk|added_example\\n  findings <spec.yaml> dispatched --gate G9|G10   記「派過了」—— 零 finding 的乾淨審查也要留下派過的紀錄\\n  findings <spec.yaml> list\\n  findings <spec.yaml> check     還有沒有沒處理完的(proposed 也算)、或等人回答的 ask_user\\n\\n同一個重現(repro)只能有一個 id:換 id 重 add 會被拒 —— 否則 loop 的計數會歸零。\\n退出碼(check): 0 乾淨 / 1 還有待處理或待決\\n\\n\"}"
+    },
+    {
+      "layer": "workflow-autonomy",
+      "scenario": "SC-039",
+      "test": "SC-039 example #1",
+      "failure_class": "assertion",
+      "message": "STATIC_ASSERTION: SC-039 example #1 expected={\"commit_check\":\"passed\",\"empty_static_stream_byte_exact\":true,\"empty_static_stream_included\":true,\"exit_code\":0,\"head_commit_oid_valid\":true,\"index_check\":\"passed\",\"index_tree_oid_valid\":true,\"ledger_schema\":1,\"oids_distinct\":true,\"plan\":\"planned\",\"pr_ready\":true,\"remote_actions\":[],\"repair\":\"complete\",\"status_schema\":1,\"verify\":\"passed\"} actual={\"exit_code\":1,\"failed_step\":\"config-check\",\"remote_actions\":[],\"steps\":[{\"argv\":[\"/var/folders/_h/8yrn9_yx06l8qbph67bsx2480000gn/T/workflow-sc-039-mgrbpk78/repo/scripts/gates/config-check\",\".\"],\"exit\":0,\"stderr\":\"\",\"stdout\":\"  runner               'static-command'\\n  lint                 'git diff --check --'\\n  test                 'scripts/gates/tests/run'\\n  smoke                'scripts/gates/tests/run'\\n  integration_branch   'main'\\n  ci                   'none'\\n  auto_push            True\\n\\nconfig-check: PASS\\n\"}]}"
+    },
+    {
+      "layer": "workflow-autonomy",
+      "scenario": "SC-046",
+      "test": "SC-046 example #1",
+      "failure_class": "exempt",
+      "message": null
+    }
+  ],
+  "runner_results": [
+    {
+      "schema_version": 1,
+      "layer": "workflow-autonomy",
+      "scenario": "SC-021",
+      "example": 1,
+      "argv": [
+        "python3",
+        "scripts/gates/tests/workflow_autonomy_red_baseline.py"
+      ],
+      "timeout_seconds": 120,
+      "exit_code": 1,
+      "stdout_path": "specs/workflow-autonomy/evidence/static-red/entry-001.stdout.log",
+      "stderr_path": "specs/workflow-autonomy/evidence/static-red/entry-001.stderr.log",
+      "failure_class": "assertion",
+      "marker_lines": [
+        "STATIC_ASSERTION: SC-021 example #1 expected={\"effective_version\":0,\"exit_code\":0,\"legacy_behavior_preserved\":true,\"status\":\"passed\"} actual={\"exit_code\":0,\"stderr\":\"\",\"stdout\":\"  runner               'static-command'\\n  lint                 'git diff --check --'\\n  test                 'scripts/gates/tests/run'\\n  smoke                'scripts/gates/tests/run'\\n  integration_branch   'main'\\n  ci                   'none'\\n  auto_push            True\\n\\nconfig-check: PASS\\n\"}"
+      ],
+      "red_valid": true,
+      "started_at": "2026-09-15T14:05:14+08:00",
+      "finished_at": "2026-09-15T14:06:26+08:00",
+      "tree_token": "tree:b34816bb63d41d843ca7659cea1a66d2251d0dda"
+    },
+    {
+      "schema_version": 1,
+      "layer": "workflow-autonomy",
+      "scenario": "SC-021",
+      "example": 2,
+      "argv": [
+        "python3",
+        "scripts/gates/tests/workflow_autonomy_red_baseline.py"
+      ],
+      "timeout_seconds": 120,
+      "exit_code": 1,
+      "stdout_path": "specs/workflow-autonomy/evidence/static-red/entry-001.stdout.log",
+      "stderr_path": "specs/workflow-autonomy/evidence/static-red/entry-001.stderr.log",
+      "failure_class": "assertion",
+      "marker_lines": [
+        "STATIC_ASSERTION: SC-021 example #2 expected={\"effective_version\":0,\"exit_code\":0,\"legacy_behavior_preserved\":true,\"status\":\"passed\"} actual={\"exit_code\":0,\"stderr\":\"\",\"stdout\":\"  runner               'static-command'\\n  lint                 'git diff --check --'\\n  test                 'scripts/gates/tests/run'\\n  smoke                'scripts/gates/tests/run'\\n  integration_branch   'main'\\n  ci                   'none'\\n  auto_push            True\\n\\nconfig-check: PASS\\n\"}"
+      ],
+      "red_valid": true,
+      "started_at": "2026-09-15T14:05:14+08:00",
+      "finished_at": "2026-09-15T14:06:26+08:00",
+      "tree_token": "tree:b34816bb63d41d843ca7659cea1a66d2251d0dda"
+    },
+    {
+      "schema_version": 1,
+      "layer": "workflow-autonomy",
+      "scenario": "SC-022",
+      "example": 1,
+      "argv": [
+        "python3",
+        "scripts/gates/tests/workflow_autonomy_red_baseline.py"
+      ],
+      "timeout_seconds": 120,
+      "exit_code": 1,
+      "stdout_path": "specs/workflow-autonomy/evidence/static-red/entry-001.stdout.log",
+      "stderr_path": "specs/workflow-autonomy/evidence/static-red/entry-001.stderr.log",
+      "failure_class": "assertion",
+      "marker_lines": [
+        "STATIC_ASSERTION: SC-022 example #1 expected={\"effective_version\":1,\"exit_code\":0,\"models\":{\"build\":\"opus\",\"draft\":\"fable\",\"review\":\"fable\"},\"status\":\"passed\"} actual={\"exit_code\":0,\"stderr\":\"\",\"stdout\":\"  runner               'static-command'\\n  lint                 'git diff --check --'\\n  test                 'scripts/gates/tests/run'\\n  smoke                'scripts/gates/tests/run'\\n  integration_branch   'main'\\n  ci                   'none'\\n  auto_push            True\\n\\nconfig-check: PASS\\n\"}"
+      ],
+      "red_valid": true,
+      "started_at": "2026-09-15T14:05:14+08:00",
+      "finished_at": "2026-09-15T14:06:26+08:00",
+      "tree_token": "tree:b34816bb63d41d843ca7659cea1a66d2251d0dda"
+    },
+    {
+      "schema_version": 1,
+      "layer": "workflow-autonomy",
+      "scenario": "SC-023",
+      "example": 1,
+      "argv": [
+        "python3",
+        "scripts/gates/tests/workflow_autonomy_red_baseline.py"
+      ],
+      "timeout_seconds": 120,
+      "exit_code": 1,
+      "stdout_path": "specs/workflow-autonomy/evidence/static-red/entry-001.stdout.log",
+      "stderr_path": "specs/workflow-autonomy/evidence/static-red/entry-001.stderr.log",
+      "failure_class": "assertion",
+      "marker_lines": [
+        "STATIC_ASSERTION: SC-023 example #1 expected={\"exit_code\":1,\"reason\":\"unsupported_autonomy_version\",\"status\":\"rejected\"} actual={\"exit_code\":0,\"stderr\":\"\",\"stdout\":\"  runner               'static-command'\\n  lint                 'git diff --check --'\\n  test                 'scripts/gates/tests/run'\\n  smoke                'scripts/gates/tests/run'\\n  integration_branch   'main'\\n  ci                   'none'\\n  auto_push            True\\n\\nconfig-check: PASS\\n\"}"
+      ],
+      "red_valid": true,
+      "started_at": "2026-09-15T14:05:14+08:00",
+      "finished_at": "2026-09-15T14:06:26+08:00",
+      "tree_token": "tree:b34816bb63d41d843ca7659cea1a66d2251d0dda"
+    },
+    {
+      "schema_version": 1,
+      "layer": "workflow-autonomy",
+      "scenario": "SC-040",
+      "example": 1,
+      "argv": [
+        "python3",
+        "scripts/gates/tests/workflow_autonomy_red_baseline.py"
+      ],
+      "timeout_seconds": 120,
+      "exit_code": 1,
+      "stdout_path": "specs/workflow-autonomy/evidence/static-red/entry-001.stdout.log",
+      "stderr_path": "specs/workflow-autonomy/evidence/static-red/entry-001.stderr.log",
+      "failure_class": "assertion",
+      "marker_lines": [
+        "STATIC_ASSERTION: SC-040 example #1 expected={\"exit_code\":2,\"reason\":\"invalid_autonomy_schema\",\"status\":\"rejected\"} actual={\"exit_code\":0,\"stderr\":\"\",\"stdout\":\"  runner               'static-command'\\n  lint                 'git diff --check --'\\n  test                 'scripts/gates/tests/run'\\n  smoke                'scripts/gates/tests/run'\\n  integration_branch   'main'\\n  ci                   'none'\\n  auto_push            True\\n\\nconfig-check: PASS\\n\"}"
+      ],
+      "red_valid": true,
+      "started_at": "2026-09-15T14:05:14+08:00",
+      "finished_at": "2026-09-15T14:06:26+08:00",
+      "tree_token": "tree:b34816bb63d41d843ca7659cea1a66d2251d0dda"
+    },
+    {
+      "schema_version": 1,
+      "layer": "workflow-autonomy",
+      "scenario": "SC-040",
+      "example": 2,
+      "argv": [
+        "python3",
+        "scripts/gates/tests/workflow_autonomy_red_baseline.py"
+      ],
+      "timeout_seconds": 120,
+      "exit_code": 1,
+      "stdout_path": "specs/workflow-autonomy/evidence/static-red/entry-001.stdout.log",
+      "stderr_path": "specs/workflow-autonomy/evidence/static-red/entry-001.stderr.log",
+      "failure_class": "assertion",
+      "marker_lines": [
+        "STATIC_ASSERTION: SC-040 example #2 expected={\"exit_code\":2,\"reason\":\"invalid_autonomy_schema\",\"status\":\"rejected\"} actual={\"exit_code\":0,\"stderr\":\"\",\"stdout\":\"  runner               'static-command'\\n  lint                 'git diff --check --'\\n  test                 'scripts/gates/tests/run'\\n  smoke                'scripts/gates/tests/run'\\n  integration_branch   'main'\\n  ci                   'none'\\n  auto_push            True\\n\\nconfig-check: PASS\\n\"}"
+      ],
+      "red_valid": true,
+      "started_at": "2026-09-15T14:05:14+08:00",
+      "finished_at": "2026-09-15T14:06:26+08:00",
+      "tree_token": "tree:b34816bb63d41d843ca7659cea1a66d2251d0dda"
+    },
+    {
+      "schema_version": 1,
+      "layer": "workflow-autonomy",
+      "scenario": "SC-001",
+      "example": 1,
+      "argv": [
+        "python3",
+        "scripts/gates/tests/workflow_autonomy_red_baseline.py"
+      ],
+      "timeout_seconds": 120,
+      "exit_code": 1,
+      "stdout_path": "specs/workflow-autonomy/evidence/static-red/entry-001.stdout.log",
+      "stderr_path": "specs/workflow-autonomy/evidence/static-red/entry-001.stderr.log",
+      "failure_class": "assertion",
+      "marker_lines": [
+        "STATIC_ASSERTION: SC-001 example #1 expected={\"blocked_on\":null,\"exit_code\":0,\"may_continue\":true,\"status\":\"planned\"} actual={\"exit_code\":0,\"reason\":\"workflow_autonomy_gate_missing\",\"status\":\"STUB-NOT-IMPLEMENTED\"}"
+      ],
+      "red_valid": true,
+      "started_at": "2026-09-15T14:05:14+08:00",
+      "finished_at": "2026-09-15T14:06:26+08:00",
+      "tree_token": "tree:b34816bb63d41d843ca7659cea1a66d2251d0dda"
+    },
+    {
+      "schema_version": 1,
+      "layer": "workflow-autonomy",
+      "scenario": "SC-001",
+      "example": 2,
+      "argv": [
+        "python3",
+        "scripts/gates/tests/workflow_autonomy_red_baseline.py"
+      ],
+      "timeout_seconds": 120,
+      "exit_code": 1,
+      "stdout_path": "specs/workflow-autonomy/evidence/static-red/entry-001.stdout.log",
+      "stderr_path": "specs/workflow-autonomy/evidence/static-red/entry-001.stderr.log",
+      "failure_class": "assertion",
+      "marker_lines": [
+        "STATIC_ASSERTION: SC-001 example #2 expected={\"blocked_on\":null,\"exit_code\":0,\"may_continue\":true,\"status\":\"planned\"} actual={\"exit_code\":0,\"reason\":\"workflow_autonomy_gate_missing\",\"status\":\"STUB-NOT-IMPLEMENTED\"}"
+      ],
+      "red_valid": true,
+      "started_at": "2026-09-15T14:05:14+08:00",
+      "finished_at": "2026-09-15T14:06:26+08:00",
+      "tree_token": "tree:b34816bb63d41d843ca7659cea1a66d2251d0dda"
+    },
+    {
+      "schema_version": 1,
+      "layer": "workflow-autonomy",
+      "scenario": "SC-001",
+      "example": 3,
+      "argv": [
+        "python3",
+        "scripts/gates/tests/workflow_autonomy_red_baseline.py"
+      ],
+      "timeout_seconds": 120,
+      "exit_code": 1,
+      "stdout_path": "specs/workflow-autonomy/evidence/static-red/entry-001.stdout.log",
+      "stderr_path": "specs/workflow-autonomy/evidence/static-red/entry-001.stderr.log",
+      "failure_class": "assertion",
+      "marker_lines": [
+        "STATIC_ASSERTION: SC-001 example #3 expected={\"blocked_on\":null,\"exit_code\":0,\"may_continue\":true,\"status\":\"planned\"} actual={\"exit_code\":0,\"reason\":\"workflow_autonomy_gate_missing\",\"status\":\"STUB-NOT-IMPLEMENTED\"}"
+      ],
+      "red_valid": true,
+      "started_at": "2026-09-15T14:05:14+08:00",
+      "finished_at": "2026-09-15T14:06:26+08:00",
+      "tree_token": "tree:b34816bb63d41d843ca7659cea1a66d2251d0dda"
+    },
+    {
+      "schema_version": 1,
+      "layer": "workflow-autonomy",
+      "scenario": "SC-001",
+      "example": 4,
+      "argv": [
+        "python3",
+        "scripts/gates/tests/workflow_autonomy_red_baseline.py"
+      ],
+      "timeout_seconds": 120,
+      "exit_code": 1,
+      "stdout_path": "specs/workflow-autonomy/evidence/static-red/entry-001.stdout.log",
+      "stderr_path": "specs/workflow-autonomy/evidence/static-red/entry-001.stderr.log",
+      "failure_class": "assertion",
+      "marker_lines": [
+        "STATIC_ASSERTION: SC-001 example #4 expected={\"blocked_on\":null,\"exit_code\":0,\"may_continue\":true,\"status\":\"planned\"} actual={\"exit_code\":0,\"reason\":\"workflow_autonomy_gate_missing\",\"status\":\"STUB-NOT-IMPLEMENTED\"}"
+      ],
+      "red_valid": true,
+      "started_at": "2026-09-15T14:05:14+08:00",
+      "finished_at": "2026-09-15T14:06:26+08:00",
+      "tree_token": "tree:b34816bb63d41d843ca7659cea1a66d2251d0dda"
+    },
+    {
+      "schema_version": 1,
+      "layer": "workflow-autonomy",
+      "scenario": "SC-002",
+      "example": 1,
+      "argv": [
+        "python3",
+        "scripts/gates/tests/workflow_autonomy_red_baseline.py"
+      ],
+      "timeout_seconds": 120,
+      "exit_code": 1,
+      "stdout_path": "specs/workflow-autonomy/evidence/static-red/entry-001.stdout.log",
+      "stderr_path": "specs/workflow-autonomy/evidence/static-red/entry-001.stderr.log",
+      "failure_class": "assertion",
+      "marker_lines": [
+        "STATIC_ASSERTION: SC-002 example #1 expected={\"exit_code\":1,\"reason\":\"outside_approved_scope\",\"status\":\"rejected\"} actual={\"exit_code\":0,\"reason\":\"workflow_autonomy_gate_missing\",\"status\":\"STUB-NOT-IMPLEMENTED\"}"
+      ],
+      "red_valid": true,
+      "started_at": "2026-09-15T14:05:14+08:00",
+      "finished_at": "2026-09-15T14:06:26+08:00",
+      "tree_token": "tree:b34816bb63d41d843ca7659cea1a66d2251d0dda"
+    },
+    {
+      "schema_version": 1,
+      "layer": "workflow-autonomy",
+      "scenario": "SC-002",
+      "example": 2,
+      "argv": [
+        "python3",
+        "scripts/gates/tests/workflow_autonomy_red_baseline.py"
+      ],
+      "timeout_seconds": 120,
+      "exit_code": 1,
+      "stdout_path": "specs/workflow-autonomy/evidence/static-red/entry-001.stdout.log",
+      "stderr_path": "specs/workflow-autonomy/evidence/static-red/entry-001.stderr.log",
+      "failure_class": "assertion",
+      "marker_lines": [
+        "STATIC_ASSERTION: SC-002 example #2 expected={\"exit_code\":1,\"reason\":\"outside_approved_scope\",\"status\":\"rejected\"} actual={\"exit_code\":0,\"reason\":\"workflow_autonomy_gate_missing\",\"status\":\"STUB-NOT-IMPLEMENTED\"}"
+      ],
+      "red_valid": true,
+      "started_at": "2026-09-15T14:05:14+08:00",
+      "finished_at": "2026-09-15T14:06:26+08:00",
+      "tree_token": "tree:b34816bb63d41d843ca7659cea1a66d2251d0dda"
+    },
+    {
+      "schema_version": 1,
+      "layer": "workflow-autonomy",
+      "scenario": "SC-002",
+      "example": 3,
+      "argv": [
+        "python3",
+        "scripts/gates/tests/workflow_autonomy_red_baseline.py"
+      ],
+      "timeout_seconds": 120,
+      "exit_code": 1,
+      "stdout_path": "specs/workflow-autonomy/evidence/static-red/entry-001.stdout.log",
+      "stderr_path": "specs/workflow-autonomy/evidence/static-red/entry-001.stderr.log",
+      "failure_class": "assertion",
+      "marker_lines": [
+        "STATIC_ASSERTION: SC-002 example #3 expected={\"exit_code\":1,\"reason\":\"outside_approved_scope\",\"status\":\"rejected\"} actual={\"exit_code\":0,\"reason\":\"workflow_autonomy_gate_missing\",\"status\":\"STUB-NOT-IMPLEMENTED\"}"
+      ],
+      "red_valid": true,
+      "started_at": "2026-09-15T14:05:14+08:00",
+      "finished_at": "2026-09-15T14:06:26+08:00",
+      "tree_token": "tree:b34816bb63d41d843ca7659cea1a66d2251d0dda"
+    },
+    {
+      "schema_version": 1,
+      "layer": "workflow-autonomy",
+      "scenario": "SC-002",
+      "example": 4,
+      "argv": [
+        "python3",
+        "scripts/gates/tests/workflow_autonomy_red_baseline.py"
+      ],
+      "timeout_seconds": 120,
+      "exit_code": 1,
+      "stdout_path": "specs/workflow-autonomy/evidence/static-red/entry-001.stdout.log",
+      "stderr_path": "specs/workflow-autonomy/evidence/static-red/entry-001.stderr.log",
+      "failure_class": "assertion",
+      "marker_lines": [
+        "STATIC_ASSERTION: SC-002 example #4 expected={\"exit_code\":1,\"reason\":\"outside_approved_scope\",\"status\":\"rejected\"} actual={\"exit_code\":0,\"reason\":\"workflow_autonomy_gate_missing\",\"status\":\"STUB-NOT-IMPLEMENTED\"}"
+      ],
+      "red_valid": true,
+      "started_at": "2026-09-15T14:05:14+08:00",
+      "finished_at": "2026-09-15T14:06:26+08:00",
+      "tree_token": "tree:b34816bb63d41d843ca7659cea1a66d2251d0dda"
+    },
+    {
+      "schema_version": 1,
+      "layer": "workflow-autonomy",
+      "scenario": "SC-003",
+      "example": 1,
+      "argv": [
+        "python3",
+        "scripts/gates/tests/workflow_autonomy_red_baseline.py"
+      ],
+      "timeout_seconds": 120,
+      "exit_code": 1,
+      "stdout_path": "specs/workflow-autonomy/evidence/static-red/entry-001.stdout.log",
+      "stderr_path": "specs/workflow-autonomy/evidence/static-red/entry-001.stderr.log",
+      "failure_class": "assertion",
+      "marker_lines": [
+        "STATIC_ASSERTION: SC-003 example #1 expected={\"blocked_on\":\"owner\",\"exit_code\":1,\"may_continue\":false,\"status\":\"blocked\"} actual={\"exit_code\":0,\"reason\":\"workflow_autonomy_gate_missing\",\"status\":\"STUB-NOT-IMPLEMENTED\"}"
+      ],
+      "red_valid": true,
+      "started_at": "2026-09-15T14:05:14+08:00",
+      "finished_at": "2026-09-15T14:06:26+08:00",
+      "tree_token": "tree:b34816bb63d41d843ca7659cea1a66d2251d0dda"
+    },
+    {
+      "schema_version": 1,
+      "layer": "workflow-autonomy",
+      "scenario": "SC-004",
+      "example": 1,
+      "argv": [
+        "python3",
+        "scripts/gates/tests/workflow_autonomy_red_baseline.py"
+      ],
+      "timeout_seconds": 120,
+      "exit_code": 1,
+      "stdout_path": "specs/workflow-autonomy/evidence/static-red/entry-001.stdout.log",
+      "stderr_path": "specs/workflow-autonomy/evidence/static-red/entry-001.stderr.log",
+      "failure_class": "assertion",
+      "marker_lines": [
+        "STATIC_ASSERTION: SC-004 example #1 expected={\"blocked_on\":\"permission\",\"bypass_attempted\":false,\"exit_code\":1,\"status\":\"blocked\"} actual={\"exit_code\":0,\"reason\":\"workflow_autonomy_gate_missing\",\"status\":\"STUB-NOT-IMPLEMENTED\"}"
+      ],
+      "red_valid": true,
+      "started_at": "2026-09-15T14:05:14+08:00",
+      "finished_at": "2026-09-15T14:06:26+08:00",
+      "tree_token": "tree:b34816bb63d41d843ca7659cea1a66d2251d0dda"
+    },
+    {
+      "schema_version": 1,
+      "layer": "workflow-autonomy",
+      "scenario": "SC-024",
+      "example": 1,
+      "argv": [
+        "python3",
+        "scripts/gates/tests/workflow_autonomy_red_baseline.py"
+      ],
+      "timeout_seconds": 120,
+      "exit_code": 1,
+      "stdout_path": "specs/workflow-autonomy/evidence/static-red/entry-001.stdout.log",
+      "stderr_path": "specs/workflow-autonomy/evidence/static-red/entry-001.stderr.log",
+      "failure_class": "assertion",
+      "marker_lines": [
+        "STATIC_ASSERTION: SC-024 example #1 expected={\"exit_code\":1,\"may_continue\":false,\"reason\":\"missing_approved_snapshot\",\"status\":\"rejected\"} actual={\"exit_code\":0,\"reason\":\"workflow_autonomy_gate_missing\",\"status\":\"STUB-NOT-IMPLEMENTED\"}"
+      ],
+      "red_valid": true,
+      "started_at": "2026-09-15T14:05:14+08:00",
+      "finished_at": "2026-09-15T14:06:26+08:00",
+      "tree_token": "tree:b34816bb63d41d843ca7659cea1a66d2251d0dda"
+    },
+    {
+      "schema_version": 1,
+      "layer": "workflow-autonomy",
+      "scenario": "SC-025",
+      "example": 1,
+      "argv": [
+        "python3",
+        "scripts/gates/tests/workflow_autonomy_red_baseline.py"
+      ],
+      "timeout_seconds": 120,
+      "exit_code": 1,
+      "stdout_path": "specs/workflow-autonomy/evidence/static-red/entry-001.stdout.log",
+      "stderr_path": "specs/workflow-autonomy/evidence/static-red/entry-001.stderr.log",
+      "failure_class": "assertion",
+      "marker_lines": [
+        "STATIC_ASSERTION: SC-025 example #1 expected={\"exit_code\":1,\"may_continue\":false,\"reason\":\"spec_hash_mismatch\",\"status\":\"rejected\"} actual={\"exit_code\":0,\"reason\":\"workflow_autonomy_gate_missing\",\"status\":\"STUB-NOT-IMPLEMENTED\"}"
+      ],
+      "red_valid": true,
+      "started_at": "2026-09-15T14:05:14+08:00",
+      "finished_at": "2026-09-15T14:06:26+08:00",
+      "tree_token": "tree:b34816bb63d41d843ca7659cea1a66d2251d0dda"
+    },
+    {
+      "schema_version": 1,
+      "layer": "workflow-autonomy",
+      "scenario": "SC-026",
+      "example": 1,
+      "argv": [
+        "python3",
+        "scripts/gates/tests/workflow_autonomy_red_baseline.py"
+      ],
+      "timeout_seconds": 120,
+      "exit_code": 1,
+      "stdout_path": "specs/workflow-autonomy/evidence/static-red/entry-001.stdout.log",
+      "stderr_path": "specs/workflow-autonomy/evidence/static-red/entry-001.stderr.log",
+      "failure_class": "assertion",
+      "marker_lines": [
+        "STATIC_ASSERTION: SC-026 example #1 expected={\"evidence_saved\":true,\"exit_code\":0,\"status\":\"complete\"} actual={\"exit_code\":0,\"reason\":\"workflow_autonomy_gate_missing\",\"status\":\"STUB-NOT-IMPLEMENTED\"}"
+      ],
+      "red_valid": true,
+      "started_at": "2026-09-15T14:05:14+08:00",
+      "finished_at": "2026-09-15T14:06:26+08:00",
+      "tree_token": "tree:b34816bb63d41d843ca7659cea1a66d2251d0dda"
+    },
+    {
+      "schema_version": 1,
+      "layer": "workflow-autonomy",
+      "scenario": "SC-027",
+      "example": 1,
+      "argv": [
+        "python3",
+        "scripts/gates/tests/workflow_autonomy_red_baseline.py"
+      ],
+      "timeout_seconds": 120,
+      "exit_code": 1,
+      "stdout_path": "specs/workflow-autonomy/evidence/static-red/entry-001.stdout.log",
+      "stderr_path": "specs/workflow-autonomy/evidence/static-red/entry-001.stderr.log",
+      "failure_class": "assertion",
+      "marker_lines": [
+        "STATIC_ASSERTION: SC-027 example #1 expected={\"exit_code\":1,\"reason\":\"invalid_completion_evidence\",\"status\":\"rejected\"} actual={\"exit_code\":0,\"reason\":\"workflow_autonomy_gate_missing\",\"status\":\"STUB-NOT-IMPLEMENTED\"}"
+      ],
+      "red_valid": true,
+      "started_at": "2026-09-15T14:05:14+08:00",
+      "finished_at": "2026-09-15T14:06:26+08:00",
+      "tree_token": "tree:b34816bb63d41d843ca7659cea1a66d2251d0dda"
+    },
+    {
+      "schema_version": 1,
+      "layer": "workflow-autonomy",
+      "scenario": "SC-028",
+      "example": 1,
+      "argv": [
+        "python3",
+        "scripts/gates/tests/workflow_autonomy_red_baseline.py"
+      ],
+      "timeout_seconds": 120,
+      "exit_code": 1,
+      "stdout_path": "specs/workflow-autonomy/evidence/static-red/entry-001.stdout.log",
+      "stderr_path": "specs/workflow-autonomy/evidence/static-red/entry-001.stderr.log",
+      "failure_class": "assertion",
+      "marker_lines": [
+        "STATIC_ASSERTION: SC-028 example #1 expected={\"exit_code\":0,\"may_continue\":true,\"status\":\"passed\"} actual={\"exit_code\":0,\"reason\":\"workflow_autonomy_gate_missing\",\"status\":\"STUB-NOT-IMPLEMENTED\"}"
+      ],
+      "red_valid": true,
+      "started_at": "2026-09-15T14:05:14+08:00",
+      "finished_at": "2026-09-15T14:06:26+08:00",
+      "tree_token": "tree:b34816bb63d41d843ca7659cea1a66d2251d0dda"
+    },
+    {
+      "schema_version": 1,
+      "layer": "workflow-autonomy",
+      "scenario": "SC-041",
+      "example": 1,
+      "argv": [
+        "python3",
+        "scripts/gates/tests/workflow_autonomy_red_baseline.py"
+      ],
+      "timeout_seconds": 120,
+      "exit_code": 1,
+      "stdout_path": "specs/workflow-autonomy/evidence/static-red/entry-001.stdout.log",
+      "stderr_path": "specs/workflow-autonomy/evidence/static-red/entry-001.stderr.log",
+      "failure_class": "assertion",
+      "marker_lines": [
+        "STATIC_ASSERTION: SC-041 example #1 expected={\"exit_code\":1,\"may_continue\":false,\"status\":\"blocked\"} actual={\"exit_code\":0,\"reason\":\"workflow_autonomy_gate_missing\",\"status\":\"STUB-NOT-IMPLEMENTED\"}"
+      ],
+      "red_valid": true,
+      "started_at": "2026-09-15T14:05:14+08:00",
+      "finished_at": "2026-09-15T14:06:26+08:00",
+      "tree_token": "tree:b34816bb63d41d843ca7659cea1a66d2251d0dda"
+    },
+    {
+      "schema_version": 1,
+      "layer": "workflow-autonomy",
+      "scenario": "SC-041",
+      "example": 2,
+      "argv": [
+        "python3",
+        "scripts/gates/tests/workflow_autonomy_red_baseline.py"
+      ],
+      "timeout_seconds": 120,
+      "exit_code": 1,
+      "stdout_path": "specs/workflow-autonomy/evidence/static-red/entry-001.stdout.log",
+      "stderr_path": "specs/workflow-autonomy/evidence/static-red/entry-001.stderr.log",
+      "failure_class": "assertion",
+      "marker_lines": [
+        "STATIC_ASSERTION: SC-041 example #2 expected={\"exit_code\":1,\"may_continue\":false,\"status\":\"blocked\"} actual={\"exit_code\":0,\"reason\":\"workflow_autonomy_gate_missing\",\"status\":\"STUB-NOT-IMPLEMENTED\"}"
+      ],
+      "red_valid": true,
+      "started_at": "2026-09-15T14:05:14+08:00",
+      "finished_at": "2026-09-15T14:06:26+08:00",
+      "tree_token": "tree:b34816bb63d41d843ca7659cea1a66d2251d0dda"
+    },
+    {
+      "schema_version": 1,
+      "layer": "workflow-autonomy",
+      "scenario": "SC-047",
+      "example": 1,
+      "argv": [
+        "python3",
+        "scripts/gates/tests/workflow_autonomy_red_baseline.py"
+      ],
+      "timeout_seconds": 120,
+      "exit_code": 1,
+      "stdout_path": "specs/workflow-autonomy/evidence/static-red/entry-001.stdout.log",
+      "stderr_path": "specs/workflow-autonomy/evidence/static-red/entry-001.stderr.log",
+      "failure_class": "assertion",
+      "marker_lines": [
+        "STATIC_ASSERTION: SC-047 example #1 expected={\"exit_code\":1,\"reason\":\"invalid_repair_transition\",\"status\":\"rejected\",\"written\":false} actual={\"exit_code\":0,\"reason\":\"workflow_autonomy_gate_missing\",\"status\":\"STUB-NOT-IMPLEMENTED\"}"
+      ],
+      "red_valid": true,
+      "started_at": "2026-09-15T14:05:14+08:00",
+      "finished_at": "2026-09-15T14:06:26+08:00",
+      "tree_token": "tree:b34816bb63d41d843ca7659cea1a66d2251d0dda"
+    },
+    {
+      "schema_version": 1,
+      "layer": "workflow-autonomy",
+      "scenario": "SC-047",
+      "example": 2,
+      "argv": [
+        "python3",
+        "scripts/gates/tests/workflow_autonomy_red_baseline.py"
+      ],
+      "timeout_seconds": 120,
+      "exit_code": 1,
+      "stdout_path": "specs/workflow-autonomy/evidence/static-red/entry-001.stdout.log",
+      "stderr_path": "specs/workflow-autonomy/evidence/static-red/entry-001.stderr.log",
+      "failure_class": "assertion",
+      "marker_lines": [
+        "STATIC_ASSERTION: SC-047 example #2 expected={\"exit_code\":1,\"reason\":\"invalid_repair_transition\",\"status\":\"rejected\",\"written\":false} actual={\"exit_code\":0,\"reason\":\"workflow_autonomy_gate_missing\",\"status\":\"STUB-NOT-IMPLEMENTED\"}"
+      ],
+      "red_valid": true,
+      "started_at": "2026-09-15T14:05:14+08:00",
+      "finished_at": "2026-09-15T14:06:26+08:00",
+      "tree_token": "tree:b34816bb63d41d843ca7659cea1a66d2251d0dda"
+    },
+    {
+      "schema_version": 1,
+      "layer": "workflow-autonomy",
+      "scenario": "SC-047",
+      "example": 3,
+      "argv": [
+        "python3",
+        "scripts/gates/tests/workflow_autonomy_red_baseline.py"
+      ],
+      "timeout_seconds": 120,
+      "exit_code": 1,
+      "stdout_path": "specs/workflow-autonomy/evidence/static-red/entry-001.stdout.log",
+      "stderr_path": "specs/workflow-autonomy/evidence/static-red/entry-001.stderr.log",
+      "failure_class": "assertion",
+      "marker_lines": [
+        "STATIC_ASSERTION: SC-047 example #3 expected={\"exit_code\":1,\"reason\":\"invalid_repair_transition\",\"status\":\"rejected\",\"written\":false} actual={\"exit_code\":0,\"reason\":\"workflow_autonomy_gate_missing\",\"status\":\"STUB-NOT-IMPLEMENTED\"}"
+      ],
+      "red_valid": true,
+      "started_at": "2026-09-15T14:05:14+08:00",
+      "finished_at": "2026-09-15T14:06:26+08:00",
+      "tree_token": "tree:b34816bb63d41d843ca7659cea1a66d2251d0dda"
+    },
+    {
+      "schema_version": 1,
+      "layer": "workflow-autonomy",
+      "scenario": "SC-047",
+      "example": 4,
+      "argv": [
+        "python3",
+        "scripts/gates/tests/workflow_autonomy_red_baseline.py"
+      ],
+      "timeout_seconds": 120,
+      "exit_code": 1,
+      "stdout_path": "specs/workflow-autonomy/evidence/static-red/entry-001.stdout.log",
+      "stderr_path": "specs/workflow-autonomy/evidence/static-red/entry-001.stderr.log",
+      "failure_class": "assertion",
+      "marker_lines": [
+        "STATIC_ASSERTION: SC-047 example #4 expected={\"exit_code\":1,\"reason\":\"invalid_repair_transition\",\"status\":\"rejected\",\"written\":false} actual={\"exit_code\":0,\"reason\":\"workflow_autonomy_gate_missing\",\"status\":\"STUB-NOT-IMPLEMENTED\"}"
+      ],
+      "red_valid": true,
+      "started_at": "2026-09-15T14:05:14+08:00",
+      "finished_at": "2026-09-15T14:06:26+08:00",
+      "tree_token": "tree:b34816bb63d41d843ca7659cea1a66d2251d0dda"
+    },
+    {
+      "schema_version": 1,
+      "layer": "workflow-autonomy",
+      "scenario": "SC-050",
+      "example": 1,
+      "argv": [
+        "python3",
+        "scripts/gates/tests/workflow_autonomy_red_baseline.py"
+      ],
+      "timeout_seconds": 120,
+      "exit_code": 1,
+      "stdout_path": "specs/workflow-autonomy/evidence/static-red/entry-001.stdout.log",
+      "stderr_path": "specs/workflow-autonomy/evidence/static-red/entry-001.stderr.log",
+      "failure_class": "assertion",
+      "marker_lines": [
+        "STATIC_ASSERTION: SC-050 example #1 expected={\"exit_code\":0,\"generation\":1,\"idempotent\":true,\"status\":\"planned\"} actual={\"exit_code\":0,\"reason\":\"workflow_autonomy_gate_missing\",\"status\":\"STUB-NOT-IMPLEMENTED\"}"
+      ],
+      "red_valid": true,
+      "started_at": "2026-09-15T14:05:14+08:00",
+      "finished_at": "2026-09-15T14:06:26+08:00",
+      "tree_token": "tree:b34816bb63d41d843ca7659cea1a66d2251d0dda"
+    },
+    {
+      "schema_version": 1,
+      "layer": "workflow-autonomy",
+      "scenario": "SC-056",
+      "example": 1,
+      "argv": [
+        "python3",
+        "scripts/gates/tests/workflow_autonomy_red_baseline.py"
+      ],
+      "timeout_seconds": 120,
+      "exit_code": 1,
+      "stdout_path": "specs/workflow-autonomy/evidence/static-red/entry-001.stdout.log",
+      "stderr_path": "specs/workflow-autonomy/evidence/static-red/entry-001.stderr.log",
+      "failure_class": "assertion",
+      "marker_lines": [
+        "STATIC_ASSERTION: SC-056 example #1 expected={\"exit_code\":1,\"generation\":1,\"reason\":\"repair_id_conflict\",\"status\":\"rejected\",\"written\":false} actual={\"exit_code\":0,\"reason\":\"workflow_autonomy_gate_missing\",\"status\":\"STUB-NOT-IMPLEMENTED\"}"
+      ],
+      "red_valid": true,
+      "started_at": "2026-09-15T14:05:14+08:00",
+      "finished_at": "2026-09-15T14:06:26+08:00",
+      "tree_token": "tree:b34816bb63d41d843ca7659cea1a66d2251d0dda"
+    },
+    {
+      "schema_version": 1,
+      "layer": "workflow-autonomy",
+      "scenario": "SC-057",
+      "example": 1,
+      "argv": [
+        "python3",
+        "scripts/gates/tests/workflow_autonomy_red_baseline.py"
+      ],
+      "timeout_seconds": 120,
+      "exit_code": 1,
+      "stdout_path": "specs/workflow-autonomy/evidence/static-red/entry-001.stdout.log",
+      "stderr_path": "specs/workflow-autonomy/evidence/static-red/entry-001.stderr.log",
+      "failure_class": "assertion",
+      "marker_lines": [
+        "STATIC_ASSERTION: SC-057 example #1 expected={\"exit_code\":2,\"reason\":\"invalid_cli\",\"status\":\"rejected\",\"written\":false} actual={\"exit_code\":0,\"reason\":\"workflow_autonomy_gate_missing\",\"status\":\"STUB-NOT-IMPLEMENTED\"}"
+      ],
+      "red_valid": true,
+      "started_at": "2026-09-15T14:05:14+08:00",
+      "finished_at": "2026-09-15T14:06:26+08:00",
+      "tree_token": "tree:b34816bb63d41d843ca7659cea1a66d2251d0dda"
+    },
+    {
+      "schema_version": 1,
+      "layer": "workflow-autonomy",
+      "scenario": "SC-051",
+      "example": 1,
+      "argv": [
+        "python3",
+        "scripts/gates/tests/workflow_autonomy_red_baseline.py"
+      ],
+      "timeout_seconds": 120,
+      "exit_code": 1,
+      "stdout_path": "specs/workflow-autonomy/evidence/static-red/entry-001.stdout.log",
+      "stderr_path": "specs/workflow-autonomy/evidence/static-red/entry-001.stderr.log",
+      "failure_class": "assertion",
+      "marker_lines": [
+        "STATIC_ASSERTION: SC-051 example #1 expected={\"actual_generation\":3,\"exit_code\":1,\"expected_generation\":2,\"status\":\"conflict\",\"written\":false} actual={\"exit_code\":0,\"reason\":\"workflow_autonomy_gate_missing\",\"status\":\"STUB-NOT-IMPLEMENTED\"}"
+      ],
+      "red_valid": true,
+      "started_at": "2026-09-15T14:05:14+08:00",
+      "finished_at": "2026-09-15T14:06:26+08:00",
+      "tree_token": "tree:b34816bb63d41d843ca7659cea1a66d2251d0dda"
+    },
+    {
+      "schema_version": 1,
+      "layer": "workflow-autonomy",
+      "scenario": "SC-058",
+      "example": 1,
+      "argv": [
+        "python3",
+        "scripts/gates/tests/workflow_autonomy_red_baseline.py"
+      ],
+      "timeout_seconds": 120,
+      "exit_code": 1,
+      "stdout_path": "specs/workflow-autonomy/evidence/static-red/entry-001.stdout.log",
+      "stderr_path": "specs/workflow-autonomy/evidence/static-red/entry-001.stderr.log",
+      "failure_class": "assertion",
+      "marker_lines": [
+        "STATIC_ASSERTION: SC-058 example #1 expected={\"exit_code\":1,\"reason\":\"changed_path_outside_repair\",\"status\":\"rejected\",\"written\":false} actual={\"exit_code\":0,\"reason\":\"workflow_autonomy_gate_missing\",\"status\":\"STUB-NOT-IMPLEMENTED\"}"
+      ],
+      "red_valid": true,
+      "started_at": "2026-09-15T14:05:14+08:00",
+      "finished_at": "2026-09-15T14:06:26+08:00",
+      "tree_token": "tree:b34816bb63d41d843ca7659cea1a66d2251d0dda"
+    },
+    {
+      "schema_version": 1,
+      "layer": "workflow-autonomy",
+      "scenario": "SC-059",
+      "example": 1,
+      "argv": [
+        "python3",
+        "scripts/gates/tests/workflow_autonomy_red_baseline.py"
+      ],
+      "timeout_seconds": 120,
+      "exit_code": 1,
+      "stdout_path": "specs/workflow-autonomy/evidence/static-red/entry-001.stdout.log",
+      "stderr_path": "specs/workflow-autonomy/evidence/static-red/entry-001.stderr.log",
+      "failure_class": "assertion",
+      "marker_lines": [
+        "STATIC_ASSERTION: SC-059 example #1 expected={\"exit_code\":1,\"reason\":\"invalid_completion_evidence\",\"status\":\"rejected\",\"written\":false} actual={\"exit_code\":0,\"reason\":\"workflow_autonomy_gate_missing\",\"status\":\"STUB-NOT-IMPLEMENTED\"}"
+      ],
+      "red_valid": true,
+      "started_at": "2026-09-15T14:05:14+08:00",
+      "finished_at": "2026-09-15T14:06:26+08:00",
+      "tree_token": "tree:b34816bb63d41d843ca7659cea1a66d2251d0dda"
+    },
+    {
+      "schema_version": 1,
+      "layer": "workflow-autonomy",
+      "scenario": "SC-005",
+      "example": 1,
+      "argv": [
+        "python3",
+        "scripts/gates/tests/workflow_autonomy_red_baseline.py"
+      ],
+      "timeout_seconds": 120,
+      "exit_code": 1,
+      "stdout_path": "specs/workflow-autonomy/evidence/static-red/entry-001.stdout.log",
+      "stderr_path": "specs/workflow-autonomy/evidence/static-red/entry-001.stderr.log",
+      "failure_class": "assertion",
+      "marker_lines": [
+        "STATIC_ASSERTION: SC-005 example #1 expected={\"exit_code\":1,\"required_action\":\"verify_tests\",\"status\":\"rejected\"} actual={\"exit_code\":0,\"reason\":\"workflow_autonomy_gate_missing\",\"status\":\"STUB-NOT-IMPLEMENTED\"}"
+      ],
+      "red_valid": true,
+      "started_at": "2026-09-15T14:05:14+08:00",
+      "finished_at": "2026-09-15T14:06:26+08:00",
+      "tree_token": "tree:b34816bb63d41d843ca7659cea1a66d2251d0dda"
+    },
+    {
+      "schema_version": 1,
+      "layer": "workflow-autonomy",
+      "scenario": "SC-005",
+      "example": 2,
+      "argv": [
+        "python3",
+        "scripts/gates/tests/workflow_autonomy_red_baseline.py"
+      ],
+      "timeout_seconds": 120,
+      "exit_code": 1,
+      "stdout_path": "specs/workflow-autonomy/evidence/static-red/entry-001.stdout.log",
+      "stderr_path": "specs/workflow-autonomy/evidence/static-red/entry-001.stderr.log",
+      "failure_class": "assertion",
+      "marker_lines": [
+        "STATIC_ASSERTION: SC-005 example #2 expected={\"exit_code\":1,\"required_action\":\"verify_tests\",\"status\":\"rejected\"} actual={\"exit_code\":0,\"reason\":\"workflow_autonomy_gate_missing\",\"status\":\"STUB-NOT-IMPLEMENTED\"}"
+      ],
+      "red_valid": true,
+      "started_at": "2026-09-15T14:05:14+08:00",
+      "finished_at": "2026-09-15T14:06:26+08:00",
+      "tree_token": "tree:b34816bb63d41d843ca7659cea1a66d2251d0dda"
+    },
+    {
+      "schema_version": 1,
+      "layer": "workflow-autonomy",
+      "scenario": "SC-005",
+      "example": 3,
+      "argv": [
+        "python3",
+        "scripts/gates/tests/workflow_autonomy_red_baseline.py"
+      ],
+      "timeout_seconds": 120,
+      "exit_code": 1,
+      "stdout_path": "specs/workflow-autonomy/evidence/static-red/entry-001.stdout.log",
+      "stderr_path": "specs/workflow-autonomy/evidence/static-red/entry-001.stderr.log",
+      "failure_class": "assertion",
+      "marker_lines": [
+        "STATIC_ASSERTION: SC-005 example #3 expected={\"exit_code\":1,\"required_action\":\"verify_tests\",\"status\":\"rejected\"} actual={\"exit_code\":0,\"reason\":\"workflow_autonomy_gate_missing\",\"status\":\"STUB-NOT-IMPLEMENTED\"}"
+      ],
+      "red_valid": true,
+      "started_at": "2026-09-15T14:05:14+08:00",
+      "finished_at": "2026-09-15T14:06:26+08:00",
+      "tree_token": "tree:b34816bb63d41d843ca7659cea1a66d2251d0dda"
+    },
+    {
+      "schema_version": 1,
+      "layer": "workflow-autonomy",
+      "scenario": "SC-005",
+      "example": 4,
+      "argv": [
+        "python3",
+        "scripts/gates/tests/workflow_autonomy_red_baseline.py"
+      ],
+      "timeout_seconds": 120,
+      "exit_code": 1,
+      "stdout_path": "specs/workflow-autonomy/evidence/static-red/entry-001.stdout.log",
+      "stderr_path": "specs/workflow-autonomy/evidence/static-red/entry-001.stderr.log",
+      "failure_class": "assertion",
+      "marker_lines": [
+        "STATIC_ASSERTION: SC-005 example #4 expected={\"exit_code\":1,\"required_action\":\"verify_tests\",\"status\":\"rejected\"} actual={\"exit_code\":0,\"reason\":\"workflow_autonomy_gate_missing\",\"status\":\"STUB-NOT-IMPLEMENTED\"}"
+      ],
+      "red_valid": true,
+      "started_at": "2026-09-15T14:05:14+08:00",
+      "finished_at": "2026-09-15T14:06:26+08:00",
+      "tree_token": "tree:b34816bb63d41d843ca7659cea1a66d2251d0dda"
+    },
+    {
+      "schema_version": 1,
+      "layer": "workflow-autonomy",
+      "scenario": "SC-006",
+      "example": 1,
+      "argv": [
+        "python3",
+        "scripts/gates/tests/workflow_autonomy_red_baseline.py"
+      ],
+      "timeout_seconds": 120,
+      "exit_code": 1,
+      "stdout_path": "specs/workflow-autonomy/evidence/static-red/entry-001.stdout.log",
+      "stderr_path": "specs/workflow-autonomy/evidence/static-red/entry-001.stderr.log",
+      "failure_class": "assertion",
+      "marker_lines": [
+        "STATIC_ASSERTION: SC-006 example #1 expected={\"exit_code\":0,\"status\":\"complete\",\"test_contract_rebuilt\":true} actual={\"exit_code\":0,\"reason\":\"workflow_autonomy_gate_missing\",\"status\":\"STUB-NOT-IMPLEMENTED\"}"
+      ],
+      "red_valid": true,
+      "started_at": "2026-09-15T14:05:14+08:00",
+      "finished_at": "2026-09-15T14:06:26+08:00",
+      "tree_token": "tree:b34816bb63d41d843ca7659cea1a66d2251d0dda"
+    },
+    {
+      "schema_version": 1,
+      "layer": "workflow-autonomy",
+      "scenario": "SC-007",
+      "example": 1,
+      "argv": [
+        "python3",
+        "scripts/gates/tests/workflow_autonomy_red_baseline.py"
+      ],
+      "timeout_seconds": 120,
+      "exit_code": 1,
+      "stdout_path": "specs/workflow-autonomy/evidence/static-red/entry-001.stdout.log",
+      "stderr_path": "specs/workflow-autonomy/evidence/static-red/entry-001.stderr.log",
+      "failure_class": "assertion",
+      "marker_lines": [
+        "STATIC_ASSERTION: SC-007 example #1 expected={\"exit_code\":1,\"status\":\"rejected\",\"test_contract_rebuilt\":false} actual={\"exit_code\":0,\"reason\":\"workflow_autonomy_gate_missing\",\"status\":\"STUB-NOT-IMPLEMENTED\"}"
+      ],
+      "red_valid": true,
+      "started_at": "2026-09-15T14:05:14+08:00",
+      "finished_at": "2026-09-15T14:06:26+08:00",
+      "tree_token": "tree:b34816bb63d41d843ca7659cea1a66d2251d0dda"
+    },
+    {
+      "schema_version": 1,
+      "layer": "workflow-autonomy",
+      "scenario": "SC-029",
+      "example": 1,
+      "argv": [
+        "python3",
+        "scripts/gates/tests/workflow_autonomy_red_baseline.py"
+      ],
+      "timeout_seconds": 120,
+      "exit_code": 1,
+      "stdout_path": "specs/workflow-autonomy/evidence/static-red/entry-001.stdout.log",
+      "stderr_path": "specs/workflow-autonomy/evidence/static-red/entry-001.stderr.log",
+      "failure_class": "assertion",
+      "marker_lines": [
+        "STATIC_ASSERTION: SC-029 example #1 expected={\"exit_code\":1,\"reason\":\"stale_red_evidence\",\"status\":\"rejected\",\"test_contract_rebuilt\":false} actual={\"exit_code\":0,\"reason\":\"workflow_autonomy_gate_missing\",\"status\":\"STUB-NOT-IMPLEMENTED\"}"
+      ],
+      "red_valid": true,
+      "started_at": "2026-09-15T14:05:14+08:00",
+      "finished_at": "2026-09-15T14:06:26+08:00",
+      "tree_token": "tree:b34816bb63d41d843ca7659cea1a66d2251d0dda"
+    },
+    {
+      "schema_version": 1,
+      "layer": "workflow-autonomy",
+      "scenario": "SC-030",
+      "example": 1,
+      "argv": [
+        "python3",
+        "scripts/gates/tests/workflow_autonomy_red_baseline.py"
+      ],
+      "timeout_seconds": 120,
+      "exit_code": 1,
+      "stdout_path": "specs/workflow-autonomy/evidence/static-red/entry-001.stdout.log",
+      "stderr_path": "specs/workflow-autonomy/evidence/static-red/entry-001.stderr.log",
+      "failure_class": "assertion",
+      "marker_lines": [
+        "STATIC_ASSERTION: SC-030 example #1 expected={\"exit_code\":1,\"reason\":\"invalid_independent_review\",\"status\":\"rejected\",\"test_contract_rebuilt\":false} actual={\"exit_code\":0,\"reason\":\"workflow_autonomy_gate_missing\",\"status\":\"STUB-NOT-IMPLEMENTED\"}"
+      ],
+      "red_valid": true,
+      "started_at": "2026-09-15T14:05:14+08:00",
+      "finished_at": "2026-09-15T14:06:26+08:00",
+      "tree_token": "tree:b34816bb63d41d843ca7659cea1a66d2251d0dda"
+    },
+    {
+      "schema_version": 1,
+      "layer": "workflow-autonomy",
+      "scenario": "SC-042",
+      "example": 1,
+      "argv": [
+        "python3",
+        "scripts/gates/tests/workflow_autonomy_red_baseline.py"
+      ],
+      "timeout_seconds": 120,
+      "exit_code": 1,
+      "stdout_path": "specs/workflow-autonomy/evidence/static-red/entry-001.stdout.log",
+      "stderr_path": "specs/workflow-autonomy/evidence/static-red/entry-001.stderr.log",
+      "failure_class": "assertion",
+      "marker_lines": [
+        "STATIC_ASSERTION: SC-042 example #1 expected={\"exit_code\":1,\"reason\":\"assertion_weakened\",\"status\":\"rejected\",\"test_contract_rebuilt\":false} actual={\"exit_code\":0,\"reason\":\"workflow_autonomy_gate_missing\",\"status\":\"STUB-NOT-IMPLEMENTED\"}"
+      ],
+      "red_valid": true,
+      "started_at": "2026-09-15T14:05:14+08:00",
+      "finished_at": "2026-09-15T14:06:26+08:00",
+      "tree_token": "tree:b34816bb63d41d843ca7659cea1a66d2251d0dda"
+    },
+    {
+      "schema_version": 1,
+      "layer": "workflow-autonomy",
+      "scenario": "SC-052",
+      "example": 1,
+      "argv": [
+        "python3",
+        "scripts/gates/tests/workflow_autonomy_red_baseline.py"
+      ],
+      "timeout_seconds": 120,
+      "exit_code": 1,
+      "stdout_path": "specs/workflow-autonomy/evidence/static-red/entry-001.stdout.log",
+      "stderr_path": "specs/workflow-autonomy/evidence/static-red/entry-001.stderr.log",
+      "failure_class": "assertion",
+      "marker_lines": [
+        "STATIC_ASSERTION: SC-052 example #1 expected={\"exit_code\":1,\"reason\":\"tests_hash_mismatch\",\"status\":\"rejected\",\"test_contract_rebuilt\":false} actual={\"exit_code\":0,\"reason\":\"workflow_autonomy_gate_missing\",\"status\":\"STUB-NOT-IMPLEMENTED\"}"
+      ],
+      "red_valid": true,
+      "started_at": "2026-09-15T14:05:14+08:00",
+      "finished_at": "2026-09-15T14:06:26+08:00",
+      "tree_token": "tree:b34816bb63d41d843ca7659cea1a66d2251d0dda"
+    },
+    {
+      "schema_version": 1,
+      "layer": "workflow-autonomy",
+      "scenario": "SC-053",
+      "example": 1,
+      "argv": [
+        "python3",
+        "scripts/gates/tests/workflow_autonomy_red_baseline.py"
+      ],
+      "timeout_seconds": 120,
+      "exit_code": 1,
+      "stdout_path": "specs/workflow-autonomy/evidence/static-red/entry-001.stdout.log",
+      "stderr_path": "specs/workflow-autonomy/evidence/static-red/entry-001.stderr.log",
+      "failure_class": "assertion",
+      "marker_lines": [
+        "STATIC_ASSERTION: SC-053 example #1 expected={\"exit_code\":1,\"reason\":\"snapshot_drift\",\"status\":\"rejected\",\"test_contract_rebuilt\":false} actual={\"exit_code\":0,\"reason\":\"workflow_autonomy_gate_missing\",\"status\":\"STUB-NOT-IMPLEMENTED\"}"
+      ],
+      "red_valid": true,
+      "started_at": "2026-09-15T14:05:14+08:00",
+      "finished_at": "2026-09-15T14:06:26+08:00",
+      "tree_token": "tree:b34816bb63d41d843ca7659cea1a66d2251d0dda"
+    },
+    {
+      "schema_version": 1,
+      "layer": "workflow-autonomy",
+      "scenario": "SC-008",
+      "example": 1,
+      "argv": [
+        "python3",
+        "scripts/gates/tests/workflow_autonomy_red_baseline.py"
+      ],
+      "timeout_seconds": 120,
+      "exit_code": 1,
+      "stdout_path": "specs/workflow-autonomy/evidence/static-red/entry-001.stdout.log",
+      "stderr_path": "specs/workflow-autonomy/evidence/static-red/entry-001.stderr.log",
+      "failure_class": "assertion",
+      "marker_lines": [
+        "STATIC_ASSERTION: SC-008 example #1 expected={\"exit_code\":1,\"files\":[],\"invalid_files\":[{\"path\":\"data.log\",\"reason\":\"missing\"},{\"path\":\"domain.log\",\"reason\":\"missing\"},{\"path\":\"integration.log\",\"reason\":\"missing\"},{\"path\":\"view.log\",\"reason\":\"missing\"}],\"status\":\"failed\"} actual={\"exit_code\":0,\"reason\":\"workflow_evidence_gate_missing\",\"status\":\"STUB-NOT-IMPLEMENTED\"}"
+      ],
+      "red_valid": true,
+      "started_at": "2026-09-15T14:05:14+08:00",
+      "finished_at": "2026-09-15T14:06:26+08:00",
+      "tree_token": "tree:b34816bb63d41d843ca7659cea1a66d2251d0dda"
+    },
+    {
+      "schema_version": 1,
+      "layer": "workflow-autonomy",
+      "scenario": "SC-009",
+      "example": 1,
+      "argv": [
+        "python3",
+        "scripts/gates/tests/workflow_autonomy_red_baseline.py"
+      ],
+      "timeout_seconds": 120,
+      "exit_code": 1,
+      "stdout_path": "specs/workflow-autonomy/evidence/static-red/entry-001.stdout.log",
+      "stderr_path": "specs/workflow-autonomy/evidence/static-red/entry-001.stderr.log",
+      "failure_class": "assertion",
+      "marker_lines": [
+        "STATIC_ASSERTION: SC-009 example #1 expected={\"exit_code\":1,\"reason\":\"fingerprint_mismatch\",\"status\":\"failed\"} actual={\"exit_code\":1,\"stderr\":\"\",\"stdout\":\"  ✘ scripts/gates/tests/run  測試檔已被改動 —— 實作階段不得動規格測試\\n\\nfreeze-check: FAIL  (1 錯誤, 0 警告)\\n\"}"
+      ],
+      "red_valid": true,
+      "started_at": "2026-09-15T14:05:14+08:00",
+      "finished_at": "2026-09-15T14:06:26+08:00",
+      "tree_token": "tree:b34816bb63d41d843ca7659cea1a66d2251d0dda"
+    },
+    {
+      "schema_version": 1,
+      "layer": "workflow-autonomy",
+      "scenario": "SC-010",
+      "example": 1,
+      "argv": [
+        "python3",
+        "scripts/gates/tests/workflow_autonomy_red_baseline.py"
+      ],
+      "timeout_seconds": 120,
+      "exit_code": 1,
+      "stdout_path": "specs/workflow-autonomy/evidence/static-red/entry-001.stdout.log",
+      "stderr_path": "specs/workflow-autonomy/evidence/static-red/entry-001.stderr.log",
+      "failure_class": "assertion",
+      "marker_lines": [
+        "STATIC_ASSERTION: SC-010 example #1 expected={\"exit_code\":0,\"status\":\"passed\",\"storage\":\"index\"} actual={\"exit_code\":0,\"reason\":\"workflow_evidence_gate_missing\",\"status\":\"STUB-NOT-IMPLEMENTED\"}"
+      ],
+      "red_valid": true,
+      "started_at": "2026-09-15T14:05:14+08:00",
+      "finished_at": "2026-09-15T14:06:26+08:00",
+      "tree_token": "tree:b34816bb63d41d843ca7659cea1a66d2251d0dda"
+    },
+    {
+      "schema_version": 1,
+      "layer": "workflow-autonomy",
+      "scenario": "SC-011",
+      "example": 1,
+      "argv": [
+        "python3",
+        "scripts/gates/tests/workflow_autonomy_red_baseline.py"
+      ],
+      "timeout_seconds": 120,
+      "exit_code": 1,
+      "stdout_path": "specs/workflow-autonomy/evidence/static-red/entry-001.stdout.log",
+      "stderr_path": "specs/workflow-autonomy/evidence/static-red/entry-001.stderr.log",
+      "failure_class": "assertion",
+      "marker_lines": [
+        "STATIC_ASSERTION: SC-011 example #1 expected={\"delivery_ready\":false,\"exit_code\":1,\"status\":\"failed\"} actual={\"exit_code\":0,\"reason\":\"workflow_evidence_gate_missing\",\"status\":\"STUB-NOT-IMPLEMENTED\"}"
+      ],
+      "red_valid": true,
+      "started_at": "2026-09-15T14:05:14+08:00",
+      "finished_at": "2026-09-15T14:06:26+08:00",
+      "tree_token": "tree:b34816bb63d41d843ca7659cea1a66d2251d0dda"
+    },
+    {
+      "schema_version": 1,
+      "layer": "workflow-autonomy",
+      "scenario": "SC-012",
+      "example": 1,
+      "argv": [
+        "python3",
+        "scripts/gates/tests/workflow_autonomy_red_baseline.py"
+      ],
+      "timeout_seconds": 120,
+      "exit_code": 1,
+      "stdout_path": "specs/workflow-autonomy/evidence/static-red/entry-001.stdout.log",
+      "stderr_path": "specs/workflow-autonomy/evidence/static-red/entry-001.stderr.log",
+      "failure_class": "assertion",
+      "marker_lines": [
+        "STATIC_ASSERTION: SC-012 example #1 expected={\"delivery_ready\":true,\"exit_code\":0,\"status\":\"passed\"} actual={\"exit_code\":0,\"reason\":\"workflow_evidence_gate_missing\",\"status\":\"STUB-NOT-IMPLEMENTED\"}"
+      ],
+      "red_valid": true,
+      "started_at": "2026-09-15T14:05:14+08:00",
+      "finished_at": "2026-09-15T14:06:26+08:00",
+      "tree_token": "tree:b34816bb63d41d843ca7659cea1a66d2251d0dda"
+    },
+    {
+      "schema_version": 1,
+      "layer": "workflow-autonomy",
+      "scenario": "SC-031",
+      "example": 1,
+      "argv": [
+        "python3",
+        "scripts/gates/tests/workflow_autonomy_red_baseline.py"
+      ],
+      "timeout_seconds": 120,
+      "exit_code": 1,
+      "stdout_path": "specs/workflow-autonomy/evidence/static-red/entry-001.stdout.log",
+      "stderr_path": "specs/workflow-autonomy/evidence/static-red/entry-001.stderr.log",
+      "failure_class": "assertion",
+      "marker_lines": [
+        "STATIC_ASSERTION: SC-031 example #1 expected={\"exit_code\":1,\"invalid_files\":[{\"path\":\"specs/workflow-autonomy/evidence/missing.log\",\"reason\":\"missing\"}],\"status\":\"failed\"} actual={\"exit_code\":0,\"reason\":\"workflow_evidence_gate_missing\",\"status\":\"STUB-NOT-IMPLEMENTED\"}"
+      ],
+      "red_valid": true,
+      "started_at": "2026-09-15T14:05:14+08:00",
+      "finished_at": "2026-09-15T14:06:26+08:00",
+      "tree_token": "tree:b34816bb63d41d843ca7659cea1a66d2251d0dda"
+    },
+    {
+      "schema_version": 1,
+      "layer": "workflow-autonomy",
+      "scenario": "SC-031",
+      "example": 2,
+      "argv": [
+        "python3",
+        "scripts/gates/tests/workflow_autonomy_red_baseline.py"
+      ],
+      "timeout_seconds": 120,
+      "exit_code": 1,
+      "stdout_path": "specs/workflow-autonomy/evidence/static-red/entry-001.stdout.log",
+      "stderr_path": "specs/workflow-autonomy/evidence/static-red/entry-001.stderr.log",
+      "failure_class": "assertion",
+      "marker_lines": [
+        "STATIC_ASSERTION: SC-031 example #2 expected={\"exit_code\":1,\"invalid_files\":[{\"path\":\"specs/workflow-autonomy/evidence/empty.log\",\"reason\":\"empty\"}],\"status\":\"failed\"} actual={\"exit_code\":0,\"reason\":\"workflow_evidence_gate_missing\",\"status\":\"STUB-NOT-IMPLEMENTED\"}"
+      ],
+      "red_valid": true,
+      "started_at": "2026-09-15T14:05:14+08:00",
+      "finished_at": "2026-09-15T14:06:26+08:00",
+      "tree_token": "tree:b34816bb63d41d843ca7659cea1a66d2251d0dda"
+    },
+    {
+      "schema_version": 1,
+      "layer": "workflow-autonomy",
+      "scenario": "SC-031",
+      "example": 3,
+      "argv": [
+        "python3",
+        "scripts/gates/tests/workflow_autonomy_red_baseline.py"
+      ],
+      "timeout_seconds": 120,
+      "exit_code": 1,
+      "stdout_path": "specs/workflow-autonomy/evidence/static-red/entry-001.stdout.log",
+      "stderr_path": "specs/workflow-autonomy/evidence/static-red/entry-001.stderr.log",
+      "failure_class": "assertion",
+      "marker_lines": [
+        "STATIC_ASSERTION: SC-031 example #3 expected={\"exit_code\":1,\"invalid_files\":[{\"path\":\"specs/workflow-autonomy/evidence/stale.log\",\"reason\":\"hash_mismatch\"}],\"status\":\"failed\"} actual={\"exit_code\":0,\"reason\":\"workflow_evidence_gate_missing\",\"status\":\"STUB-NOT-IMPLEMENTED\"}"
+      ],
+      "red_valid": true,
+      "started_at": "2026-09-15T14:05:14+08:00",
+      "finished_at": "2026-09-15T14:06:26+08:00",
+      "tree_token": "tree:b34816bb63d41d843ca7659cea1a66d2251d0dda"
+    },
+    {
+      "schema_version": 1,
+      "layer": "workflow-autonomy",
+      "scenario": "SC-031",
+      "example": 4,
+      "argv": [
+        "python3",
+        "scripts/gates/tests/workflow_autonomy_red_baseline.py"
+      ],
+      "timeout_seconds": 120,
+      "exit_code": 1,
+      "stdout_path": "specs/workflow-autonomy/evidence/static-red/entry-001.stdout.log",
+      "stderr_path": "specs/workflow-autonomy/evidence/static-red/entry-001.stderr.log",
+      "failure_class": "assertion",
+      "marker_lines": [
+        "STATIC_ASSERTION: SC-031 example #4 expected={\"exit_code\":1,\"invalid_files\":[{\"path\":\"../outside.log\",\"reason\":\"outside_repo\"}],\"status\":\"failed\"} actual={\"exit_code\":0,\"reason\":\"workflow_evidence_gate_missing\",\"status\":\"STUB-NOT-IMPLEMENTED\"}"
+      ],
+      "red_valid": true,
+      "started_at": "2026-09-15T14:05:14+08:00",
+      "finished_at": "2026-09-15T14:06:26+08:00",
+      "tree_token": "tree:b34816bb63d41d843ca7659cea1a66d2251d0dda"
+    },
+    {
+      "schema_version": 1,
+      "layer": "workflow-autonomy",
+      "scenario": "SC-031",
+      "example": 5,
+      "argv": [
+        "python3",
+        "scripts/gates/tests/workflow_autonomy_red_baseline.py"
+      ],
+      "timeout_seconds": 120,
+      "exit_code": 1,
+      "stdout_path": "specs/workflow-autonomy/evidence/static-red/entry-001.stdout.log",
+      "stderr_path": "specs/workflow-autonomy/evidence/static-red/entry-001.stderr.log",
+      "failure_class": "assertion",
+      "marker_lines": [
+        "STATIC_ASSERTION: SC-031 example #5 expected={\"exit_code\":1,\"invalid_files\":[{\"path\":\"specs/workflow-autonomy/evidence/link.log\",\"reason\":\"symlink_or_nonregular\"}],\"status\":\"failed\"} actual={\"exit_code\":0,\"reason\":\"workflow_evidence_gate_missing\",\"status\":\"STUB-NOT-IMPLEMENTED\"}"
+      ],
+      "red_valid": true,
+      "started_at": "2026-09-15T14:05:14+08:00",
+      "finished_at": "2026-09-15T14:06:26+08:00",
+      "tree_token": "tree:b34816bb63d41d843ca7659cea1a66d2251d0dda"
+    },
+    {
+      "schema_version": 1,
+      "layer": "workflow-autonomy",
+      "scenario": "SC-031",
+      "example": 6,
+      "argv": [
+        "python3",
+        "scripts/gates/tests/workflow_autonomy_red_baseline.py"
+      ],
+      "timeout_seconds": 120,
+      "exit_code": 1,
+      "stdout_path": "specs/workflow-autonomy/evidence/static-red/entry-001.stdout.log",
+      "stderr_path": "specs/workflow-autonomy/evidence/static-red/entry-001.stderr.log",
+      "failure_class": "assertion",
+      "marker_lines": [
+        "STATIC_ASSERTION: SC-031 example #6 expected={\"exit_code\":1,\"invalid_files\":[{\"path\":\"specs/workflow-autonomy/evidence/drift.log\",\"reason\":\"snapshot_mismatch\"}],\"status\":\"failed\"} actual={\"exit_code\":0,\"reason\":\"workflow_evidence_gate_missing\",\"status\":\"STUB-NOT-IMPLEMENTED\"}"
+      ],
+      "red_valid": true,
+      "started_at": "2026-09-15T14:05:14+08:00",
+      "finished_at": "2026-09-15T14:06:26+08:00",
+      "tree_token": "tree:b34816bb63d41d843ca7659cea1a66d2251d0dda"
+    },
+    {
+      "schema_version": 1,
+      "layer": "workflow-autonomy",
+      "scenario": "SC-043",
+      "example": 1,
+      "argv": [
+        "python3",
+        "scripts/gates/tests/workflow_autonomy_red_baseline.py"
+      ],
+      "timeout_seconds": 120,
+      "exit_code": 1,
+      "stdout_path": "specs/workflow-autonomy/evidence/static-red/entry-001.stdout.log",
+      "stderr_path": "specs/workflow-autonomy/evidence/static-red/entry-001.stderr.log",
+      "failure_class": "assertion",
+      "marker_lines": [
+        "STATIC_ASSERTION: SC-043 example #1 expected={\"exit_code\":1,\"reason\":\"empty_delivery_set\",\"status\":\"failed\"} actual={\"exit_code\":0,\"reason\":\"workflow_evidence_gate_missing\",\"status\":\"STUB-NOT-IMPLEMENTED\"}"
+      ],
+      "red_valid": true,
+      "started_at": "2026-09-15T14:05:14+08:00",
+      "finished_at": "2026-09-15T14:06:26+08:00",
+      "tree_token": "tree:b34816bb63d41d843ca7659cea1a66d2251d0dda"
+    },
+    {
+      "schema_version": 1,
+      "layer": "workflow-autonomy",
+      "scenario": "SC-013",
+      "example": 1,
+      "argv": [
+        "python3",
+        "scripts/gates/tests/workflow_autonomy_red_baseline.py"
+      ],
+      "timeout_seconds": 120,
+      "exit_code": 1,
+      "stdout_path": "specs/workflow-autonomy/evidence/static-red/entry-001.stdout.log",
+      "stderr_path": "specs/workflow-autonomy/evidence/static-red/entry-001.stderr.log",
+      "failure_class": "assertion",
+      "marker_lines": [
+        "STATIC_ASSERTION: SC-013 example #1 expected={\"blocked_on\":null,\"delivery\":{\"ref\":null,\"state\":\"local\"},\"exit_code\":0,\"generation\":1,\"next_step\":\"run_tests\",\"pipeline_state\":\"running\",\"report\":{\"reason\":null,\"state\":\"pending\"},\"schema_version\":1,\"stage\":\"S8\"} actual={\"exit_code\":0,\"stderr\":\"\",\"stdout\":\"workflow-autonomy: --expect-generation 0\\n\"}"
+      ],
+      "red_valid": true,
+      "started_at": "2026-09-15T14:05:14+08:00",
+      "finished_at": "2026-09-15T14:06:26+08:00",
+      "tree_token": "tree:b34816bb63d41d843ca7659cea1a66d2251d0dda"
+    },
+    {
+      "schema_version": 1,
+      "layer": "workflow-autonomy",
+      "scenario": "SC-014",
+      "example": 1,
+      "argv": [
+        "python3",
+        "scripts/gates/tests/workflow_autonomy_red_baseline.py"
+      ],
+      "timeout_seconds": 120,
+      "exit_code": 1,
+      "stdout_path": "specs/workflow-autonomy/evidence/static-red/entry-001.stdout.log",
+      "stderr_path": "specs/workflow-autonomy/evidence/static-red/entry-001.stderr.log",
+      "failure_class": "assertion",
+      "marker_lines": [
+        "STATIC_ASSERTION: SC-014 example #1 expected={\"blocked_on\":null,\"delivery\":{\"ref\":null,\"state\":\"local\"},\"exit_code\":0,\"pipeline_state\":\"running\",\"report\":{\"reason\":\"platform_denied\",\"state\":\"denied\"},\"retry_via_other_channel\":false} actual={\"exit_code\":0,\"stderr\":\"\",\"stdout\":\"workflow-autonomy: --expect-generation 4\\n\"}"
+      ],
+      "red_valid": true,
+      "started_at": "2026-09-15T14:05:14+08:00",
+      "finished_at": "2026-09-15T14:06:26+08:00",
+      "tree_token": "tree:b34816bb63d41d843ca7659cea1a66d2251d0dda"
+    },
+    {
+      "schema_version": 1,
+      "layer": "workflow-autonomy",
+      "scenario": "SC-015",
+      "example": 1,
+      "argv": [
+        "python3",
+        "scripts/gates/tests/workflow_autonomy_red_baseline.py"
+      ],
+      "timeout_seconds": 120,
+      "exit_code": 1,
+      "stdout_path": "specs/workflow-autonomy/evidence/static-red/entry-001.stdout.log",
+      "stderr_path": "specs/workflow-autonomy/evidence/static-red/entry-001.stderr.log",
+      "failure_class": "assertion",
+      "marker_lines": [
+        "STATIC_ASSERTION: SC-015 example #1 expected={\"delivery\":{\"ref\":\"https://github.example/pull/17\",\"state\":\"pr_open\"},\"exit_code\":0,\"owner_merge_required\":true} actual={\"exit_code\":0,\"stderr\":\"\",\"stdout\":\"workflow-autonomy: --expect-generation 5\\n\"}"
+      ],
+      "red_valid": true,
+      "started_at": "2026-09-15T14:05:14+08:00",
+      "finished_at": "2026-09-15T14:06:26+08:00",
+      "tree_token": "tree:b34816bb63d41d843ca7659cea1a66d2251d0dda"
+    },
+    {
+      "schema_version": 1,
+      "layer": "workflow-autonomy",
+      "scenario": "SC-032",
+      "example": 1,
+      "argv": [
+        "python3",
+        "scripts/gates/tests/workflow_autonomy_red_baseline.py"
+      ],
+      "timeout_seconds": 120,
+      "exit_code": 1,
+      "stdout_path": "specs/workflow-autonomy/evidence/static-red/entry-001.stdout.log",
+      "stderr_path": "specs/workflow-autonomy/evidence/static-red/entry-001.stderr.log",
+      "failure_class": "assertion",
+      "marker_lines": [
+        "STATIC_ASSERTION: SC-032 example #1 expected={\"exit_code\":2,\"reason\":\"invalid_status_schema\",\"status\":\"rejected\",\"written\":false} actual={\"exit_code\":0,\"stderr\":\"\",\"stdout\":\"workflow-autonomy: --expect-generation 1\\n\"}"
+      ],
+      "red_valid": true,
+      "started_at": "2026-09-15T14:05:14+08:00",
+      "finished_at": "2026-09-15T14:06:26+08:00",
+      "tree_token": "tree:b34816bb63d41d843ca7659cea1a66d2251d0dda"
+    },
+    {
+      "schema_version": 1,
+      "layer": "workflow-autonomy",
+      "scenario": "SC-032",
+      "example": 2,
+      "argv": [
+        "python3",
+        "scripts/gates/tests/workflow_autonomy_red_baseline.py"
+      ],
+      "timeout_seconds": 120,
+      "exit_code": 1,
+      "stdout_path": "specs/workflow-autonomy/evidence/static-red/entry-001.stdout.log",
+      "stderr_path": "specs/workflow-autonomy/evidence/static-red/entry-001.stderr.log",
+      "failure_class": "assertion",
+      "marker_lines": [
+        "STATIC_ASSERTION: SC-032 example #2 expected={\"exit_code\":2,\"reason\":\"invalid_status_schema\",\"status\":\"rejected\",\"written\":false} actual={\"exit_code\":0,\"stderr\":\"\",\"stdout\":\"workflow-autonomy: --expect-generation 1\\n\"}"
+      ],
+      "red_valid": true,
+      "started_at": "2026-09-15T14:05:14+08:00",
+      "finished_at": "2026-09-15T14:06:26+08:00",
+      "tree_token": "tree:b34816bb63d41d843ca7659cea1a66d2251d0dda"
+    },
+    {
+      "schema_version": 1,
+      "layer": "workflow-autonomy",
+      "scenario": "SC-048",
+      "example": 1,
+      "argv": [
+        "python3",
+        "scripts/gates/tests/workflow_autonomy_red_baseline.py"
+      ],
+      "timeout_seconds": 120,
+      "exit_code": 1,
+      "stdout_path": "specs/workflow-autonomy/evidence/static-red/entry-001.stdout.log",
+      "stderr_path": "specs/workflow-autonomy/evidence/static-red/entry-001.stderr.log",
+      "failure_class": "assertion",
+      "marker_lines": [
+        "STATIC_ASSERTION: SC-048 example #1 expected={\"actual_generation\":6,\"exit_code\":1,\"expected_generation\":5,\"status\":\"conflict\",\"written\":false} actual={\"exit_code\":0,\"stderr\":\"\",\"stdout\":\"workflow-autonomy: --expect-generation 5\\n\"}"
+      ],
+      "red_valid": true,
+      "started_at": "2026-09-15T14:05:14+08:00",
+      "finished_at": "2026-09-15T14:06:26+08:00",
+      "tree_token": "tree:b34816bb63d41d843ca7659cea1a66d2251d0dda"
+    },
+    {
+      "schema_version": 1,
+      "layer": "workflow-autonomy",
+      "scenario": "SC-016",
+      "example": 1,
+      "argv": [
+        "python3",
+        "scripts/gates/tests/workflow_autonomy_red_baseline.py"
+      ],
+      "timeout_seconds": 120,
+      "exit_code": 1,
+      "stdout_path": "specs/workflow-autonomy/evidence/static-red/entry-001.stdout.log",
+      "stderr_path": "specs/workflow-autonomy/evidence/static-red/entry-001.stderr.log",
+      "failure_class": "assertion",
+      "marker_lines": [
+        "STATIC_ASSERTION: SC-016 example #1 expected={\"failure_class\":\"assertion\",\"gate_exit_code\":0,\"red_valid\":true} actual={\"gate_exit_code\":1,\"stderr\":\"✘ 沒有 'static-command' 的輸出解析器。已支援: swift-testing\\n\",\"stdout\":\"\"}"
+      ],
+      "red_valid": true,
+      "started_at": "2026-09-15T14:05:14+08:00",
+      "finished_at": "2026-09-15T14:06:26+08:00",
+      "tree_token": "tree:b34816bb63d41d843ca7659cea1a66d2251d0dda"
+    },
+    {
+      "schema_version": 1,
+      "layer": "workflow-autonomy",
+      "scenario": "SC-017",
+      "example": 1,
+      "argv": [
+        "python3",
+        "scripts/gates/tests/workflow_autonomy_red_baseline.py"
+      ],
+      "timeout_seconds": 120,
+      "exit_code": 1,
+      "stdout_path": "specs/workflow-autonomy/evidence/static-red/entry-001.stdout.log",
+      "stderr_path": "specs/workflow-autonomy/evidence/static-red/entry-001.stderr.log",
+      "failure_class": "assertion",
+      "marker_lines": [
+        "STATIC_ASSERTION: SC-017 example #1 expected={\"failure_class\":\"passed\",\"gate_exit_code\":1,\"red_valid\":false} actual={\"gate_exit_code\":1,\"stderr\":\"✘ 沒有 'static-command' 的輸出解析器。已支援: swift-testing\\n\",\"stdout\":\"\"}"
+      ],
+      "red_valid": true,
+      "started_at": "2026-09-15T14:05:14+08:00",
+      "finished_at": "2026-09-15T14:06:26+08:00",
+      "tree_token": "tree:b34816bb63d41d843ca7659cea1a66d2251d0dda"
+    },
+    {
+      "schema_version": 1,
+      "layer": "workflow-autonomy",
+      "scenario": "SC-018",
+      "example": 1,
+      "argv": [
+        "python3",
+        "scripts/gates/tests/workflow_autonomy_red_baseline.py"
+      ],
+      "timeout_seconds": 120,
+      "exit_code": 1,
+      "stdout_path": "specs/workflow-autonomy/evidence/static-red/entry-001.stdout.log",
+      "stderr_path": "specs/workflow-autonomy/evidence/static-red/entry-001.stderr.log",
+      "failure_class": "assertion",
+      "marker_lines": [
+        "STATIC_ASSERTION: SC-018 example #1 expected={\"failure_class\":\"error\",\"gate_exit_code\":1,\"red_valid\":false} actual={\"gate_exit_code\":1,\"stderr\":\"✘ 沒有 'static-command' 的輸出解析器。已支援: swift-testing\\n\",\"stdout\":\"\"}"
+      ],
+      "red_valid": true,
+      "started_at": "2026-09-15T14:05:14+08:00",
+      "finished_at": "2026-09-15T14:06:26+08:00",
+      "tree_token": "tree:b34816bb63d41d843ca7659cea1a66d2251d0dda"
+    },
+    {
+      "schema_version": 1,
+      "layer": "workflow-autonomy",
+      "scenario": "SC-019",
+      "example": 1,
+      "argv": [
+        "python3",
+        "scripts/gates/tests/workflow_autonomy_red_baseline.py"
+      ],
+      "timeout_seconds": 120,
+      "exit_code": 1,
+      "stdout_path": "specs/workflow-autonomy/evidence/static-red/entry-001.stdout.log",
+      "stderr_path": "specs/workflow-autonomy/evidence/static-red/entry-001.stderr.log",
+      "failure_class": "assertion",
+      "marker_lines": [
+        "STATIC_ASSERTION: SC-019 example #1 expected={\"gate_exit_code\":1,\"reason\":\"missing_example_check\",\"status\":\"failed\"} actual={\"gate_exit_code\":1,\"stderr\":\"✘ 沒有 'static-command' 的輸出解析器。已支援: swift-testing\\n\",\"stdout\":\"\"}"
+      ],
+      "red_valid": true,
+      "started_at": "2026-09-15T14:05:14+08:00",
+      "finished_at": "2026-09-15T14:06:26+08:00",
+      "tree_token": "tree:b34816bb63d41d843ca7659cea1a66d2251d0dda"
+    },
+    {
+      "schema_version": 1,
+      "layer": "workflow-autonomy",
+      "scenario": "SC-020",
+      "example": 1,
+      "argv": [
+        "python3",
+        "scripts/gates/tests/workflow_autonomy_red_baseline.py"
+      ],
+      "timeout_seconds": 120,
+      "exit_code": 1,
+      "stdout_path": "specs/workflow-autonomy/evidence/static-red/entry-001.stdout.log",
+      "stderr_path": "specs/workflow-autonomy/evidence/static-red/entry-001.stderr.log",
+      "failure_class": "assertion",
+      "marker_lines": [
+        "STATIC_ASSERTION: SC-020 example #1 expected={\"behavior_preserved\":true,\"gate_exit_code\":0,\"legacy_parser_used\":true} actual={\"failure_class\":\"assertion\",\"gate_exit_code\":0,\"layer\":\"workflow-autonomy\",\"message\":\"Expectation failed: 1 == 2\",\"scenario\":\"SC-020\",\"stderr\":\"\",\"stdout\":\"  assertion 1\\n  workflow-autonomy 宣告   1 · runner 1 · 啟動   1  OK\\n  → specs/workflow-autonomy/evidence/red.json\\nred-capture: PASS\\n\",\"test\":\"SC-020 legacy parser\"}"
+      ],
+      "red_valid": true,
+      "started_at": "2026-09-15T14:05:14+08:00",
+      "finished_at": "2026-09-15T14:06:26+08:00",
+      "tree_token": "tree:b34816bb63d41d843ca7659cea1a66d2251d0dda"
+    },
+    {
+      "schema_version": 1,
+      "layer": "workflow-autonomy",
+      "scenario": "SC-033",
+      "example": 1,
+      "argv": [
+        "python3",
+        "scripts/gates/tests/workflow_autonomy_red_baseline.py"
+      ],
+      "timeout_seconds": 120,
+      "exit_code": 1,
+      "stdout_path": "specs/workflow-autonomy/evidence/static-red/entry-001.stdout.log",
+      "stderr_path": "specs/workflow-autonomy/evidence/static-red/entry-001.stderr.log",
+      "failure_class": "assertion",
+      "marker_lines": [
+        "STATIC_ASSERTION: SC-033 example #1 expected={\"failure_class\":\"hang\",\"gate_exit_code\":1,\"red_valid\":false} actual={\"gate_exit_code\":1,\"stderr\":\"✘ 沒有 'static-command' 的輸出解析器。已支援: swift-testing\\n\",\"stdout\":\"\"}"
+      ],
+      "red_valid": true,
+      "started_at": "2026-09-15T14:05:14+08:00",
+      "finished_at": "2026-09-15T14:06:26+08:00",
+      "tree_token": "tree:b34816bb63d41d843ca7659cea1a66d2251d0dda"
+    },
+    {
+      "schema_version": 1,
+      "layer": "workflow-autonomy",
+      "scenario": "SC-034",
+      "example": 1,
+      "argv": [
+        "python3",
+        "scripts/gates/tests/workflow_autonomy_red_baseline.py"
+      ],
+      "timeout_seconds": 120,
+      "exit_code": 1,
+      "stdout_path": "specs/workflow-autonomy/evidence/static-red/entry-001.stdout.log",
+      "stderr_path": "specs/workflow-autonomy/evidence/static-red/entry-001.stderr.log",
+      "failure_class": "assertion",
+      "marker_lines": [
+        "STATIC_ASSERTION: SC-034 example #1 expected={\"gate_exit_code\":2,\"reason\":\"invalid_static_schema\",\"status\":\"rejected\"} actual={\"gate_exit_code\":1,\"stderr\":\"✘ 沒有 'static-command' 的輸出解析器。已支援: swift-testing\\n\",\"stdout\":\"\"}"
+      ],
+      "red_valid": true,
+      "started_at": "2026-09-15T14:05:14+08:00",
+      "finished_at": "2026-09-15T14:06:26+08:00",
+      "tree_token": "tree:b34816bb63d41d843ca7659cea1a66d2251d0dda"
+    },
+    {
+      "schema_version": 1,
+      "layer": "workflow-autonomy",
+      "scenario": "SC-034",
+      "example": 2,
+      "argv": [
+        "python3",
+        "scripts/gates/tests/workflow_autonomy_red_baseline.py"
+      ],
+      "timeout_seconds": 120,
+      "exit_code": 1,
+      "stdout_path": "specs/workflow-autonomy/evidence/static-red/entry-001.stdout.log",
+      "stderr_path": "specs/workflow-autonomy/evidence/static-red/entry-001.stderr.log",
+      "failure_class": "assertion",
+      "marker_lines": [
+        "STATIC_ASSERTION: SC-034 example #2 expected={\"gate_exit_code\":2,\"reason\":\"invalid_static_schema\",\"status\":\"rejected\"} actual={\"gate_exit_code\":1,\"stderr\":\"✘ 沒有 'static-command' 的輸出解析器。已支援: swift-testing\\n\",\"stdout\":\"\"}"
+      ],
+      "red_valid": true,
+      "started_at": "2026-09-15T14:05:14+08:00",
+      "finished_at": "2026-09-15T14:06:26+08:00",
+      "tree_token": "tree:b34816bb63d41d843ca7659cea1a66d2251d0dda"
+    },
+    {
+      "schema_version": 1,
+      "layer": "workflow-autonomy",
+      "scenario": "SC-034",
+      "example": 3,
+      "argv": [
+        "python3",
+        "scripts/gates/tests/workflow_autonomy_red_baseline.py"
+      ],
+      "timeout_seconds": 120,
+      "exit_code": 1,
+      "stdout_path": "specs/workflow-autonomy/evidence/static-red/entry-001.stdout.log",
+      "stderr_path": "specs/workflow-autonomy/evidence/static-red/entry-001.stderr.log",
+      "failure_class": "assertion",
+      "marker_lines": [
+        "STATIC_ASSERTION: SC-034 example #3 expected={\"gate_exit_code\":2,\"reason\":\"invalid_static_schema\",\"status\":\"rejected\"} actual={\"gate_exit_code\":1,\"stderr\":\"✘ 沒有 'static-command' 的輸出解析器。已支援: swift-testing\\n\",\"stdout\":\"\"}"
+      ],
+      "red_valid": true,
+      "started_at": "2026-09-15T14:05:14+08:00",
+      "finished_at": "2026-09-15T14:06:26+08:00",
+      "tree_token": "tree:b34816bb63d41d843ca7659cea1a66d2251d0dda"
+    },
+    {
+      "schema_version": 1,
+      "layer": "workflow-autonomy",
+      "scenario": "SC-034",
+      "example": 4,
+      "argv": [
+        "python3",
+        "scripts/gates/tests/workflow_autonomy_red_baseline.py"
+      ],
+      "timeout_seconds": 120,
+      "exit_code": 1,
+      "stdout_path": "specs/workflow-autonomy/evidence/static-red/entry-001.stdout.log",
+      "stderr_path": "specs/workflow-autonomy/evidence/static-red/entry-001.stderr.log",
+      "failure_class": "assertion",
+      "marker_lines": [
+        "STATIC_ASSERTION: SC-034 example #4 expected={\"gate_exit_code\":2,\"reason\":\"invalid_static_schema\",\"status\":\"rejected\"} actual={\"gate_exit_code\":1,\"stderr\":\"✘ 沒有 'static-command' 的輸出解析器。已支援: swift-testing\\n\",\"stdout\":\"\"}"
+      ],
+      "red_valid": true,
+      "started_at": "2026-09-15T14:05:14+08:00",
+      "finished_at": "2026-09-15T14:06:26+08:00",
+      "tree_token": "tree:b34816bb63d41d843ca7659cea1a66d2251d0dda"
+    },
+    {
+      "schema_version": 1,
+      "layer": "workflow-autonomy",
+      "scenario": "SC-035",
+      "example": 1,
+      "argv": [
+        "python3",
+        "scripts/gates/tests/workflow_autonomy_red_baseline.py"
+      ],
+      "timeout_seconds": 120,
+      "exit_code": 1,
+      "stdout_path": "specs/workflow-autonomy/evidence/static-red/entry-001.stdout.log",
+      "stderr_path": "specs/workflow-autonomy/evidence/static-red/entry-001.stderr.log",
+      "failure_class": "exempt",
+      "marker_lines": [],
+      "red_valid": true,
+      "started_at": "2026-09-15T14:05:14+08:00",
+      "finished_at": "2026-09-15T14:06:26+08:00",
+      "tree_token": "tree:b34816bb63d41d843ca7659cea1a66d2251d0dda"
+    },
+    {
+      "schema_version": 1,
+      "layer": "workflow-autonomy",
+      "scenario": "SC-054",
+      "example": 1,
+      "argv": [
+        "python3",
+        "scripts/gates/tests/workflow_autonomy_red_baseline.py"
+      ],
+      "timeout_seconds": 120,
+      "exit_code": 1,
+      "stdout_path": "specs/workflow-autonomy/evidence/static-red/entry-001.stdout.log",
+      "stderr_path": "specs/workflow-autonomy/evidence/static-red/entry-001.stderr.log",
+      "failure_class": "assertion",
+      "marker_lines": [
+        "STATIC_ASSERTION: SC-054 example #1 expected={\"failure_class\":\"error\",\"gate_exit_code\":1,\"red_valid\":false} actual={\"gate_exit_code\":1,\"stderr\":\"✘ 沒有 'static-command' 的輸出解析器。已支援: swift-testing\\n\",\"stdout\":\"\"}"
+      ],
+      "red_valid": true,
+      "started_at": "2026-09-15T14:05:14+08:00",
+      "finished_at": "2026-09-15T14:06:26+08:00",
+      "tree_token": "tree:b34816bb63d41d843ca7659cea1a66d2251d0dda"
+    },
+    {
+      "schema_version": 1,
+      "layer": "workflow-autonomy",
+      "scenario": "SC-054",
+      "example": 2,
+      "argv": [
+        "python3",
+        "scripts/gates/tests/workflow_autonomy_red_baseline.py"
+      ],
+      "timeout_seconds": 120,
+      "exit_code": 1,
+      "stdout_path": "specs/workflow-autonomy/evidence/static-red/entry-001.stdout.log",
+      "stderr_path": "specs/workflow-autonomy/evidence/static-red/entry-001.stderr.log",
+      "failure_class": "assertion",
+      "marker_lines": [
+        "STATIC_ASSERTION: SC-054 example #2 expected={\"failure_class\":\"error\",\"gate_exit_code\":1,\"red_valid\":false} actual={\"gate_exit_code\":1,\"stderr\":\"✘ 沒有 'static-command' 的輸出解析器。已支援: swift-testing\\n\",\"stdout\":\"\"}"
+      ],
+      "red_valid": true,
+      "started_at": "2026-09-15T14:05:14+08:00",
+      "finished_at": "2026-09-15T14:06:26+08:00",
+      "tree_token": "tree:b34816bb63d41d843ca7659cea1a66d2251d0dda"
+    },
+    {
+      "schema_version": 1,
+      "layer": "workflow-autonomy",
+      "scenario": "SC-055",
+      "example": 1,
+      "argv": [
+        "python3",
+        "scripts/gates/tests/workflow_autonomy_red_baseline.py"
+      ],
+      "timeout_seconds": 120,
+      "exit_code": 1,
+      "stdout_path": "specs/workflow-autonomy/evidence/static-red/entry-001.stdout.log",
+      "stderr_path": "specs/workflow-autonomy/evidence/static-red/entry-001.stderr.log",
+      "failure_class": "assertion",
+      "marker_lines": [
+        "STATIC_ASSERTION: SC-055 example #1 expected={\"gate_exit_code\":1,\"reason\":\"undeclared_static_dependency\",\"status\":\"rejected\"} actual={\"exit_code\":0,\"gate_exit_code\":0,\"stderr\":\"\",\"stdout\":\"test-review: PASS\\n\"}"
+      ],
+      "red_valid": true,
+      "started_at": "2026-09-15T14:05:14+08:00",
+      "finished_at": "2026-09-15T14:06:26+08:00",
+      "tree_token": "tree:b34816bb63d41d843ca7659cea1a66d2251d0dda"
+    },
+    {
+      "schema_version": 1,
+      "layer": "workflow-autonomy",
+      "scenario": "SC-036",
+      "example": 1,
+      "argv": [
+        "python3",
+        "scripts/gates/tests/workflow_autonomy_red_baseline.py"
+      ],
+      "timeout_seconds": 120,
+      "exit_code": 1,
+      "stdout_path": "specs/workflow-autonomy/evidence/static-red/entry-001.stdout.log",
+      "stderr_path": "specs/workflow-autonomy/evidence/static-red/entry-001.stderr.log",
+      "failure_class": "assertion",
+      "marker_lines": [
+        "STATIC_ASSERTION: SC-036 example #1 expected={\"action\":\"preserve\",\"exit_code\":0,\"fixes\":1,\"id\":\"F-7\",\"status\":\"fixed\"} actual={\"exit_code\":2,\"stderr\":\"\",\"stdout\":\"findings — 審查結果的四類分流。這就是迴圈不會無限的原因。\\n\\n  must_fix   違反某組 example / 資安或架構違規   必附重現(會紅的測試、會命中的指令)→ 必修\\n  ask_user   example 沒涵蓋的 bug、極端 edge case   必附重現 + 問句 → 問人,不自動修\\n  overbuilt  example 外的公開介面、多一層抽象       必指名哪個介面沒有任何 example 用到 → 擋,拿掉\\n  style      內部囉嗦、命名                          不需證明 → 提醒,不擋\\n\\n沒附重現的 must_fix / ask_user / overbuilt **收不進來**(證據規則)。\\n狀態:proposed → confirmed(重現實跑會紅)/ void(跑不紅)→ fixed / accepted_risk / added_example\\n\\n用法:\\n  findings <spec.yaml> add --id F-001 --gate G10 --class must_fix --title \\\"…\\\" --repro \\\"指令或測試路徑\\\"\\n                           [--sc SC-003] [--question \\\"要不要防這個?\\\"]\\n  findings <spec.yaml> set F-001 confirmed|void|fixed|accepted_risk|added_example\\n  findings <spec.yaml> dispatched --gate G9|G10   記「派過了」—— 零 finding 的乾淨審查也要留下派過的紀錄\\n  findings <spec.yaml> list\\n  findings <spec.yaml> check     還有沒有沒處理完的(proposed 也算)、或等人回答的 ask_user\\n\\n同一個重現(repro)只能有一個 id:換 id 重 add 會被拒 —— 否則 loop 的計數會歸零。\\n退出碼(check): 0 乾淨 / 1 還有待處理或待決\\n\\n\"}"
+      ],
+      "red_valid": true,
+      "started_at": "2026-09-15T14:05:14+08:00",
+      "finished_at": "2026-09-15T14:06:26+08:00",
+      "tree_token": "tree:b34816bb63d41d843ca7659cea1a66d2251d0dda"
+    },
+    {
+      "schema_version": 1,
+      "layer": "workflow-autonomy",
+      "scenario": "SC-037",
+      "example": 1,
+      "argv": [
+        "python3",
+        "scripts/gates/tests/workflow_autonomy_red_baseline.py"
+      ],
+      "timeout_seconds": 120,
+      "exit_code": 1,
+      "stdout_path": "specs/workflow-autonomy/evidence/static-red/entry-001.stdout.log",
+      "stderr_path": "specs/workflow-autonomy/evidence/static-red/entry-001.stderr.log",
+      "failure_class": "assertion",
+      "marker_lines": [
+        "STATIC_ASSERTION: SC-037 example #1 expected={\"action\":\"reappear\",\"exit_code\":1,\"finding_id_reused\":true,\"fixes\":1,\"id\":\"F-7\",\"result\":\"flipflop\"} actual={\"exit_code\":2,\"stderr\":\"\",\"stdout\":\"findings — 審查結果的四類分流。這就是迴圈不會無限的原因。\\n\\n  must_fix   違反某組 example / 資安或架構違規   必附重現(會紅的測試、會命中的指令)→ 必修\\n  ask_user   example 沒涵蓋的 bug、極端 edge case   必附重現 + 問句 → 問人,不自動修\\n  overbuilt  example 外的公開介面、多一層抽象       必指名哪個介面沒有任何 example 用到 → 擋,拿掉\\n  style      內部囉嗦、命名                          不需證明 → 提醒,不擋\\n\\n沒附重現的 must_fix / ask_user / overbuilt **收不進來**(證據規則)。\\n狀態:proposed → confirmed(重現實跑會紅)/ void(跑不紅)→ fixed / accepted_risk / added_example\\n\\n用法:\\n  findings <spec.yaml> add --id F-001 --gate G10 --class must_fix --title \\\"…\\\" --repro \\\"指令或測試路徑\\\"\\n                           [--sc SC-003] [--question \\\"要不要防這個?\\\"]\\n  findings <spec.yaml> set F-001 confirmed|void|fixed|accepted_risk|added_example\\n  findings <spec.yaml> dispatched --gate G9|G10   記「派過了」—— 零 finding 的乾淨審查也要留下派過的紀錄\\n  findings <spec.yaml> list\\n  findings <spec.yaml> check     還有沒有沒處理完的(proposed 也算)、或等人回答的 ask_user\\n\\n同一個重現(repro)只能有一個 id:換 id 重 add 會被拒 —— 否則 loop 的計數會歸零。\\n退出碼(check): 0 乾淨 / 1 還有待處理或待決\\n\\n\"}"
+      ],
+      "red_valid": true,
+      "started_at": "2026-09-15T14:05:14+08:00",
+      "finished_at": "2026-09-15T14:06:26+08:00",
+      "tree_token": "tree:b34816bb63d41d843ca7659cea1a66d2251d0dda"
+    },
+    {
+      "schema_version": 1,
+      "layer": "workflow-autonomy",
+      "scenario": "SC-038",
+      "example": 1,
+      "argv": [
+        "python3",
+        "scripts/gates/tests/workflow_autonomy_red_baseline.py"
+      ],
+      "timeout_seconds": 120,
+      "exit_code": 1,
+      "stdout_path": "specs/workflow-autonomy/evidence/static-red/entry-001.stdout.log",
+      "stderr_path": "specs/workflow-autonomy/evidence/static-red/entry-001.stderr.log",
+      "failure_class": "assertion",
+      "marker_lines": [
+        "STATIC_ASSERTION: SC-038 example #1 expected={\"exit_code\":1,\"gates\":[\"G0-G7\",\"smoke\",\"G9\",\"G10\"],\"may_claim_pass\":false,\"required_action\":\"full_rerun\"} actual={\"exit_code\":2,\"stderr\":\"\",\"stdout\":\"findings — 審查結果的四類分流。這就是迴圈不會無限的原因。\\n\\n  must_fix   違反某組 example / 資安或架構違規   必附重現(會紅的測試、會命中的指令)→ 必修\\n  ask_user   example 沒涵蓋的 bug、極端 edge case   必附重現 + 問句 → 問人,不自動修\\n  overbuilt  example 外的公開介面、多一層抽象       必指名哪個介面沒有任何 example 用到 → 擋,拿掉\\n  style      內部囉嗦、命名                          不需證明 → 提醒,不擋\\n\\n沒附重現的 must_fix / ask_user / overbuilt **收不進來**(證據規則)。\\n狀態:proposed → confirmed(重現實跑會紅)/ void(跑不紅)→ fixed / accepted_risk / added_example\\n\\n用法:\\n  findings <spec.yaml> add --id F-001 --gate G10 --class must_fix --title \\\"…\\\" --repro \\\"指令或測試路徑\\\"\\n                           [--sc SC-003] [--question \\\"要不要防這個?\\\"]\\n  findings <spec.yaml> set F-001 confirmed|void|fixed|accepted_risk|added_example\\n  findings <spec.yaml> dispatched --gate G9|G10   記「派過了」—— 零 finding 的乾淨審查也要留下派過的紀錄\\n  findings <spec.yaml> list\\n  findings <spec.yaml> check     還有沒有沒處理完的(proposed 也算)、或等人回答的 ask_user\\n\\n同一個重現(repro)只能有一個 id:換 id 重 add 會被拒 —— 否則 loop 的計數會歸零。\\n退出碼(check): 0 乾淨 / 1 還有待處理或待決\\n\\n\"}"
+      ],
+      "red_valid": true,
+      "started_at": "2026-09-15T14:05:14+08:00",
+      "finished_at": "2026-09-15T14:06:26+08:00",
+      "tree_token": "tree:b34816bb63d41d843ca7659cea1a66d2251d0dda"
+    },
+    {
+      "schema_version": 1,
+      "layer": "workflow-autonomy",
+      "scenario": "SC-044",
+      "example": 1,
+      "argv": [
+        "python3",
+        "scripts/gates/tests/workflow_autonomy_red_baseline.py"
+      ],
+      "timeout_seconds": 120,
+      "exit_code": 1,
+      "stdout_path": "specs/workflow-autonomy/evidence/static-red/entry-001.stdout.log",
+      "stderr_path": "specs/workflow-autonomy/evidence/static-red/entry-001.stderr.log",
+      "failure_class": "assertion",
+      "marker_lines": [
+        "STATIC_ASSERTION: SC-044 example #1 expected={\"canonical_id\":\"F-7\",\"exit_code\":1,\"fixes_preserved\":true,\"status\":\"rejected\"} actual={\"exit_code\":2,\"stderr\":\"\",\"stdout\":\"findings — 審查結果的四類分流。這就是迴圈不會無限的原因。\\n\\n  must_fix   違反某組 example / 資安或架構違規   必附重現(會紅的測試、會命中的指令)→ 必修\\n  ask_user   example 沒涵蓋的 bug、極端 edge case   必附重現 + 問句 → 問人,不自動修\\n  overbuilt  example 外的公開介面、多一層抽象       必指名哪個介面沒有任何 example 用到 → 擋,拿掉\\n  style      內部囉嗦、命名                          不需證明 → 提醒,不擋\\n\\n沒附重現的 must_fix / ask_user / overbuilt **收不進來**(證據規則)。\\n狀態:proposed → confirmed(重現實跑會紅)/ void(跑不紅)→ fixed / accepted_risk / added_example\\n\\n用法:\\n  findings <spec.yaml> add --id F-001 --gate G10 --class must_fix --title \\\"…\\\" --repro \\\"指令或測試路徑\\\"\\n                           [--sc SC-003] [--question \\\"要不要防這個?\\\"]\\n  findings <spec.yaml> set F-001 confirmed|void|fixed|accepted_risk|added_example\\n  findings <spec.yaml> dispatched --gate G9|G10   記「派過了」—— 零 finding 的乾淨審查也要留下派過的紀錄\\n  findings <spec.yaml> list\\n  findings <spec.yaml> check     還有沒有沒處理完的(proposed 也算)、或等人回答的 ask_user\\n\\n同一個重現(repro)只能有一個 id:換 id 重 add 會被拒 —— 否則 loop 的計數會歸零。\\n退出碼(check): 0 乾淨 / 1 還有待處理或待決\\n\\n\"}"
+      ],
+      "red_valid": true,
+      "started_at": "2026-09-15T14:05:14+08:00",
+      "finished_at": "2026-09-15T14:06:26+08:00",
+      "tree_token": "tree:b34816bb63d41d843ca7659cea1a66d2251d0dda"
+    },
+    {
+      "schema_version": 1,
+      "layer": "workflow-autonomy",
+      "scenario": "SC-045",
+      "example": 1,
+      "argv": [
+        "python3",
+        "scripts/gates/tests/workflow_autonomy_red_baseline.py"
+      ],
+      "timeout_seconds": 120,
+      "exit_code": 1,
+      "stdout_path": "specs/workflow-autonomy/evidence/static-red/entry-001.stdout.log",
+      "stderr_path": "specs/workflow-autonomy/evidence/static-red/entry-001.stderr.log",
+      "failure_class": "assertion",
+      "marker_lines": [
+        "STATIC_ASSERTION: SC-045 example #1 expected={\"exit_code\":1,\"fixes\":2,\"id\":\"F-7\",\"owner_decision_required\":true,\"status\":\"parked\"} actual={\"exit_code\":2,\"stderr\":\"\",\"stdout\":\"loop — 審查迴圈的計數器。有人在數,才不會在同一個地方打轉。\\n\\n規則(寫在這裡,不靠自律):\\n  · 同一條 finding 修 2 次還沒解 → parked,停\\n  · 同一條 finding 解了又出現       → flipflop,立即停\\n  · G10 對抗審查最多重派 1 次\\n\\n狀態在 evidence/loop.json。停下來不是叫人看程式碼,是在 PR 上列一行「需要你決定」。\\n\\n用法:\\n  loop <spec.yaml> fix <finding-id>         要開始修這條了(第 3 次會被拒)\\n  loop <spec.yaml> resolved <finding-id>    重現跑不出來了,這條解了\\n  loop <spec.yaml> reappear <finding-id>    解過的又冒出來 → flipflop\\n  loop <spec.yaml> redispatch <gate>        重派某道付費關卡(G10 上限 1)\\n  loop <spec.yaml> decided <finding-id> ship|hold|respec   人決定了(唯一能解除 parked/flipflop 的動詞)\\n  loop <spec.yaml> check                    有沒有任何一條停住\\n退出碼: 0 可以繼續 / 1 停,交給人\\n\\nfinding-id 必須存在於 evidence/findings.json —— 幽靈 id 不收,換 id 重修同一條也不行。\\nparked / flipflop 之後 AI 不能自己 `resolved` 解除;只有 `decided` 能,而那是人的決定。\\n\\n\"}"
+      ],
+      "red_valid": true,
+      "started_at": "2026-09-15T14:05:14+08:00",
+      "finished_at": "2026-09-15T14:06:26+08:00",
+      "tree_token": "tree:b34816bb63d41d843ca7659cea1a66d2251d0dda"
+    },
+    {
+      "schema_version": 1,
+      "layer": "workflow-autonomy",
+      "scenario": "SC-045",
+      "example": 2,
+      "argv": [
+        "python3",
+        "scripts/gates/tests/workflow_autonomy_red_baseline.py"
+      ],
+      "timeout_seconds": 120,
+      "exit_code": 1,
+      "stdout_path": "specs/workflow-autonomy/evidence/static-red/entry-001.stdout.log",
+      "stderr_path": "specs/workflow-autonomy/evidence/static-red/entry-001.stderr.log",
+      "failure_class": "assertion",
+      "marker_lines": [
+        "STATIC_ASSERTION: SC-045 example #2 expected={\"exit_code\":1,\"gate\":\"G10\",\"owner_decision_required\":true,\"prior_redispatches\":1,\"status\":\"blocked\"} actual={\"exit_code\":2,\"stderr\":\"\",\"stdout\":\"loop — 審查迴圈的計數器。有人在數,才不會在同一個地方打轉。\\n\\n規則(寫在這裡,不靠自律):\\n  · 同一條 finding 修 2 次還沒解 → parked,停\\n  · 同一條 finding 解了又出現       → flipflop,立即停\\n  · G10 對抗審查最多重派 1 次\\n\\n狀態在 evidence/loop.json。停下來不是叫人看程式碼,是在 PR 上列一行「需要你決定」。\\n\\n用法:\\n  loop <spec.yaml> fix <finding-id>         要開始修這條了(第 3 次會被拒)\\n  loop <spec.yaml> resolved <finding-id>    重現跑不出來了,這條解了\\n  loop <spec.yaml> reappear <finding-id>    解過的又冒出來 → flipflop\\n  loop <spec.yaml> redispatch <gate>        重派某道付費關卡(G10 上限 1)\\n  loop <spec.yaml> decided <finding-id> ship|hold|respec   人決定了(唯一能解除 parked/flipflop 的動詞)\\n  loop <spec.yaml> check                    有沒有任何一條停住\\n退出碼: 0 可以繼續 / 1 停,交給人\\n\\nfinding-id 必須存在於 evidence/findings.json —— 幽靈 id 不收,換 id 重修同一條也不行。\\nparked / flipflop 之後 AI 不能自己 `resolved` 解除;只有 `decided` 能,而那是人的決定。\\n\\n\"}"
+      ],
+      "red_valid": true,
+      "started_at": "2026-09-15T14:05:14+08:00",
+      "finished_at": "2026-09-15T14:06:26+08:00",
+      "tree_token": "tree:b34816bb63d41d843ca7659cea1a66d2251d0dda"
+    },
+    {
+      "schema_version": 1,
+      "layer": "workflow-autonomy",
+      "scenario": "SC-049",
+      "example": 1,
+      "argv": [
+        "python3",
+        "scripts/gates/tests/workflow_autonomy_red_baseline.py"
+      ],
+      "timeout_seconds": 120,
+      "exit_code": 1,
+      "stdout_path": "specs/workflow-autonomy/evidence/static-red/entry-001.stdout.log",
+      "stderr_path": "specs/workflow-autonomy/evidence/static-red/entry-001.stderr.log",
+      "failure_class": "assertion",
+      "marker_lines": [
+        "STATIC_ASSERTION: SC-049 example #1 expected={\"existing_finding_preserved\":true,\"exit_code\":1,\"reason\":\"finding_id_conflict\",\"status\":\"rejected\"} actual={\"exit_code\":2,\"stderr\":\"\",\"stdout\":\"findings — 審查結果的四類分流。這就是迴圈不會無限的原因。\\n\\n  must_fix   違反某組 example / 資安或架構違規   必附重現(會紅的測試、會命中的指令)→ 必修\\n  ask_user   example 沒涵蓋的 bug、極端 edge case   必附重現 + 問句 → 問人,不自動修\\n  overbuilt  example 外的公開介面、多一層抽象       必指名哪個介面沒有任何 example 用到 → 擋,拿掉\\n  style      內部囉嗦、命名                          不需證明 → 提醒,不擋\\n\\n沒附重現的 must_fix / ask_user / overbuilt **收不進來**(證據規則)。\\n狀態:proposed → confirmed(重現實跑會紅)/ void(跑不紅)→ fixed / accepted_risk / added_example\\n\\n用法:\\n  findings <spec.yaml> add --id F-001 --gate G10 --class must_fix --title \\\"…\\\" --repro \\\"指令或測試路徑\\\"\\n                           [--sc SC-003] [--question \\\"要不要防這個?\\\"]\\n  findings <spec.yaml> set F-001 confirmed|void|fixed|accepted_risk|added_example\\n  findings <spec.yaml> dispatched --gate G9|G10   記「派過了」—— 零 finding 的乾淨審查也要留下派過的紀錄\\n  findings <spec.yaml> list\\n  findings <spec.yaml> check     還有沒有沒處理完的(proposed 也算)、或等人回答的 ask_user\\n\\n同一個重現(repro)只能有一個 id:換 id 重 add 會被拒 —— 否則 loop 的計數會歸零。\\n退出碼(check): 0 乾淨 / 1 還有待處理或待決\\n\\n\"}"
+      ],
+      "red_valid": true,
+      "started_at": "2026-09-15T14:05:14+08:00",
+      "finished_at": "2026-09-15T14:06:26+08:00",
+      "tree_token": "tree:b34816bb63d41d843ca7659cea1a66d2251d0dda"
+    },
+    {
+      "schema_version": 1,
+      "layer": "workflow-autonomy",
+      "scenario": "SC-039",
+      "example": 1,
+      "argv": [
+        "python3",
+        "scripts/gates/tests/workflow_autonomy_red_baseline.py"
+      ],
+      "timeout_seconds": 120,
+      "exit_code": 1,
+      "stdout_path": "specs/workflow-autonomy/evidence/static-red/entry-001.stdout.log",
+      "stderr_path": "specs/workflow-autonomy/evidence/static-red/entry-001.stderr.log",
+      "failure_class": "assertion",
+      "marker_lines": [
+        "STATIC_ASSERTION: SC-039 example #1 expected={\"commit_check\":\"passed\",\"empty_static_stream_byte_exact\":true,\"empty_static_stream_included\":true,\"exit_code\":0,\"head_commit_oid_valid\":true,\"index_check\":\"passed\",\"index_tree_oid_valid\":true,\"ledger_schema\":1,\"oids_distinct\":true,\"plan\":\"planned\",\"pr_ready\":true,\"remote_actions\":[],\"repair\":\"complete\",\"status_schema\":1,\"verify\":\"passed\"} actual={\"exit_code\":1,\"failed_step\":\"config-check\",\"remote_actions\":[],\"steps\":[{\"argv\":[\"/var/folders/_h/8yrn9_yx06l8qbph67bsx2480000gn/T/workflow-sc-039-mgrbpk78/repo/scripts/gates/config-check\",\".\"],\"exit\":0,\"stderr\":\"\",\"stdout\":\"  runner               'static-command'\\n  lint                 'git diff --check --'\\n  test                 'scripts/gates/tests/run'\\n  smoke                'scripts/gates/tests/run'\\n  integration_branch   'main'\\n  ci                   'none'\\n  auto_push            True\\n\\nconfig-check: PASS\\n\"}]}"
+      ],
+      "red_valid": true,
+      "started_at": "2026-09-15T14:05:14+08:00",
+      "finished_at": "2026-09-15T14:06:26+08:00",
+      "tree_token": "tree:b34816bb63d41d843ca7659cea1a66d2251d0dda"
+    },
+    {
+      "schema_version": 1,
+      "layer": "workflow-autonomy",
+      "scenario": "SC-046",
+      "example": 1,
+      "argv": [
+        "python3",
+        "scripts/gates/tests/workflow_autonomy_red_baseline.py"
+      ],
+      "timeout_seconds": 120,
+      "exit_code": 1,
+      "stdout_path": "specs/workflow-autonomy/evidence/static-red/entry-001.stdout.log",
+      "stderr_path": "specs/workflow-autonomy/evidence/static-red/entry-001.stderr.log",
+      "failure_class": "exempt",
+      "marker_lines": [],
+      "red_valid": true,
+      "started_at": "2026-09-15T14:05:14+08:00",
+      "finished_at": "2026-09-15T14:06:26+08:00",
+      "tree_token": "tree:b34816bb63d41d843ca7659cea1a66d2251d0dda"
+    }
+  ],
+  "status": "passed",
+  "reason": null
+}
