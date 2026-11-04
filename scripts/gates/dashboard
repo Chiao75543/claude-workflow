@@ -87,6 +87,11 @@ def constructible_enum_names(text: str) -> list[str]:
 # 這幾個標籤是「要人做決定」,其他的只是讓人知道。自動推只被前者擋。
 DECISION_TAGS = {"需要你決定", "要重新批准", "要人工驗", "無法驗證", "無外部錨定"}
 
+# 審查後的小修不必重派 G9/G10(SKILL.md 的「1 檔、40 行」)。刻意寫成常數、不做設定:
+# 這是 pipeline 的規則,不是各專案的偏好。超過就照舊判過期,要重派。
+POST_REVIEW_MAX_FILES = 1
+POST_REVIEW_MAX_LINES = 40
+
 
 def git(root: pathlib.Path, *args: str) -> str:
     try:
@@ -149,6 +154,40 @@ def approval_anchor_snapshot(root: pathlib.Path, approved: pathlib.Path) -> tupl
 def approval_anchor_state(root: pathlib.Path, approved: pathlib.Path) -> str:
     """committed / pending_commit / unstaged；pending 絕不等於 owner approval。"""
     return approval_anchor_snapshot(root, approved)[0]
+
+
+def post_review_fix(root: pathlib.Path, record: dict, current_tree: str, loop: dict) -> dict | None:
+    """派遣後到現在的 diff 若是門檻內、且確實在修 finding,回傳 {files, added, deleted};否則 None = 過期。
+
+    soundroots 第 1 輪實測:G10 之後只多了審查者自己寫的 20 行重現測試就判過期,
+    而規則是「小修不重派、G10 最多重派 1 次」—— 只要 G10 找到問題,修完必卡死。
+    三個條件缺一就照舊過期:
+      · 算得出 diff —— 兩邊都是 write-tree 寫進 object store 的;tree 被 gc 或根本不存在就無從判斷
+      · diff 夠小 —— --no-renames:搬檔算兩個檔;二進位檔 numstat 是 `-`,行數無意義
+      · 派遣之後(含同一秒)有 loop fix —— 審查乾淨之後偷改的東西不能靠「改很少」混過去
+    """
+    try:
+        numstat = git_required(root, "審查後 diff", "diff", "--numstat", "--no-renames",
+                               record["tree"].removeprefix("tree:"), current_tree.removeprefix("tree:"))
+    except RuntimeError:
+        return None
+    rows = [ln.split("\t", 2) for ln in numstat.splitlines() if ln]
+    if len(rows) > POST_REVIEW_MAX_FILES or any("-" in (a, d) for a, d, _ in rows):
+        return None
+    added, deleted = sum(int(r[0]) for r in rows), sum(int(r[1]) for r in rows)
+    if added + deleted > POST_REVIEW_MAX_LINES:
+        return None
+    try:
+        since = datetime.datetime.fromisoformat(record["at"])
+        fixed_after = any(
+            ev.get("event") == "fix" and datetime.datetime.fromisoformat(ev["at"]) >= since
+            for item in (loop.get("findings") or {}).values() for ev in item.get("history") or []
+        )
+    except (KeyError, TypeError, ValueError, AttributeError):
+        return None   # 時間缺漏、格式錯、naive 對 aware 比不了 —— 一律當成沒有證據
+    if not fixed_after:
+        return None
+    return {"files": [r[2] for r in rows], "added": added, "deleted": deleted}
 
 
 def in_reach_scope(root: pathlib.Path, rel: str, globs: list[str]) -> bool:
@@ -534,11 +573,14 @@ def main(argv: list[str]) -> int:
             or re.fullmatch(r"tree:(?:[0-9a-f]{40}|[0-9a-f]{64})", dispatched[gate]["tree"]) is None
         )
     ]
-    stale_dispatch = [
-        gate for gate in required_reviews
+    drifted = {
+        gate: post_review_fix(root, dispatched[gate], current_tree, loop)
+        for gate in required_reviews
         if gate not in missing_dispatch and gate not in invalid_dispatch
         and dispatched[gate]["tree"] != current_tree
-    ]
+    }
+    stale_dispatch = [gate for gate, fix in drifted.items() if fix is None]
+    unreviewed = {gate: fix for gate, fix in drifted.items() if fix is not None}
     if not (scripts_green and smoke_ok):
         gates.append({"id": "G9/10", "what": "獨立讀者 + 對抗審查", "ok": False,
                       "note": "未跑 —— 腳本或 smoke 沒過,不花這個錢"})
@@ -556,7 +598,16 @@ def main(argv: list[str]) -> int:
         gates.append({"id": "G9/10", "what": "獨立讀者 + 對抗審查", "ok": not pending and not halted,
                       "note": f"提出 {s.get('proposed', 0)} → 作廢 {s.get('void', 0)} → 證實 {s.get('confirmed', 0)}"
                               + (f" · {len(pending)} 條沒處理完" if pending else "")
-                              + (" · lite:只要求 G10" if spec_lane == "lite" else "")})
+                              + (" · lite:只要求 G10" if spec_lane == "lite" else "")
+                              + "".join(f" · {gate} 審查後修復 {len(fix['files'])} 檔 "
+                                        f"+{fix['added']}/−{fix['deleted']} 行（門檻內，不重派）"
+                                        for gate, fix in unreviewed.items())})
+        if unreviewed:
+            files = sorted({f for fix in unreviewed.values() for f in fix["files"]})
+            attention.append({"tag": "未重審", "title": f"{'、'.join(unreviewed)} 審查後改過的 {len(files)} 個檔沒有重審",
+                              "body": "、".join(files) + f" —— 修 finding 的小 diff(≤{POST_REVIEW_MAX_FILES} 檔、"
+                                      f"≤{POST_REVIEW_MAX_LINES} 行,派遣後有 loop fix),依規則不重派。"
+                                      "不擋推 —— 但這幾行付費審查沒看過,你該知道。"})
     for fid, it in halted.items():
         attention.append({
             "tag": "需要你決定", "title": f"{fid} {'修 2 次未果' if it['status'] == 'parked' else '解過又出現'}",
