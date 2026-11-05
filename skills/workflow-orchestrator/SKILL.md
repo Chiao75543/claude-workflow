@@ -550,7 +550,8 @@ loop <spec> check            有沒有任何一條停住(dashboard 也讀)
 人回答之後 orchestrator 做的事:`decided ship` → `findings set F-n accepted_risk`,重跑 dashboard,PR 留言變乾淨;
 `decided respec` → 退回 S5 走規格改動;`decided hold` → 分支停在這,`runs --set` 標 blocked。
 
-- 修完之後**重跑 G0–G7**(腳本,幾乎免費)+ 那條重現測試;smoke 只在 diff 碰到入口 / 導航時重跑
+- 修完之後**重跑 G0–G7**(腳本,幾乎免費)+ 那條重現測試 + **smoke(一律重跑)**:
+  dashboard 要求 smoke 指紋與工作樹一致,對不上就判 S 過期、G9/10 變「未跑」
 - **不重派 G9/G10**,除非 fix diff 超過 **1 檔、40 行**(加刪合計);G10 最多重派 **1 次**。
   門檻由 dashboard 檢查,三個條件全成立才不判「審查過期」:算得出派遣時 tree 到現在的 diff、
   diff 在門檻內且沒有二進位檔、派遣之後有 `loop fix` 紀錄。證據表會列出沒有重審的檔(「未重審」,不擋推)
