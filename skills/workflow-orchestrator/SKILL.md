@@ -78,6 +78,7 @@ integration_branch: main
 auto_push: true                  # 全綠零待決 → 自動推功能分支 + 開 PR
 ci: github                       # none | github | gitlab;none 就沒有 S12
 rules_files: [AGENTS.md]         # 資安基準與架構鐵則;派給 green-writer / code-adversary
+# spec_lint: {allow_vague: [works]}  # 選填:領域名詞撞上空話黑名單(欄目 WORKS、路徑 /works)才列;只收黑名單裡有的字
 ```
 
 `scripts/gates/config-check` 會列出還沒填的鍵。沒填的鍵讓對應關卡**失敗**,不是跳過。

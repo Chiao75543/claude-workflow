@@ -39,3 +39,5 @@ tags: [workflow, init, config]
 - `ci: none` 是合法答案。`ci: github|gitlab` 時要**另外問**要不要把 `templates/ci/` 的範本裝進專案 ——
   改 CI 是人確認的事,不隨問卷自動做。
 - 答錯了之後任何時候改 `specs/pipeline.yaml` 就好,不用重跑問卷。
+- `spec_lint.allow_vague`(選填,問卷不問):專案的領域名詞撞上 spec-lint 的空話黑名單時才加
+  (例:欄目叫 `WORKS`、路徑 `/works` → `allow_vague: [works]`)。只能列黑名單裡真的有的字,寫錯字會報錯;其他空話照擋。

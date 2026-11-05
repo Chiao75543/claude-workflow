@@ -22,6 +22,7 @@ import re
 import sys
 
 sys.path.insert(0, str(pathlib.Path(__file__).parent))
+import _config  # noqa: E402
 from _common import (  # noqa: E402
     COMPLETENESS_CATEGORIES, MODES, NAME, REQUIREMENT_ID, RISK_FLAGS, SCENARIO_ID,
     Findings, load_spec, scenarios,
@@ -236,7 +237,22 @@ def check_testability(spec: dict, f: Findings) -> None:
                 f.error(spot, "out 必須是非空的具體結果(mapping 或 list)")
 
 
-def check_vague(spec: dict, f: Findings) -> None:
+def allowed_vague(root: pathlib.Path, f: Findings) -> set[str]:
+    """specs/pipeline.yaml 的 spec_lint.allow_vague:在這個專案裡是具體值的黑名單字
+    (soundroots:欄目 WORKS、路徑 /works)。只能放行黑名單裡真的有的字;沒設 = 行為不變。"""
+    section = _config.load(root).get("spec_lint") or {}
+    allow = section.get("allow_vague", []) if isinstance(section, dict) else None
+    where = "specs/pipeline.yaml spec_lint.allow_vague"
+    if not isinstance(allow, list) or not all(isinstance(w, str) for w in allow):
+        f.error(where, "必須是字串 list(例:[works])")
+        return set()
+    unknown = [w for w in allow if w not in VAGUE]
+    if unknown:
+        f.error(where, f"不在空話黑名單裡: {', '.join(unknown)} —— 寫錯字不能靜默忽略")
+    return set(allow)
+
+
+def check_vague(spec: dict, f: Findings, allowed: set[str]) -> None:
     """最後一道網。只掃 then 與 examples.out —— 敘述性欄位(why/design/理由)不掃。"""
     for req, sc in scenarios(spec):
         where = f"{req.get('id')} / {sc.get('id')}"
@@ -249,8 +265,8 @@ def check_vague(spec: dict, f: Findings) -> None:
                 spot = f"{where} {label}" + (f".{trail}" if trail else "")
                 low = text.lower()
                 # 整個字串等於黑名單詞,或黑名單詞當成一個「詞」出現(前後不是英數字)
-                hit = next((w for w in VAGUE
-                            if low == w.lower() or re.search(rf"(?<![a-z0-9]){re.escape(w.lower())}(?![a-z0-9])", low)),
+                hit = next((w for w in VAGUE if w not in allowed
+                            and (low == w.lower() or re.search(rf"(?<![a-z0-9]){re.escape(w.lower())}(?![a-z0-9])", low))),
                            None)
                 if hit:
                     f.error(spot, f"空話「{hit}」—— 這裡只收具體的值")
@@ -283,7 +299,8 @@ def main(argv: list[str]) -> int:
         check_schema(spec, f)
         check_completeness(spec, f)
         check_testability(spec, f)
-        check_vague(spec, f)
+        # root 跟 dashboard 一樣從規格路徑推(<root>/specs/<name>/spec.yaml),不看 cwd —— G0 才讀到同一份設定
+        check_vague(spec, f, allowed_vague(path.resolve().parents[2], f))
         worst = max(worst, f.report("spec-lint"))
     return worst
 
