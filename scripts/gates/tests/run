@@ -1498,6 +1498,45 @@ def test_dashboard_gating_order(tmp: pathlib.Path) -> None:
               code == 1 and "✘" in review_line and "過期" in review_line and stale_gate in review_line,
               review_line.strip())
 
+    # 審查後的小修不重派(SKILL.md:fix diff ≤ 1 檔、≤ 40 行)。soundroots 第 1 輪實測:
+    # G10 之後只多了審查者自己寫的 20 行重現測試,dashboard 照判過期,而 G10 重派額度只有 1 次 → 卡死。
+    # 三個條件缺一就照舊過期。改完檔都重跑 smoke,G9/10 那一行才會真的走到審查判定。
+    def post_review_fix(name: str, edits: dict[str, str], fix_after_dispatch: bool = True):
+        case_root = review_ready(name)
+        run_gate("findings", spec, "add", "--id", "F-1", "--gate", "G10", "--class", "must_fix",
+                 "--title", "重現", "--repro", "fix.txt", cwd=case_root)
+        run_gate("findings", spec, "set", "F-1", "fixed", cwd=case_root)
+        run_gate("loop", spec, "fix", "F-1", cwd=case_root)
+        if not fix_after_dispatch:
+            # 只有派遣前的 fix(上一輪留下的):審查乾淨之後再改的東西,不能靠舊紀錄混過去
+            loop_path = case_root / "specs/demo/evidence/loop.json"
+            state = json.loads(loop_path.read_text())
+            for ev in state["findings"]["F-1"]["history"]:
+                ev["at"] = "2000-01-01T00:00:00+00:00"
+            loop_path.write_text(json.dumps(state))
+        for rel, text in edits.items():
+            (case_root / rel).write_text(text)
+        run_gate("smoke", spec, cwd=case_root)
+        code, out = run_gate("dashboard", spec, cwd=case_root)
+        dash = json.loads((case_root / "specs/demo/evidence/dashboard.json").read_text())
+        return code, next(ln for ln in out.splitlines() if "G9/10" in ln), dash
+
+    code, review_line, dash = post_review_fix("order-post-fix-small", {"fix.txt": "x\n" * 40})
+    note = next((a for a in dash["attention"] if a["tag"] == "未重審"), None)
+    check("審查後 1 檔 40 行小修 + 派遣後有 loop fix → G9/10 不判過期,備註寫出檔數行數",
+          code == 0 and "✓" in review_line and "審查後修復 1 檔 +40/−0 行" in review_line, review_line.strip())
+    check("審查後小修 → attention 列出未重審的檔,是資訊不是決策,不擋自動推",
+          note is not None and "fix.txt" in note["body"] and not note["decision"] and dash["auto_push_ok"],
+          str(note))
+    for name, edits, fixed, why in (
+        ("two-files", {"fix.txt": "x\n", "fix2.txt": "y\n"}, True, "跨 2 個檔"),
+        ("41-lines", {"fix.txt": "x\n" * 41}, True, "1 檔但 41 行"),
+        ("no-fix", {"fix.txt": "x\n"}, False, "1 檔小修但派遣後沒有 fix 紀錄"),
+    ):
+        code, review_line, _ = post_review_fix(f"order-post-fix-{name}", edits, fixed)
+        check(f"審查後 {why} → 審查過期",
+              code == 1 and "✘" in review_line and "審查過期" in review_line, review_line.strip())
+
     root = review_ready("order-tree-changed-during-dashboard")
     wrapper_dir = tmp / "dashboard-git-wrapper"
     wrapper_dir.mkdir()
