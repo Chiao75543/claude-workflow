@@ -284,6 +284,35 @@ def test_spec_size_warning(tmp: pathlib.Path) -> None:
     check("超過 800 行 → 警告「建議拆卡」但仍 PASS", code == 0 and "建議拆卡" in out and "PASS" in out, out[:300])
 
 
+def test_spec_lint_allow_vague(tmp: pathlib.Path) -> None:
+    """領域名詞撞上空話黑名單(soundroots:欄目 WORKS、路徑 /works)—— 專案在 pipeline.yaml 放行,不在規格裡繞。"""
+    works = VALID_SPEC.replace("then: {returns: empty_list}", "then: {nav: OUR WORKS, href: /works}")
+
+    def lint(name: str, spec: str, allow: str | None = None) -> tuple[int, str]:
+        root = make_repo(tmp / name, spec)
+        if allow is not None:
+            (root / "specs" / "pipeline.yaml").write_text(f"spec_lint:\n  allow_vague: {allow}\n")
+        return run_gate("spec-lint", "specs/demo/spec.yaml", cwd=root)
+
+    code, out = lint("allow-unset", works)
+    check("沒設 allow_vague → /works 照樣擋(現行行為)", code == 1 and "空話「works」" in out, out[:160])
+    code, out = lint("allow-works", works, "[works]")
+    check("allow_vague: [works] → 同一份規格通過", code == 0, out[:160])
+    code, out = lint("allow-works-other", works.replace("out: {returns: empty_list}", "out: {returns: 正確}"), "[works]")
+    check("allow 了 works,規格裡別的黑名單字照擋",
+          code == 1 and "空話「正確」" in out and "works" not in out, out[:160])
+    code, out = lint("allow-unknown", VALID_SPEC, "[awesome]")
+    check("allow 一個不在黑名單裡的字 → 報錯,不靜默忽略", code == 1 and "awesome" in out, out[:160])
+    code, out = lint("allow-not-list", VALID_SPEC, "works")
+    check("allow_vague 不是字串 list → 報錯", code == 1 and "list" in out, out[:160])
+
+    root = make_repo(tmp / "allow-dashboard", works)
+    (root / "specs" / "pipeline.yaml").write_text("spec_lint:\n  allow_vague: [works]\n")
+    _, out = run_gate("dashboard", "specs/demo/spec.yaml", cwd=root)
+    g0 = next((ln for ln in out.splitlines() if " G0 " in ln), out)
+    check("dashboard 的 G0 吃同一份 allow_vague", "✓" in g0, g0.strip()[:160])
+
+
 def test_freeze_check(tmp: pathlib.Path) -> None:
     def with_test(root: pathlib.Path) -> list[str]:
         (root / "tests").mkdir(exist_ok=True)
@@ -2077,7 +2106,8 @@ def test_adversary_s7plus(tmp: pathlib.Path) -> None:
 def main() -> int:
     with tempfile.TemporaryDirectory() as td:
         tmp = pathlib.Path(td)
-        for fn in (test_spec_lint, test_spec_size_warning, test_freeze_check, test_red_capture,
+        for fn in (test_spec_lint, test_spec_size_warning, test_spec_lint_allow_vague,
+                   test_freeze_check, test_red_capture,
                    test_traceability, test_spec_diff,
                    test_dashboard_requires_verification, test_landed_compares_content,
                    test_reachability, test_reachability_hardening,

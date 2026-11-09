@@ -21,6 +21,8 @@ AGENTS.md 是寫給 AI 讀的散文;腳本需要真正的設定檔。
     auto_push: true                    # 全綠且零待決事項 → 自動推功能分支 + 開 PR
     ci: none                           # none | github | gitlab;有 CI 才有 S12
     rules_files: [AGENTS.md]           # 資安基準與架構鐵則在哪;派給 code-adversary
+    spec_lint:
+      allow_vague: [works]             # 選填;領域名詞撞上 spec-lint 空話黑名單才列(只收黑名單裡有的字)
 
 以上每個鍵都可以用 /workflow:init 問卷一次填好。
 """
