@@ -1518,8 +1518,10 @@ def test_dashboard_gating_order(tmp: pathlib.Path) -> None:
             (case_root / rel).write_text(text)
         run_gate("smoke", spec, cwd=case_root)
         code, out = run_gate("dashboard", spec, cwd=case_root)
-        dash = json.loads((case_root / "specs/demo/evidence/dashboard.json").read_text())
-        return code, next(ln for ln in out.splitlines() if "G9/10" in ln), dash
+        # dashboard 崩潰就沒有 G9/10 那行、也沒有 dashboard.json —— 讓 check 乾淨地紅,別讓整支 run 跟著炸
+        dash_path = case_root / "specs/demo/evidence/dashboard.json"
+        dash = json.loads(dash_path.read_text()) if dash_path.exists() else {"attention": []}
+        return code, next((ln for ln in out.splitlines() if "G9/10" in ln), out), dash
 
     code, review_line, dash = post_review_fix("order-post-fix-small", {"fix.txt": "x\n" * 40})
     note = next((a for a in dash["attention"] if a["tag"] == "未重審"), None)
@@ -1536,6 +1538,11 @@ def test_dashboard_gating_order(tmp: pathlib.Path) -> None:
         code, review_line, _ = post_review_fix(f"order-post-fix-{name}", edits, fixed)
         check(f"審查後 {why} → 審查過期",
               code == 1 and "✘" in review_line and "審查過期" in review_line, review_line.strip())
+    # 二進位檔 numstat 是 `-\t-`,行數無意義 —— 只有 1 檔也照判過期
+    code, review_line, dash = post_review_fix("order-post-fix-binary", {"fix.bin": "\x00\x01\x02"})
+    check("審查後只改 1 個二進位檔 + 派遣後有 loop fix → 審查過期,attention 沒有未重審",
+          code == 1 and "✘" in review_line and "審查過期" in review_line
+          and not any(a["tag"] == "未重審" for a in dash["attention"]), review_line.strip())
 
     root = review_ready("order-tree-changed-during-dashboard")
     wrapper_dir = tmp / "dashboard-git-wrapper"
