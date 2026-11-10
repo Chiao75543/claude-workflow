@@ -1441,15 +1441,31 @@ def test_dashboard_gating_order(tmp: pathlib.Path) -> None:
     status = lambda: json.loads((root / "specs/demo/evidence/status.json").read_text())
     check("dashboard 有關卡紅 → status.json 記「卡在 <第一道紅的關>」,不等人",
           status()["stage"] == "S9" and status()["label"].startswith("卡在 S ") and status()["blocked_on"] is None, str(status()))
+    last_yield = lambda r=None: json.loads(((r or root) / "specs/_yield.jsonl").read_text().splitlines()[-1])
+    check("沒傳 --trigger → yield 記 unknown;smoke 沒過所以 G9/10 沒派 → review_state upstream_red",
+          last_yield()["trigger"] == "unknown" and last_yield()["review_state"] == "upstream_red", str(last_yield()))
 
     run_gate("smoke", spec, cwd=root)
     code, out = run_gate("dashboard", spec, cwd=root)
     check("smoke 過但沒有派過 G9/G10 的紀錄 → G9/10 擋", "沒有派過的紀錄" in out and code == 1, out[:400])
+    check("沒有派過的紀錄 → review_state not_dispatched", last_yield()["review_state"] == "not_dispatched", str(last_yield()))
 
     dispatched(root)
-    code, out = run_gate("dashboard", spec, cwd=root)
+    code, out = run_gate("dashboard", "--trigger", "fix", spec, cwd=root)   # 旗標放在規格前面也要認得
     check("全綠零待決(零 finding 但派過)→ 自動推:可以", code == 0 and "自動推:可以" in out, out[:500])
+    check("--trigger fix 寫進 yield;全綠 → review_state pass",
+          last_yield()["trigger"] == "fix" and last_yield()["review_state"] == "pass", str(last_yield()))
     check("全綠零待決 → status.json 記 S10 可推", status()["stage"] == "S10" and status()["blocked_on"] is None, str(status()))
+    check("dashboard 同一站反覆寫狀態 → history 不重複(S9 跑三次只一列)",
+          [h["stage"] for h in status()["history"]] == ["S9", "S10"], str(status()))
+    lines_before = (root / "specs/_yield.jsonl").read_text().count("\n")
+    code, out = run_gate("dashboard", spec, "--trigger", "because", cwd=root)
+    check("--trigger 不在清單內 → exit 2,不寫 yield(不收亂填的原因)",
+          code == 2 and "--trigger 只能是" in out
+          and (root / "specs/_yield.jsonl").read_text().count("\n") == lines_before, out[:300])
+    code, out = run_gate("runs", "--yield", cwd=root)
+    check("runs --yield 依 G9/10 狀態與觸發原因統計",
+          "G9/10 狀態:" in out and "pass×1" in out and "證據表觸發原因:" in out and "fix×1" in out, out[-400:])
     # runs 只列「尚未落地」的規格:切到功能分支、把規格改成和 main 不同,它才算在飛
     subprocess.run(["git", "checkout", "-q", "-b", "feat/demo"], cwd=root, check=True)
     (root / "specs/demo/spec.yaml").write_text((root / "specs/demo/spec.yaml").read_text() + "# in flight\n")
@@ -1512,7 +1528,8 @@ def test_dashboard_gating_order(tmp: pathlib.Path) -> None:
         code, out = run_gate("dashboard", spec, cwd=root)
         review_line = next(ln for ln in out.splitlines() if "G9/10" in ln)
         check(f"{gate} dispatch {name} → fail closed",
-              code == 1 and "✘" in review_line and "無效" in review_line and gate in review_line,
+              code == 1 and "✘" in review_line and "無效" in review_line and gate in review_line
+              and last_yield(root)["review_state"] == "invalid_dispatch",
               review_line.strip())
 
     for stale_gate in ("G9", "G10"):
@@ -1524,7 +1541,8 @@ def test_dashboard_gating_order(tmp: pathlib.Path) -> None:
         code, out = run_gate("dashboard", spec, cwd=root)
         review_line = next(ln for ln in out.splitlines() if "G9/10" in ln)
         check(f"只有 {stale_gate} dispatch 過期 → fail closed",
-              code == 1 and "✘" in review_line and "過期" in review_line and stale_gate in review_line,
+              code == 1 and "✘" in review_line and "過期" in review_line and stale_gate in review_line
+              and last_yield(root)["review_state"] == "stale",
               review_line.strip())
 
     # 審查後的小修不重派(SKILL.md:fix diff ≤ 1 檔、≤ 40 行)。soundroots 第 1 輪實測:
@@ -1598,6 +1616,8 @@ def test_dashboard_gating_order(tmp: pathlib.Path) -> None:
         os.environ["PATH"] = original_path
     check("dashboard 裁決期間工作樹改變 → freshness fail closed",
           code == 1 and "dashboard 執行期間工作樹變了" in out, out[-500:])
+    check("dashboard 裁決期間工作樹改變 → yield 的 review_state 記 stale,不是 pass",
+          last_yield(root)["review_state"] == "stale", str(last_yield(root)))
 
     (root / "Tests" / "DemoTests.swift").write_text((root / "Tests" / "DemoTests.swift").read_text() + "// touched\n")
     code, out = run_gate("dashboard", spec, cwd=root)
@@ -1620,7 +1640,8 @@ def test_dashboard_gating_order(tmp: pathlib.Path) -> None:
              "--repro", "Tests/Twice.swift", "--question", "要防嗎?", cwd=root)
     code, out = run_gate("dashboard", spec, cwd=root)
     check("proposed 的 ask_user(重現沒實跑)→ G9/10 擋,不能自動推",
-          code == 1 and "沒處理完" in out and "自動推:可以" not in out, out[:500])
+          code == 1 and "沒處理完" in out and "自動推:可以" not in out
+          and last_yield(root)["review_state"] == "findings_pending", out[:500])
     run_gate("findings", spec, "set", "F-9", "confirmed", cwd=root)
     code, out = run_gate("dashboard", spec, cwd=root)
     check("有 ask_user 等人 → 關卡綠但自動推:不行(有待決事項)",
@@ -2101,6 +2122,136 @@ def test_adversary_s7plus(tmp: pathlib.Path) -> None:
           and "⏸ 無外部錨定：批准快照未 commit 或有修改" in out, out[-300:])
 
 
+# ---------------------------------------------------------------- 成本與時間
+
+def test_cost_ledger(tmp: pathlib.Path) -> None:
+    """runs --cost 直接讀 session 紀錄,status.json 追加 history。每條對應一個實測過的坑:
+    同一則回應拆成多行(302 行只有 140 筆)、U+2028 讓 splitlines 切斷 JSON、紀錄格式會變。"""
+    import importlib.machinery
+    import importlib.util
+    import re
+    sys.path.insert(0, str(GATES))
+    from _state import tree_fingerprint
+
+    spec = "specs/demo/spec.yaml"
+    root = make_repo(tmp / "cost")
+    commit_base(root)
+
+    # ---- status.json history
+    before = tree_fingerprint(root)
+    run_gate("runs", "--set", spec, "S5", "等你批說明頁", "--blocked-on", "human", cwd=root)
+    run_gate("runs", "--set", spec, "S5", "還在等", "--blocked-on", "human", cwd=root)
+    run_gate("runs", "--set", spec, "S6", "定稿凍結", cwd=root)
+    status_path = root / "specs/demo/evidence/status.json"
+    status = json.loads(status_path.read_text())
+    check("status.json history 只在站或等誰變了才追加(同站重設不重複),現況欄位照舊",
+          [(h["stage"], h["blocked_on"]) for h in status["history"]] == [("S5", "human"), ("S6", None)]
+          and status["label"] == "定稿凍結" and status["blocked_on"] is None, str(status))
+    check("寫 status.json(含 history)不改變工作樹指紋 —— 否則每記一筆 smoke 與審查就過期",
+          tree_fingerprint(root) == before)
+
+    # 時間固定下來:S5 等人 1h → S8 1h → S9
+    status["history"] = [
+        {"at": "2026-11-01T10:00:00+08:00", "stage": "S5", "blocked_on": "human"},
+        {"at": "2026-11-01T11:00:00+08:00", "stage": "S8", "blocked_on": None},
+        {"at": "2026-11-01T12:00:00+08:00", "stage": "S9", "blocked_on": None},
+    ]
+    status_path.write_text(json.dumps(status, ensure_ascii=False))
+
+    # ---- session 紀錄(資料夾名 = 啟動目錄把非英數換成 -)
+    home = tmp / "claude-home"
+    proj = home / "projects" / re.sub(r"[^A-Za-z0-9]", "-", str(root.resolve()))
+
+    def assistant(mid: str, ts: str, cwd: str, model: str, n: int, **extra) -> dict:
+        return {"type": "assistant", "requestId": f"req-{mid}", "timestamp": ts, "cwd": cwd,
+                "message": {"id": mid, "model": model, "content": [{"type": "text", "text": "a b"}],
+                            "usage": {"input_tokens": n, "output_tokens": 10 * n,
+                                      "cache_read_input_tokens": 100 * n, "cache_creation_input_tokens": 1000 * n,
+                                      "speed": "standard", **extra}}}
+
+    def write_jsonl(path: pathlib.Path, rows: list) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("".join(json.dumps(r, ensure_ascii=False) + "\n" for r in rows))
+
+    wt = str(root / ".worktrees" / "demo")
+    write_jsonl(proj / "main.jsonl", [
+        {"type": "user", "message": {"content": "hi"}},
+        assistant("m1", "2026-11-01T02:30:00.000Z", wt + "/App", "claude-opus-5-5", 1),     # 10:30+08 → S5
+        assistant("m1", "2026-11-01T02:30:01.000Z", wt + "/App", "claude-opus-5-5", 1),     # 同一則回應的第二行
+        assistant("m2", "2026-11-01T03:30:00.000Z", str(root), "claude-opus-5-5", 2),       # 根目錄,落在 demo 的區段 → S8
+        assistant("m3", "2026-11-02T00:00:00.000Z", str(root), "claude-opus-5-5", 4),       # 根目錄,沒有卡在動 → 未歸屬
+    ])
+    sub = proj / "main" / "subagents"
+    write_jsonl(sub / "agent-a.jsonl", [assistant("a1", "2026-11-01T03:40:00.000Z", wt, "claude-fable-5-2", 8)])
+    (sub / "agent-a.meta.json").write_text(json.dumps({"description": "S7 red-writer demo"}))
+    write_jsonl(sub / "agent-b.jsonl", [assistant("b1", "2026-11-01T03:41:00.000Z", wt, "claude-fable-5-2", 16)])
+    (sub / "agent-b.meta.json").write_text(json.dumps({"description": "red-writer for demo"}))
+
+    def cost(home_dir: pathlib.Path) -> tuple[int, str]:
+        saved = os.environ.get("CLAUDE_CONFIG_DIR")
+        os.environ["CLAUDE_CONFIG_DIR"] = str(home_dir)
+        try:
+            return run_gate("runs", "--cost", cwd=root)
+        finally:
+            if saved is None:
+                os.environ.pop("CLAUDE_CONFIG_DIR", None)
+            else:
+                os.environ["CLAUDE_CONFIG_DIR"] = saved
+
+    def row(out: str, label: str) -> list[int] | None:
+        line = next((ln for ln in out.splitlines() if ln.strip().startswith(label + " ")), None)
+        return [int(x.replace(",", "")) for x in line.split()[-4:]] if line else None
+
+    code, out = cost(home)
+    check("runs --cost:同一則回應拆成兩行只算一次;U+2028 不會讓 JSON 被切斷",
+          code == 0 and row(out, "demo · S5 · claude-opus-5-5") == [1, 10, 100, 1000], out[:600])
+    check("runs --cost:主 session 在根目錄 → 用 history 時間區段歸到卡與站",
+          row(out, "demo · S8 · claude-opus-5-5") == [2, 20, 200, 2000], out[:600])
+    check("runs --cost:subagent 依 description「<站> <agent> <卡名>」歸屬",
+          row(out, "demo · S7 · claude-fable-5-2") == [8, 80, 800, 8000], out[:600])
+    check("runs --cost:格式不對的 description 與對不上時間的主 session 歸未歸屬,不猜",
+          row(out, "(未歸屬) · ? · claude-fable-5-2") == [16, 160, 1600, 16000]
+          and row(out, "(未歸屬) · ? · claude-opus-5-5") == [4, 40, 400, 4000], out[:800])
+    check("runs --cost:印出未歸屬佔比", "未歸屬 64.5%" in out, out[-300:])   # 22220 / 34441
+    check("runs --cost:時間 = history 首筆到末筆,等人 = blocked_on human 的區段",
+          "demo  總 2.0h · 等人 1.0h(50%)" in out, out[-300:])
+
+    for name, extra, drop, needle in (
+        ("new-token-key", {"cache_creation_ephemeral_tokens": 5}, None, "不認得的 token 欄位"),
+        ("missing-output", {}, "output_tokens", "usage.output_tokens"),
+    ):
+        bad_home = tmp / f"claude-home-{name}"
+        entry = assistant("x1", "2026-11-01T02:30:00.000Z", wt, "claude-opus-5-5", 1, **extra)
+        if drop:
+            del entry["message"]["usage"][drop]
+        write_jsonl(bad_home / "projects" / proj.name / "main.jsonl", [entry])
+        code, out = cost(bad_home)
+        check(f"runs --cost:紀錄格式變了({name})→ 報錯指出檔案行號,不默默算成 0",
+              code == 1 and needle in out and "main.jsonl:1" in out, out[:300])
+
+    # ---- dispatch-prompts.md 的每個派遣範例都照 runs 認得的格式寫
+    loader = importlib.machinery.SourceFileLoader("runs_module", str(GATES / "runs"))
+    module_spec = importlib.util.spec_from_loader("runs_module", loader)
+    runs_module = importlib.util.module_from_spec(module_spec)
+    loader.exec_module(runs_module)
+    doc = (GATES.parents[1] / "skills/workflow-orchestrator/references/dispatch-prompts.md").read_text()
+    calls = [ln for ln in doc.splitlines() if "Agent(subagent_type=" in ln]
+    descs = [re.search(r'description="([^"]*)"', ln) for ln in calls]
+    bad = [ln for ln, d in zip(calls, descs)
+           if d is None or not runs_module.DISPATCH_DESCRIPTION.match(d.group(1).replace("{name}", "demo"))]
+    check("dispatch-prompts.md 每個 Agent(...) 範例都帶 runs --cost 認得的 description",
+          len(calls) >= 7 and not bad, str(bad or calls))
+
+    # 以前 dashboard 只覆寫 status.json;現在要先讀 history —— 壞掉的檔不能讓它在最後一步崩潰
+    status_path.write_text("{")
+    code_cost, out_cost = cost(home)
+    code, out = run_gate("runs", "--set", spec, "S9", "驗證關", cwd=root)
+    check("壞掉的 status.json → runs --cost 照跑、runs --set 重新開始 history,都不崩潰",
+          code_cost == 0 and code == 0
+          and [h["stage"] for h in json.loads(status_path.read_text())["history"]] == ["S9"],
+          (out_cost[-200:] + out[:200]))
+
+
 # ---------------------------------------------------------------- main
 
 def main() -> int:
@@ -2113,7 +2264,7 @@ def main() -> int:
                    test_reachability, test_reachability_hardening,
                    test_test_review, test_loop, test_findings, test_smoke,
                    test_dashboard_gating_order, test_dashboard_approval_anchor_phases,
-                   test_config_check, test_adversary_s7plus, test_risk_lanes):
+                   test_config_check, test_adversary_s7plus, test_risk_lanes, test_cost_ledger):
             try:
                 fn(tmp)
             except Exception as exc:  # noqa: BLE001

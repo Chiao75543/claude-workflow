@@ -5,18 +5,35 @@
   runs --set <spec.yaml> S9 "驗證關"        更新狀態
   runs --set <spec.yaml> S5 "等你批說明頁" --blocked-on human
   runs --yield                            哪道關擋過東西、擋了幾次(specs/_yield.jsonl)
+  runs --cost                             每張卡、每一站用了多少 token,以及花了多久、等人多久
 
-狀態寫在 <spec 目錄>/evidence/status.json。
+狀態寫在 <spec 目錄>/evidence/status.json(含追加式 history)。
+--cost 讀 Claude Code 自己留的 session 紀錄(~/.claude/projects/<專案>/,或 $CLAUDE_CONFIG_DIR),
+不另外記帳;紀錄會被 cleanupPeriodDays 清掉,所以那個設定要調高。
 """
 
 from __future__ import annotations
 
+import collections
 import datetime
+import json
+import os
 import pathlib
+import re
+import subprocess
 import sys
 
 sys.path.insert(0, str(pathlib.Path(__file__).parent))
-from _common import evidence_dir, in_flight_specs, read_json, repo_root, sibling_worktrees, write_json  # noqa: E402
+from _common import (  # noqa: E402
+    evidence_dir, find_specs, in_flight_specs, read_json, repo_root, sibling_worktrees, write_status,
+)
+
+# 派遣 subagent 時的 description 格式:「<站> <agent> <卡名>」,例如 `S7 red-writer remove-leaderboard-xp`。
+# 規定在 references/dispatch-prompts.md;對不上的用量歸「未歸屬」,不猜。
+DISPATCH_DESCRIPTION = re.compile(r"^(?P<station>[SG]\d+\S*) (?P<agent>[a-z][a-z-]*) (?P<card>[a-z0-9][a-z0-9-]*)$")
+TOKEN_KEYS = {"input_tokens": "input", "output_tokens": "output",
+              "cache_read_input_tokens": "cache_read", "cache_creation_input_tokens": "cache_write"}
+UNATTRIBUTED = "(未歸屬)"
 
 
 def set_status(argv: list[str]) -> int:
@@ -27,12 +44,7 @@ def set_status(argv: list[str]) -> int:
     blocked = "human" if "--blocked-on" in argv else None
     if blocked and (idx := argv.index("--blocked-on")) + 1 < len(argv):
         blocked = argv[idx + 1]
-    write_json(evidence_dir(spec_path) / "status.json", {
-        "stage": argv[1],
-        "label": argv[2],
-        "blocked_on": blocked,
-        "updated_at": datetime.datetime.now().astimezone().isoformat(timespec="seconds"),
-    })
+    write_status(spec_path, argv[1], argv[2], blocked)
     flag = f" (等 {blocked})" if blocked else ""
     print(f"{spec_path.parent.name}: {argv[1]} {argv[2]}{flag}")
     return 0
@@ -65,12 +77,161 @@ def show_yield(root: pathlib.Path) -> int:
     never = [g for g in seen if fails.get(g, 0) == 0 and seen[g] >= 5]
     if never:
         print(f"  ⚠ 跑過 ≥5 次從沒擋過東西:{', '.join(never)} —— 值得問它還該不該留")
+    # 舊紀錄沒有這兩欄,不回填;只統計有的
+    for key, title in (("review_state", "G9/10 狀態"), ("trigger", "證據表觸發原因")):
+        counts = collections.Counter(row[key] for row in rows if row.get(key))
+        if counts:
+            print(f"  {title}:" + " · ".join(f"{k}×{v}" for k, v in counts.most_common()))
+    return 0
+
+
+# ---------------------------------------------------------------- --cost
+
+def usage_of(entry: dict, where: str) -> dict:
+    """一則 assistant 回應的 token 數。session 紀錄不是公開介面,讀法全集中在這裡。
+
+    必要欄位缺少或型別錯 → 報錯;多出新的 *_tokens 欄位也報錯(那是會被默默漏算的新計量)。
+    其他新欄位(speed、iterations…)忽略 —— Claude Code 常加欄位,不該每次更新都讓這支壞掉。"""
+    usage = (entry.get("message") or {}).get("usage")
+    if not isinstance(usage, dict):
+        raise ValueError(f"{where}: assistant 訊息沒有 usage")
+    unknown = sorted(k for k in usage if k.endswith("_tokens") and k not in TOKEN_KEYS)
+    if unknown:
+        raise ValueError(f"{where}: 不認得的 token 欄位 {', '.join(unknown)} —— 先更新 runs 的讀法,不要漏算")
+    out = {}
+    for key, name in TOKEN_KEYS.items():
+        value = usage.get(key)
+        if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+            raise ValueError(f"{where}: usage.{key} 缺少或不是非負整數({value!r})")
+        out[name] = value
+    return out
+
+
+def parse_time(text: str) -> datetime.datetime:
+    return datetime.datetime.fromisoformat(text.replace("Z", "+00:00"))
+
+
+def read_usage(path: pathlib.Path, seen: set):
+    """(時間, cwd, 模型, token 數)。同一則回應會拆成好幾行、每行帶一樣的 usage —— 依 (message.id, requestId) 去重。"""
+    # 只切 \n:splitlines() 也會在 U+2028 之類的字元切開,而 JSON 字串裡可以直接放它們(實測紀錄就有)
+    for n, line in enumerate(path.read_text().split("\n"), 1):
+        if not line.strip():
+            continue
+        where = f"{path}:{n}"
+        try:
+            entry = json.loads(line)
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"{where}: 不是 JSON({exc})") from exc
+        if entry.get("type") != "assistant":
+            continue
+        usage = usage_of(entry, where)
+        message = entry.get("message") or {}
+        key = (message.get("id"), entry.get("requestId"))
+        if key != (None, None):
+            if key in seen:
+                continue
+            seen.add(key)
+        try:
+            when = parse_time(entry["timestamp"])
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ValueError(f"{where}: timestamp 缺少或格式不對") from exc
+        yield when, entry.get("cwd") or "", message.get("model") or "?", usage
+
+
+def main_checkout(root: pathlib.Path) -> pathlib.Path:
+    """session 紀錄的資料夾以「啟動時的目錄」命名;在 worktree 裡跑 runs 也要找主 checkout 那份。"""
+    out = subprocess.run(["git", "rev-parse", "--path-format=absolute", "--git-common-dir"],
+                         cwd=root, capture_output=True, text=True)
+    return pathlib.Path(out.stdout.strip()).resolve().parent if out.returncode == 0 else root.resolve()
+
+
+def card_histories(root: pathlib.Path) -> dict:
+    """卡名 → [(時間, 站, 等誰)],從每個 worktree 的 status.json history 合併。"""
+    merged: dict = collections.defaultdict(set)
+    for tree in [root] + sibling_worktrees(root):
+        for spec_path in find_specs(tree):
+            try:
+                history = (read_json(evidence_dir(spec_path) / "status.json") or {}).get("history") or []
+            except (ValueError, AttributeError):
+                continue   # 壞掉的 status.json:那張卡的時間量不到,其他卡照算
+            for h in history:
+                try:
+                    at = parse_time(h["at"])
+                except (KeyError, TypeError, ValueError):
+                    continue
+                if at.tzinfo is not None and isinstance(h.get("stage"), str):   # naive 時間跟 session 紀錄比不了
+                    merged[spec_path.parent.name].add((at, h["stage"], h.get("blocked_on")))
+    return {card: sorted(entries, key=lambda e: e[0]) for card, entries in merged.items()}
+
+
+def attribute(when, cwd: str, histories: dict) -> tuple:
+    """主 session 的一行算哪張卡、哪一站。先看 cwd 在不在 .worktrees/<卡>;在根目錄的才用時間區段,
+    同一時間只有一張卡在動才算它的;對不上就是未歸屬。"""
+    m = re.search(r"/\.worktrees/([^/]+)", cwd)
+    if m:
+        card = m.group(1)
+    else:
+        active = [c for c, h in histories.items() if h[0][0] <= when <= h[-1][0]]
+        if len(active) != 1:
+            return UNATTRIBUTED, "?"
+        card = active[0]
+    past = [e for e in histories.get(card, []) if e[0] <= when]
+    return card, past[-1][1] if past else "?"
+
+
+def show_cost(root: pathlib.Path) -> int:
+    checkout = main_checkout(root)
+    base = pathlib.Path(os.environ.get("CLAUDE_CONFIG_DIR") or pathlib.Path.home() / ".claude") / "projects"
+    slug = re.sub(r"[^A-Za-z0-9]", "-", str(checkout))
+    dirs = [d for d in [base / slug, *sorted(base.glob(slug + "--worktrees-*"))] if d.is_dir()]
+    if not dirs:
+        print(f"找不到 session 紀錄:{base / slug}")
+        return 0
+    histories = card_histories(root)
+    totals: dict = collections.defaultdict(lambda: dict.fromkeys(TOKEN_KEYS.values(), 0))
+    seen: set = set()
+    try:
+        for d in dirs:
+            for path in sorted(d.glob("*.jsonl")):
+                for when, cwd, model, usage in read_usage(path, seen):
+                    card, station = attribute(when, cwd, histories)
+                    for k, v in usage.items():
+                        totals[(card, station, model)][k] += v
+            for path in sorted(d.glob("*/subagents/*.jsonl")):
+                m = DISPATCH_DESCRIPTION.match((read_json(path.with_suffix(".meta.json")) or {}).get("description") or "")
+                card, station = (m["card"], m["station"]) if m else (UNATTRIBUTED, "?")
+                for _, _, model, usage in read_usage(path, seen):
+                    for k, v in usage.items():
+                        totals[(card, station, model)][k] += v
+    except ValueError as exc:
+        print(f"✘ {exc}")
+        return 1
+
+    grand = sum(sum(t.values()) for t in totals.values())
+    lost = sum(sum(t.values()) for (card, _, _), t in totals.items() if card == UNATTRIBUTED)
+    print(f"▸ token 用量({slug};同一則回應只算一次;訂閱制只記數量,不換算金額)")
+    print(f"  {'卡 · 站 · 模型':<52} {'input':>12} {'output':>12} {'cache 讀':>14} {'cache 寫':>14}")
+    for (card, station, model), t in sorted(totals.items(), key=lambda kv: (kv[0][0] == UNATTRIBUTED, kv[0])):
+        print(f"  {f'{card} · {station} · {model}':<52} {t['input']:>12,} {t['output']:>12,}"
+              f" {t['cache_read']:>14,} {t['cache_write']:>14,}")
+    share = lost / grand * 100 if grand else 0.0
+    print(f"  合計 {grand:,} token · 未歸屬 {share:.1f}%(太高代表這個歸屬方法不可靠)")
+
+    if histories:
+        print("▸ 時間(status.json 的 history,首筆到末筆)")
+        for card, h in sorted(histories.items()):
+            span = (h[-1][0] - h[0][0]).total_seconds()
+            waiting = sum((h[i + 1][0] - h[i][0]).total_seconds() for i in range(len(h) - 1) if h[i][2] == "human")
+            pct = f"{waiting / span * 100:.0f}%" if span else "—"
+            print(f"  {card}  總 {span / 3600:.1f}h · 等人 {waiting / 3600:.1f}h({pct})")
     return 0
 
 
 def main(argv: list[str]) -> int:
     if argv and argv[0] == "--yield":
         return show_yield(repo_root())
+    if argv and argv[0] == "--cost":
+        return show_cost(repo_root())
     if argv and argv[0] == "--set":
         return set_status(argv[1:])
 
