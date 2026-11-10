@@ -433,8 +433,8 @@ MUTATIONS: list[tuple[str, str, str, str]] = [
      '    ).returncode == 0',
      "    base_ok = base_matches_config"),
     ("findings", "dispatch 指紋只算 specs 子樹",
-     '            "tree": tree_fingerprint(root),',
-     '            "tree": tree_fingerprint(ev.parents[1]),'),
+     '        tree = tree_fingerprint(root)\n',
+     '        tree = tree_fingerprint(ev.parents[1])\n'),
     ("dashboard", "缺 G9/G10 dispatch 也算審過",
      '    elif missing_dispatch:',
      "    elif False:"),
@@ -538,6 +538,34 @@ MUTATIONS: list[tuple[str, str, str, str]] = [
     ("dashboard", "裁決期間工作樹變了,review_state 仍記 pass",
      '                if gate["id"] == "G9/10":\n                    review_state = "stale"',
      '                if gate["id"] == "G9/10":\n                    pass'),
+    # ---- 召回考題(scripts/bench/recall + 派遣樹保留)----
+    ("findings", "派遣樹不留 ref(兩週後 gc 掉,召回考題又少一題)",
+     "        keep = keep_dispatch_tree(root, spec_path.parent.name, gate, tree)",
+     "        keep = None"),
+    ("../bench/recall", "修正後也紅的重現照算命中",
+     ' and result["problem_on_pre"] and result.get("post") == 0',
+     ' and result["problem_on_pre"]'),
+    ("../bench/recall", "暫存樹放在系統暫存目錄(/var 底下,mindey 的靜態規格測試整套紅)",
+     '        self.path = pathlib.Path(tempfile.mkdtemp(prefix="recall-", dir=TMP_ROOT)).resolve()',
+     '        self.path = pathlib.Path(tempfile.mkdtemp(prefix="recall-")).resolve()'),
+    ("../bench/recall", "缺檔或撞名的重現照樣判定(非零可能只是檔不在)",
+     '            result["judgeable"] = not result["missing"] and not result["collided"]',
+     '            result["judgeable"] = True'),
+    ("../bench/recall", "validate 判不成立的題目照樣計入分母",
+     '        usable = [f for f in group["findings"] if f.get("validated") is not False]',
+     '        usable = group["findings"]'),
+    ("../bench/recall", "驗不了(回歸測試在 specs/ 底下或沒 commit)當成不成立,題目被踢出分母",
+     '        todo = [f for f in todo if not f["why"]]',
+     '        todo = [f for f in todo if not f["why"] or f.update(validated=False)]'),
+    ("../bench/recall", "validate 不看修正前紅不紅",
+     "                red = pre.run(test_command(pre, test_override)) != 0",
+     "                red = True"),
+    ("../bench/recall", "測試假綠類也拿回歸測試驗「紅→綠」",
+     '    return "假綠" in (finding.get("title") or "") or "變異" in (finding.get("repro") or "")',
+     "    return False"),
+    ("../bench/recall", "回歸測試路徑不優先取 regression(會抓到測試執行腳本)",
+     '    paths.sort(key=lambda p: "regression" not in p.lower())\n',
+     ""),
 ]
 
 
@@ -551,7 +579,7 @@ def restore_leftovers() -> list[str]:
     restored = []
     if BACKUP.is_dir():
         for bak in sorted(BACKUP.iterdir()):
-            target = GATES / bak.name
+            target = GATES / bak.name.replace("%", "/")   # ../bench/recall 這種跨目錄的,備份時把 / 編成 %
             target.write_text(bak.read_text())
             bak.unlink()
             restored.append(bak.name)
@@ -593,7 +621,7 @@ def main(argv: list[str]) -> int:
             skipped.append((script, label, f"注入點出現 {occurrences} 次,有歧義"))
             continue
         BACKUP.mkdir(exist_ok=True)
-        bak = BACKUP / script
+        bak = BACKUP / script.replace("/", "%")
         bak.write_text(original)          # 先落備份,被砍也還得回來
         try:
             path.write_text(original.replace(find, replace, 1))

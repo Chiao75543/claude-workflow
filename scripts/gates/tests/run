@@ -2252,6 +2252,154 @@ def test_cost_ledger(tmp: pathlib.Path) -> None:
           (out_cost[-200:] + out[:200]))
 
 
+# ---------------------------------------------------------------- 召回考題
+
+def test_recall_bench(tmp: pathlib.Path) -> None:
+    """scripts/bench/recall:派遣樹留得住、題目盤得出來、判定是機械的。
+    實測 152 條 fixed must_fix 只剩 35 條找得回修正前的樹 —— 派遣樹被 gc 了,流程到 S10 才第一次 commit。"""
+    import re
+    bench = GATES.parent / "bench" / "recall"
+    spec = "specs/demo/spec.yaml"
+    root = make_repo(tmp / "bench")
+    sh = lambda *a: subprocess.run(list(a), cwd=root, check=True, capture_output=True, text=True).stdout
+    (root / "specs" / "pipeline.yaml").write_text('runner: swift-testing\ntest: "sh run-tests.sh"\n')
+    (root / "run-tests.sh").write_text('for t in tests/*.sh tests/regression/*.sh; do [ -f "$t" ] || continue; sh "$t" || exit 1; done\n')
+    commit_base(root)
+
+    # ---- 功能分支:實作有 bug 時派 G10,收三條 must_fix,修完才第一次 commit(跟真的流程一樣)
+    sh("git", "checkout", "-q", "-b", "feat/demo")
+    (root / "app.txt").write_text("bug\n")
+    (root / "tests").mkdir()
+    (root / "tests" / "spec.sh").write_text("grep -q . app.txt\n")
+    code, out = run_gate("findings", spec, "dispatched", "--gate", "G10", "--model", "fable", cwd=root)
+    record = json.loads((root / "specs/demo/evidence/findings.json").read_text())["dispatched"]["G10"]
+    kept = sh("git", "for-each-ref", "--format=%(refname) %(objectname)", "refs/pipeline/dispatch/demo/G10/").split()
+    check("findings dispatched 把被審的樹留成本機 ref(refs/pipeline/dispatch/<卡>/<關>/<時間>),記在 keep",
+          code == 0 and len(kept) == 2 and record.get("keep") == kept[0]
+          and sh("git", "rev-parse", f"{kept[1]}^{{tree}}").strip() == record["tree"].removeprefix("tree:"), out + str(kept))
+    for fid, title, repro in (("F-001", "登入失敗沒翻譯", "tests/regression/F001.sh(已實跑,紅)"),
+                              ("F-002", "測試假綠:spec.sh 沒釘住內容", "變異 app.txt 改成 zzz 後 sh run-tests.sh 仍全綠;tests/regression/F002.sh 紅"),
+                              ("F-003", "其實修正前就綠的回歸測試", "sh run-tests.sh 會跑到 tests/regression/F003.sh")):
+        run_gate("findings", spec, "add", "--id", fid, "--gate", "G10", "--class", "must_fix",
+                 "--title", title, "--repro", repro, cwd=root)
+        run_gate("findings", spec, "set", fid, "fixed", cwd=root)
+    (root / "app.txt").write_text("fixed\n")
+    (root / "tests" / "regression").mkdir()
+    (root / "tests" / "regression" / "F001.sh").write_text("grep -q fixed app.txt\n")
+    (root / "tests" / "regression" / "F002.sh").write_text("grep -qx 'fixed' app.txt\n")
+    (root / "tests" / "regression" / "F003.sh").write_text("true\n")
+    sh("git", "add", "-A"); sh("git", "commit", "-qm", "feat: demo")
+    sh("git", "checkout", "-q", "main"); sh("git", "merge", "-q", "--no-ff", "-m", "Merge demo", "feat/demo")
+
+    # ---- 一張乾淨卡(派過 G10、零 must_fix)當負樣本
+    sh("git", "checkout", "-q", "-b", "feat/clean")
+    (root / "specs" / "clean" / "evidence").mkdir(parents=True)
+    shutil.copy(root / spec, root / "specs/clean/spec.yaml")
+    (root / "specs/clean/evidence/findings.json").write_text(json.dumps({"items": [], "dispatched": {"G10": {
+        "at": "2026-11-01T10:00:00+08:00", "tree": "tree:" + "0" * 40}}}))
+    sh("git", "add", "-A"); sh("git", "commit", "-qm", "feat: clean")
+    sh("git", "checkout", "-q", "main"); sh("git", "merge", "-q", "--no-ff", "-m", "Merge clean", "feat/clean")
+
+    def inventory() -> dict:
+        proc = subprocess.run([str(bench), "inventory", "--repo", str(root)], capture_output=True, text=True)
+        return json.loads(proc.stdout) if proc.returncode == 0 else {"inputs": [], "skipped": [proc.stderr]}
+
+    q = inventory()
+    pos = [g for g in q["inputs"] if g["kind"] == "positive"]
+    neg = [g for g in q["inputs"] if g["kind"] == "negative"]
+    check("recall inventory:三條 fixed must_fix 共用一份輸入(同一棵派遣樹),來源是留下的 ref;乾淨卡成負樣本",
+          len(pos) == 1 and pos[0]["source"] == "kept_ref" and [f["id"] for f in pos[0]["findings"]] == ["F-001", "F-002", "F-003"]
+          and len(neg) == 1 and neg[0]["card"] == "clean", json.dumps(q, ensure_ascii=False)[:600])
+    check("recall inventory:測試假綠類標 fake_green、不拿回歸測試驗題",
+          ([(f["fake_green"], f["test_file"]) for f in pos[0]["findings"]] if pos else None)
+          == [(False, "tests/regression/F001.sh"), (True, None), (False, "tests/regression/F003.sh")], str(pos)[:400])
+
+    qfile = tmp / "bench-questions.json"
+    qfile.write_text(json.dumps(q, ensure_ascii=False))
+    proc = subprocess.run([str(bench), "validate", str(qfile)], capture_output=True, text=True)
+    vq = json.loads(qfile.read_text())
+    flags = {f["id"]: f["validated"] for g in vq["inputs"] for f in g["findings"]}
+    check("recall validate:回歸測試在修正前紅、修正後綠 → True;修正前就綠 → False;假綠類 → null",
+          flags == {"F-001": True, "F-002": None, "F-003": False}, proc.stdout + proc.stderr + str(flags))
+    broken = tmp / "bench-questions-broken.json"
+    broken.write_text(json.dumps(q, ensure_ascii=False))
+    subprocess.run([str(bench), "validate", str(broken), "--test-cmd", "echo boom-from-post; exit 3"], capture_output=True)
+    bf = {f["id"]: f for g in json.loads(broken.read_text())["inputs"] for f in g["findings"]}
+    check("recall validate:修正後的樹本身不綠 → 不成立,並留下輸出尾段(不用整棵重跑才知道為什麼)",
+          bf["F-001"]["validated"] is False and "boom-from-post" in bf["F-001"].get("tail", ""), str(bf.get("F-001")))
+    odd = json.loads(json.dumps(q))   # mindey 實測:重現檔放 evidence/g10(不在測試 target)、沒 commit、檔名寫簡稱
+    of = {f["id"]: f for g in odd["inputs"] for f in g["findings"]}
+    of["F-001"]["test_file"] = "specs/demo/evidence/g10/F001Repro.sh"
+    of["F-003"]["test_file"] = "tests/regression/never-committed.sh"
+    oddf, marker = tmp / "bench-questions-odd.json", tmp / "bench-validate-ran"
+    oddf.write_text(json.dumps(odd, ensure_ascii=False))
+    subprocess.run([str(bench), "validate", str(oddf), "--test-cmd", f"touch {marker}"], capture_output=True)
+    of = {f["id"]: f for g in json.loads(oddf.read_text())["inputs"] for f in g["findings"]}
+    check("recall validate:回歸測試在 specs/ 底下、或修正後的樹裡沒有 → 驗不了(null,照計入分母),也不白跑整套測試",
+          of["F-001"]["validated"] is None and "specs/" in (of["F-001"].get("why") or "")
+          and of["F-003"]["validated"] is None and "沒有這個回歸測試檔" in (of["F-003"].get("why") or "")
+          and not marker.exists(), str(of))
+
+    fake = tmp / "fake-claude"
+    fake.write_text(
+        "#!/usr/bin/env python3\n"
+        "import json, pathlib, sys\n"
+        "prompt = sys.argv[sys.argv.index('-p') + 1]\n"
+        "found = [{'class': 'must_fix', 'title': '永遠紅', 'files': [], 'repro': 'false'}]\n"
+        "if 'specs/demo/spec.yaml' in prompt and pathlib.Path('app.txt').read_text().startswith('bug'):\n"
+        "    pathlib.Path('tests/regression').mkdir(parents=True, exist_ok=True)\n"
+        "    pathlib.Path('tests/regression/R1.sh').write_text('grep -q fixed app.txt\\n')\n"
+        "    found.append({'class': 'must_fix', 'title': '沒修好', 'files': ['tests/regression/R1.sh'],\n"
+        "                  'repro': 'sh tests/regression/R1.sh'})\n"
+        "    found.append({'class': 'ask_user', 'title': '不算', 'files': [], 'repro': 'false'})\n"
+        "    pathlib.Path('tests/regression/F003.sh').write_text('grep -q fixed app.txt\\n')\n"
+        "    found.append({'class': 'must_fix', 'title': '撞名', 'files': ['tests/regression/F003.sh'],\n"
+        "                  'repro': 'sh tests/regression/F003.sh'})\n"
+        "    found.append({'class': 'must_fix', 'title': '缺檔', 'files': ['tests/regression/recall-gone.sh'],\n"
+        "                  'repro': 'sh tests/regression/recall-gone.sh'})\n"
+        "body = '審查完了。\\n```json\\n' + json.dumps({'findings': found}) + '\\n```'\n"
+        "print(json.dumps({'type': 'result', 'result': body, 'is_error': False, 'usage': {'output_tokens': 1},\n"
+        "                  'modelUsage': {'fake-model': {}}, 'args': sys.argv[1:]}))\n")
+    fake.chmod(0o755)
+    out_file = tmp / "bench-results.json"
+    proc = subprocess.run([str(bench), "run", str(qfile), "--model", "fable", "--effort", "xhigh", "--out", str(out_file)],
+                          capture_output=True, text=True, env={**os.environ, "RECALL_CLAUDE": str(fake)})
+    res = json.loads(out_file.read_text()) if out_file.exists() else {"summary": {}, "results": []}
+    s = res["summary"]
+    check("recall run:修正前紅、修正後綠才算命中;兩邊都紅的不算;validate 判不成立的題不計(1/2,假綠那題照計)",
+          s.get("hits") == 1 and s.get("known") == 2 and s.get("unvalidated") == 1, proc.stdout + proc.stderr + str(s))
+    check("recall run:負樣本上有一條 repro 會紅 → 誤擋;ask_user 不算",
+          s.get("false_block_rate") == 1.0 and s.get("negatives") == 1, str(s))
+    verdicts = {v["title"]: v for r in res["results"] for v in r["verdicts"]}
+    check("recall run:重現檔撞到修正後樹裡的同名檔、或列了卻不存在 → 判不準,不算命中(否則撞名那條會被誤算成命中)",
+          s.get("unjudgeable") == 2 and verdicts.get("撞名", {}).get("collided") == ["post:tests/regression/F003.sh"]
+          and verdicts.get("缺檔", {}).get("missing") == ["tests/regression/recall-gone.sh"]
+          and not verdicts["撞名"]["hit"], json.dumps(verdicts, ensure_ascii=False)[:600])
+    # os.getcwd() 一律回實際路徑,子行程裡量不到 —— 要看傳給 git worktree add 與 cwd 的那個字串
+    cwds = [r["review"].get("cwd") for r in res["results"]]
+    check("recall run:審查與判定的樹放在實際路徑、而且不在 /var 或 /tmp 底下(Foundation 會把 /private 正規化掉)",
+          bool(cwds) and all(c and os.path.realpath(c) == c and not re.match(r"^/(private/)?(var|tmp)/", c) for c in cwds),
+          str(cwds))
+    check("recall run:每次執行留下輸出尾段,事後分得出「問題在」和「檔不在」",
+          "pre_tail" in verdicts.get("沒修好", {}) and "post_tail" in verdicts.get("沒修好", {}), str(verdicts.get("沒修好"))[:300])
+    check("recall run:結果記下模型、effort、prompt 版本與審查實際用的模型",
+          res.get("config", {}).get("model") == "fable" and len(res.get("config", {}).get("prompt_version", "")) == 12
+          and any(r["review"].get("models") == ["fake-model"] for r in res["results"]), str(res.get("config")))
+    leftover = [ln for ln in sh("git", "worktree", "list").splitlines() if "recall-" in ln]
+    check("recall 跑完不留 worktree", not leftover, str(leftover))
+
+    # gc:有 ref 才留得住;拿掉 ref 退回 findings.json 記的樹;再 gc 就沒了
+    sh("git", "gc", "-q", "--prune=now")
+    check("有 ref → git gc --prune=now 之後派遣樹還在", inventory()["inputs"][0]["source"] == "kept_ref")
+    sh("git", "update-ref", "-d", kept[0])
+    check("拿掉 ref、樹還沒被清 → 退回 findings.json 記的派遣樹", inventory()["inputs"][0]["source"] == "dispatch_tree")
+    sh("git", "gc", "-q", "--prune=now")
+    q_gone = inventory()
+    check("沒有 ref 又被 gc → 修正前的樹不存在,跳過並說明(現在 152 條只剩約 40 條找得回就是這個原因)",
+          not [g for g in q_gone["inputs"] if g["kind"] == "positive"]
+          and any("不存在" in s.get("why", "") for s in q_gone["skipped"]), json.dumps(q_gone, ensure_ascii=False)[:400])
+
+
 # ---------------------------------------------------------------- main
 
 def main() -> int:
@@ -2264,7 +2412,8 @@ def main() -> int:
                    test_reachability, test_reachability_hardening,
                    test_test_review, test_loop, test_findings, test_smoke,
                    test_dashboard_gating_order, test_dashboard_approval_anchor_phases,
-                   test_config_check, test_adversary_s7plus, test_risk_lanes, test_cost_ledger):
+                   test_config_check, test_adversary_s7plus, test_risk_lanes, test_cost_ledger,
+                   test_recall_bench):
             try:
                 fn(tmp)
             except Exception as exc:  # noqa: BLE001
