@@ -227,6 +227,10 @@ wt="$(git worktree list --porcelain \
 
 你做的事:回答分歧、挑戰 N/A、確認意圖。**不讀規格,不讀程式碼。**
 
+說明頁送出就 `runs --set specs/{name}/spec.yaml S5 "等你批說明頁" --blocked-on human`,
+批准後 `runs --set specs/{name}/spec.yaml S6 "定稿凍結"` —— 「等人多久」只從 status.json 的 history 算,
+沒標就量不到。
+
 批准後**必須存下快照** `evidence/spec.approved.yaml` ——
 沒有快照就無從判斷後續改動要不要重新批准。
 批准是 owner 的流程事實；機器只能驗證快照是否已被 commit 錨定。
@@ -354,11 +358,15 @@ runner log、錄影、截圖或產物)。缺 Scenario、缺 example、`ok:false`
 `evidence/spec.approved.yaml`）stage，再跑：
 
 ```bash
-scripts/gates/dashboard specs/{name}/spec.yaml --pre-commit
+scripts/gates/dashboard specs/{name}/spec.yaml --pre-commit --trigger <原因>
 ```
 
 `--pre-commit` 只回答「候選樹能否 commit」；快照 staged 時只標記 `pending_commit`，絕不表示
 owner 批准，也絕不允許 auto-push。這關全綠才進 S10。
+
+`--trigger` 記「這次為什麼又跑證據表」:`first`(這張卡第一輪)、`fix`(修完 finding)、
+`merge-main`(併了 main)、`ci-red`(CI 紅修完)。同一輪的 pre-commit 與 delivery 傳同一個;
+不知道就不傳(記 `unknown`),**不要猜**。重工從哪來,就看這欄的分佈。
 
 ### S10 Commit
 
@@ -375,7 +383,7 @@ AI-assisted: claude
 commit 後必須立即重跑預設（delivery）dashboard：
 
 ```bash
-scripts/gates/dashboard specs/{name}/spec.yaml
+scripts/gates/dashboard specs/{name}/spec.yaml --trigger <同一輪的原因>
 ```
 
 只有 owner 批准快照存在 `HEAD` 且工作樹對該檔乾淨時，才是 `approval_anchor: committed`。
@@ -384,7 +392,7 @@ scripts/gates/dashboard specs/{name}/spec.yaml
 ### S11 自動推 + 開 PR + 證據表貼成留言
 
 ```bash
-scripts/gates/dashboard specs/{name}/spec.yaml     # commit 後的嚴格 delivery 裁決
+scripts/gates/dashboard specs/{name}/spec.yaml --trigger <同一輪的原因>   # commit 後的嚴格 delivery 裁決
 git push -u origin "feat/${branch_name}"           # 只推功能分支;整合分支永遠不直推
 gh pr create --base {INTEGRATION_BRANCH} --body-file <(scripts/gates/pr-comment specs/{name}/spec.yaml)
 # 或 glab mr create --description "$(scripts/gates/pr-comment …)"
@@ -420,6 +428,8 @@ gh run view <id> --log-failed                            # 拉失敗的 log
 
 PR 留言頂端是「✅ 全乾淨」→ 直接按。是「⏸ 需要你決定」→ 回答那幾題(在 PR 留言回,或直接跟 orchestrator 講),
 orchestrator 處理完重新留言。**orchestrator 一律不代按 merge。**
+
+PR 可合併、輪到你按時 `runs --set specs/{name}/spec.yaml S13 "等你按 merge" --blocked-on human`。
 
 ## 兩條車道
 
@@ -617,6 +627,22 @@ Fable 額度只留給兩個地方:**S3 `spec-grill`**(一行程式沒寫就抓�
 沒有這個數據,「這道關要不要留」的討論只能靠直覺。舊版的 `disposition:` 標記做同一件事,
 重寫時被誤刪,這裡補回。
 
+每筆另記 `review_state`(G9/10 為什麼沒過:`upstream_red` 腳本或 smoke 沒過所以沒派、`not_dispatched`、
+`invalid_dispatch`、`stale` 審查過期、`findings_pending`、`pass`)與 `trigger`(見 S9c)。
+舊紀錄沒有這兩欄,不回填。
+
+**成本與時間:`runs --cost`。** 不另外記帳 —— 直接讀 Claude Code 自己留的 session 紀錄
+(`~/.claude/projects/<專案>/`),依「卡 × 站 × 模型」列 input / output / cache 讀 / cache 寫:
+
+- 同一則回應在紀錄裡會拆成好幾行、帶一樣的 usage,依 `(message.id, requestId)` 去重
+- subagent 靠派遣的 `description`(`<站> <agent> <卡名>`,見 `references/dispatch-prompts.md`)歸屬;
+  主 session 看 `cwd` 在不在 `.worktrees/<卡>`,在根目錄的才用 status.json history 的時間區段
+- 對不上的歸「未歸屬」,不猜;輸出會印未歸屬佔比,太高代表歸屬方法不可靠
+- 紀錄格式不是公開介面:必要欄位缺了、或冒出新的 `*_tokens` 欄位,就報錯不算 0
+- 訂閱制只記 token 數,不換算金額;不同模型吃額度的速度不同,跨模型比較要另外加權
+- 紀錄會被 `cleanupPeriodDays`(預設 30 天)清掉,要留基準就把它調高
+- 時間:每張卡 history 首筆到末筆的總長,與 `blocked_on: human` 區段的佔比
+
 ## 同時進行多個需求
 
 **pipeline,不是 parallel。** 機器階段 30–60 分鐘、人類階段約 6 分鐘,比例 7:1 ——
@@ -695,6 +721,7 @@ Fable 額度只留給兩個地方:**S3 `spec-grill`**(一行程式沒寫就抓�
 - `templates/ci/*` —— S12 的 CI 範本(要裝進專案是人的決定)
 - `commands/workflow/init.md` —— S0 問卷
 - `scripts/gates/runs --yield` —— 哪道關擋過東西、擋了幾次;跑過 ≥5 次從沒擋過的會被點名
+- `scripts/gates/runs --cost` —— 每張卡、每一站的 token 數,與花了多久、等人多久
 - `eli5` skill —— S5 的說明頁
 - `test-writer` / `rd-implementer` —— **專案自備**的兩個 skill
 - `PIPELINE.md` —— 對外的簡介(不是鏡像,只是入口)

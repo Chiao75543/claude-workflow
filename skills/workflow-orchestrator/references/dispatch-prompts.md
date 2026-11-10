@@ -3,12 +3,17 @@
 persona 已經寫在 `agents/*.md` 的定義裡,所以派遣訊息只負責**提供素材**和**指定這一次的視角**。
 不要在派遣訊息裡重複 persona —— 重複會稀釋定義,而且兩邊哪天不一致就沒人知道以哪邊為準。
 
+**`description` 一律寫成 `<站> <agent> <卡名>`**(例:`S7 red-writer remove-leaderboard-xp`)。
+`runs --cost` 靠它把 subagent 的 token 歸到哪張卡、哪一站;格式不對的那筆會算進「未歸屬」,不猜。
+同一個 agent 換站重派就換站名:修 finding 的 green-writer 寫 `S9c green-writer {name}`,
+修 CI 紅的寫 `S12 green-writer {name}`。下面每個範例都照這個格式,`tests/run` 會檢查。
+
 ---
 
 ## S3 · spec-grill
 
 ```
-Agent(subagent_type="spec-grill", prompt=...)
+Agent(subagent_type="spec-grill", description="S3 spec-grill {name}", prompt=...)
 ```
 
 素材:
@@ -29,7 +34,7 @@ Agent(subagent_type="spec-grill", prompt=...)
 ## S4 · spec-reader ×2
 
 ```
-Agent(subagent_type="spec-reader", prompt=...)   # ×2,一則訊息同時派
+Agent(subagent_type="spec-reader", description="S4 spec-reader {name}", prompt=...)   # ×2,一則訊息同時派
 ```
 
 **規格內容直接貼在 prompt 裡** —— 它沒有工具,這是刻意的隔離。
@@ -56,7 +61,7 @@ SC-001:
 ## G9 · spec-oracle
 
 ```
-Agent(subagent_type="spec-oracle", prompt=...)
+Agent(subagent_type="spec-oracle", description="G9 spec-oracle {name}", prompt=...)
 ```
 
 **規格 + public API 簽章直接貼在 prompt 裡。不給實作、不給既有測試。**
@@ -77,7 +82,7 @@ Agent(subagent_type="spec-oracle", prompt=...)
 ## G10 · code-adversary
 
 ```
-Agent(subagent_type="code-adversary", prompt=...)
+Agent(subagent_type="code-adversary", description="G10 code-adversary {name}", prompt=...)
 ```
 
 素材:
@@ -104,7 +109,7 @@ Agent(subagent_type="code-adversary", prompt=...)
 ## S7 · red-writer(opus)
 
 ```
-Agent(subagent_type="red-writer", prompt=...)
+Agent(subagent_type="red-writer", description="S7 red-writer {name}", prompt=...)
 ```
 
 素材:凍結規格的路徑、專案 `test-writer` skill 的路徑、測試指令、`red-capture` 的用法
@@ -119,7 +124,7 @@ Agent(subagent_type="red-writer", prompt=...)
 ## S7½ · test-reviewer(opus)
 
 ```
-Agent(subagent_type="test-reviewer", prompt=...)
+Agent(subagent_type="test-reviewer", description="S7½ test-reviewer {name}", prompt=...)
 ```
 
 素材:規格路徑(它要對 examples)、測試檔路徑、輸出檔路徑 `evidence/test-review.agent.json`。
@@ -134,7 +139,7 @@ Agent(subagent_type="test-reviewer", prompt=...)
 ## S8 · green-writer(opus)
 
 ```
-Agent(subagent_type="green-writer", prompt=...)
+Agent(subagent_type="green-writer", description="S8 green-writer {name}", prompt=...)
 ```
 
 素材:凍結測試的路徑、專案 `rd-implementer` skill 的路徑、測試指令、`rules_files` 的路徑、

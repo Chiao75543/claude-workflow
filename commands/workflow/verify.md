@@ -17,9 +17,9 @@ tags: [workflow, verify, gates]
 4. `must_fix` / `overbuilt` → `scripts/gates/loop fix F-n` → 修 → 重跑 G0–G7 + 重現 → `loop resolved`
 5. `ask_user` **不修**,留給 PR 留言問人;`style` 記下不動
 6. `scripts/gates/findings check` 乾淨(或只剩 ask_user)後，stage 這次 commit 的完整內容（含
-   `evidence/spec.approved.yaml`），再跑 `scripts/gates/dashboard specs/{name}/spec.yaml --pre-commit`
+   `evidence/spec.approved.yaml`），再跑 `scripts/gates/dashboard specs/{name}/spec.yaml --pre-commit --trigger <first|fix|merge-main|ci-red>`
 7. pre-commit 全綠才進 S10；它只允許 commit，絕不允許 auto-push。commit 後立即重跑不帶
-   `--pre-commit` 的 delivery dashboard，只有已 commit 且乾淨的批准快照才可推送
+   `--pre-commit`(`--trigger` 相同)的 delivery dashboard，只有已 commit 且乾淨的批准快照才可推送
 
 **注意**
 

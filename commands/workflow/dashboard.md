@@ -10,8 +10,8 @@ tags: [workflow, evidence, dashboard]
 **動作**
 
 ```bash
-scripts/gates/dashboard specs/{name}/spec.yaml --pre-commit # 候選樹可否 commit；絕不自動推
-scripts/gates/dashboard specs/{name}/spec.yaml      # commit 後 delivery；最後一行:自動推:可以 / 不行(原因)
+scripts/gates/dashboard specs/{name}/spec.yaml --pre-commit --trigger <原因> # 候選樹可否 commit；絕不自動推
+scripts/gates/dashboard specs/{name}/spec.yaml --trigger <原因>  # commit 後 delivery；最後一行:自動推:可以 / 不行(原因)
 scripts/gates/pr-comment specs/{name}/spec.yaml     # PR 留言的 markdown
 scripts/gates/pr-comment specs/{name}/spec.yaml --check   # 退出碼 1 = 有事要人決定
 ```
@@ -26,3 +26,5 @@ scripts/gates/pr-comment specs/{name}/spec.yaml --check   # 退出碼 1 = 有事
   —— 依規則不重派,備註寫出檔數行數,「未重審」列出沒重審的檔,不擋推。
 - 表上會顯示**審查活動量**(提出 N → 作廢 M → 證實 K)。一張只有綠勾的表會訓練人變成橡皮圖章。
 - `auto_push: false` 的專案,dashboard 一律回「不行」,推之前把留言印給人看。
+- `--trigger` = 這次為什麼又跑:`first` / `fix` / `merge-main` / `ci-red`,同一輪的 pre-commit 與 delivery 傳同一個;
+  不知道就不傳(記 `unknown`)。寫進 `_yield.jsonl`,`runs --yield` 會統計。

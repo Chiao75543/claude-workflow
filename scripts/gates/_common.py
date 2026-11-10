@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import datetime
 import hashlib
 import json
 import os
@@ -235,6 +236,25 @@ def write_json(path: pathlib.Path, payload) -> None:
 
 def read_json(path: pathlib.Path):
     return json.loads(path.read_text()) if path.exists() else None
+
+
+def write_status(spec_path: pathlib.Path, stage: str, label: str, blocked_on: str | None) -> None:
+    """status.json = 現在的狀態 + 追加式的 history。runs --set 與 dashboard 共用。
+
+    history 只在「站」或「等誰」變了才追加一筆 —— dashboard 每跑一次都寫狀態,
+    同一站反覆跑不該灌出一堆重複列。每站進出時間、等人佔比都從 history 算。
+    status.json 在 evidence/ 底下,本來就在工作樹指紋之外(_state.EXCLUDED)。"""
+    path = evidence_dir(spec_path) / "status.json"
+    now = datetime.datetime.now().astimezone().isoformat(timespec="seconds")
+    try:
+        history = (read_json(path) or {}).get("history") or []
+    except (ValueError, AttributeError):   # 壞掉的 status.json 不能讓 dashboard 在最後一步崩潰
+        history = []
+    last = history[-1] if history else {}
+    if (last.get("stage"), last.get("blocked_on")) != (stage, blocked_on):
+        history.append({"at": now, "stage": stage, "blocked_on": blocked_on})
+    write_json(path, {"stage": stage, "label": label, "blocked_on": blocked_on,
+                      "updated_at": now, "history": history})
 
 
 def _safe_read_repo_file(root: pathlib.Path, rel: str) -> tuple[bytes | None, str, str]:
