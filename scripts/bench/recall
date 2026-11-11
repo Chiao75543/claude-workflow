@@ -6,6 +6,9 @@
   recall run questions.json --model M --effort E [--only 卡@樹 ...] [--limit N]
                             [--setup CMD] [--out results.json]                 派審查、判定、算分
 
+  --setup 每棵新建的樹都先跑一次(例:npm ci)。要裝依賴的專案一定要給 —— 沒給的話 repro 只會因為缺依賴非零,
+          整輪判定全是假的;setup 失敗就直接停。
+
 題目來源(由強到弱):
   kept_ref       findings dispatched 留下的 refs/pipeline/dispatch/<卡>/G10/<時間>(之後的卡都有)
   dispatch_tree  findings.json 記的 G10 派遣樹還沒被 gc,且 finding 屬於那一輪
@@ -219,8 +222,11 @@ class Tree:
         TMP_ROOT.mkdir(parents=True, exist_ok=True)
         self.path = pathlib.Path(tempfile.mkdtemp(prefix="recall-", dir=TMP_ROOT)).resolve()
         git(repo, "worktree", "add", "--detach", "--force", str(self.path), rev, check=True)
-        if setup:
-            subprocess.run(setup, shell=True, cwd=self.path, capture_output=True)
+        if setup:   # 依賴沒裝好,之後每條 repro 都會因為環境非零 —— 實測 soundroots 5 條 4 條是「沒有 node_modules」
+            proc = subprocess.run(setup, shell=True, cwd=self.path, capture_output=True, text=True, errors="replace")
+            if proc.returncode != 0:
+                self.close()
+                raise SystemExit(f"✘ setup 失敗(exit {proc.returncode}):{setup}\n{(proc.stdout + proc.stderr)[-600:]}")
 
     def run(self, cmd: str, timeout: int = REPRO_TIMEOUT_S) -> int:
         return self.run_tail(cmd, timeout)[0]
@@ -267,9 +273,12 @@ def validate(questions: dict, setup: str | None, test_override: str | None) -> d
         todo = [f for f in todo if not f["why"]]
         if not todo:
             continue
-        post = Tree(repo, group["post"], group["base"], setup)
-        pre = Tree(repo, group["pre"], group["base"], setup)
+        trees = []
         try:
+            post = Tree(repo, group["post"], group["base"], setup)
+            trees.append(post)
+            pre = Tree(repo, group["pre"], group["base"], setup)
+            trees.append(pre)
             post_code, post_tail = post.run_tail(test_command(post, test_override))
             post_green = post_code == 0
             for f in todo:
@@ -288,8 +297,8 @@ def validate(questions: dict, setup: str | None, test_override: str | None) -> d
                 else:
                     target.unlink()
         finally:
-            pre.close()
-            post.close()
+            for tree in trees:
+                tree.close()
         print(f"  {group['id']}: " + " ".join(f"{f['id']}={f['validated']}" for f in group["findings"]))
     return questions
 
@@ -341,10 +350,11 @@ def judge(repo: pathlib.Path, group: dict, reviewed: Tree, findings: list, setup
     must = [f for f in findings if isinstance(f, dict) and f.get("class") == "must_fix" and f.get("repro")]
     if not must:
         return []
-    trees = {"pre": Tree(repo, group["pre"], group["base"], setup)}
-    if group["kind"] == "positive":
-        trees["post"] = Tree(repo, group["post"], group["base"], setup)
+    trees = {}
     try:
+        trees["pre"] = Tree(repo, group["pre"], group["base"], setup)
+        if group["kind"] == "positive":
+            trees["post"] = Tree(repo, group["post"], group["base"], setup)
         verdicts = []
         for f in must:
             files = [r for r in (f.get("files") or []) if isinstance(r, str)]
@@ -416,7 +426,7 @@ def run(questions: dict, argv: list[str]) -> dict:
     pos = [r for r in results if r["kind"] == "positive" and not r["review"].get("error")]
     neg = [r for r in results if r["kind"] == "negative" and not r["review"].get("error")]
     known, hits = sum(r["known"] for r in pos), sum(r["hits"] for r in pos)
-    return {"config": {"model": model, "effort": effort, "prompt_version": prompt_version()},
+    return {"config": {"model": model, "effort": effort, "prompt_version": prompt_version(), "setup": setup},
             "repo": questions["repo"], "ran_at": datetime.datetime.now().astimezone().isoformat(timespec="seconds"),
             "summary": {"recall": hits / known if known else None, "hits": hits, "known": known,
                         "unvalidated": sum(r["unvalidated"] for r in pos),

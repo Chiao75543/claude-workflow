@@ -650,9 +650,12 @@ Fable 額度只留給兩個地方:**S3 `spec-grill`**(一行程式沒寫就抓�
 
 ```bash
 scripts/bench/recall inventory --repo <專案> > q.json      # 盤點題目(不花 token)
-scripts/bench/recall validate q.json                       # 原本的回歸測試:修正前要紅、修正後要綠(不花 token)
-scripts/bench/recall run q.json --model fable --effort xhigh --out r.json [--only <卡@樹>] [--limit N]
+scripts/bench/recall validate q.json [--setup "npm ci"]    # 原本的回歸測試:修正前要紅、修正後要綠(不花 token)
+scripts/bench/recall run q.json --model fable --effort xhigh --setup "npm ci" --out r.json [--only <卡@樹>] [--limit N]
 ```
+
+- `--setup` 在每棵新建的樹先跑一次。要裝依賴的專案(npm、pip…)一定要給:沒給的話 repro 只會因為缺依賴非零,
+  整輪判定是假的(soundroots 實測 5 條有 4 條是「沒有 node_modules」)。setup 失敗就直接停;結果的 config 會記下用了什麼
 
 - 題目 = 歷史上 fixed 的 G10 must_fix,輸入是「修正前的樹 + 規格」;負樣本 = 派過 G10、零 must_fix 的乾淨卡
 - 判定全機械:審查者每條 must_fix 交一條 repro,問題存在時非零。在全新的修正前樹上非零、

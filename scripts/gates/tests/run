@@ -2385,6 +2385,27 @@ def test_recall_bench(tmp: pathlib.Path) -> None:
     check("recall run:結果記下模型、effort、prompt 版本與審查實際用的模型",
           res.get("config", {}).get("model") == "fable" and len(res.get("config", {}).get("prompt_version", "")) == 12
           and any(r["review"].get("models") == ["fake-model"] for r in res["results"]), str(res.get("config")))
+    # setup:soundroots 實測沒裝依賴,5 條 repro 4 條是「沒有 node_modules」才非零,整輪判定是假的
+    def nth_fails(n: int) -> str:   # 第 n 棵樹的 setup 才失敗 —— 驗前面建好的樹有沒有拆掉
+        cnt = tmp / f"setup-count-{n}"
+        return f'c=$(cat {cnt} 2>/dev/null || echo 0); echo $((c+1)) > {cnt}; [ "$c" -lt {n - 1} ] || {{ echo 依賴裝不起來; exit 7; }}'
+    setupq = tmp / "bench-questions-setup.json"
+    setupq.write_text(json.dumps(q, ensure_ascii=False))
+    env = {**os.environ, "RECALL_CLAUDE": str(fake)}
+    vfail = subprocess.run([str(bench), "validate", str(setupq), "--setup", nth_fails(2)], capture_output=True, text=True)
+    rfail = subprocess.run([str(bench), "run", str(qfile), "--model", "fable", "--effort", "xhigh", "--only", pos[0]["id"],
+                            "--setup", nth_fails(3)], capture_output=True, text=True, env=env)
+    leaked = [ln for ln in sh("git", "worktree", "list").splitlines() if "recall-" in ln]
+    check("recall:setup 失敗就停並印出尾段(validate 第 2 棵、run 第 3 棵失敗),之前建好的樹都拆掉",
+          vfail.returncode != 0 and rfail.returncode != 0 and all("setup 失敗" in p.stderr and "依賴裝不起來" in p.stderr
+                                                                   for p in (vfail, rfail)) and not leaked,
+          vfail.stderr[-300:] + rfail.stderr[-300:] + str(leaked))
+    ok_file = tmp / "bench-results-setup.json"
+    subprocess.run([str(bench), "run", str(qfile), "--model", "fable", "--effort", "xhigh", "--only", neg[0]["id"],
+                    "--setup", "true", "--out", str(ok_file)], capture_output=True, text=True, env=env)
+    check("recall run:結果記下用了什麼 setup(事後看得出依賴有沒有裝)",
+          ok_file.exists() and json.loads(ok_file.read_text())["config"].get("setup") == "true",
+          ok_file.read_text()[:300] if ok_file.exists() else "沒有輸出")
     leftover = [ln for ln in sh("git", "worktree", "list").splitlines() if "recall-" in ln]
     check("recall 跑完不留 worktree", not leftover, str(leftover))
 
