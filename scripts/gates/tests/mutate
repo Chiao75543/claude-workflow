@@ -403,7 +403,8 @@ MUTATIONS: list[tuple[str, str, str, str]] = [
      "    return tree_fingerprint(root)\n\n"
      '    """實際 index candidate 的內容指紋，同樣排除 evidence。'),
     # ---- 第二輪對抗審查:_state.py 之前零變異 ----
-    ("_state.py", "已追蹤的 evidence 不從 tree 拿掉(commit 前後指紋不同)",
+    ("_state.py", "已追蹤的 evidence 不從 tree 拿掉(commit 前後指紋不同)",   # 帶上註解:同一行 index_fingerprint 也有
+     '        # 已追蹤的證據檔也要拿掉,不然它們留在 HEAD 的版本裡,commit 前後 tree 會不同\n'
      '        git("rm", "-r", "-q", "--cached", "--ignore-unmatch", "--", *EXCLUDED)',
      "        pass"),
     ("_state.py", "未追蹤檔不進指紋",
