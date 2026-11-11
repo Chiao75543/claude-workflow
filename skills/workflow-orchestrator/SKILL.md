@@ -342,7 +342,9 @@ runner log、錄影、截圖或產物)。缺 Scenario、缺 example、`ok:false`
 
 **S9c 付費審查 G9/G10**:派 `spec-oracle` 與 `code-adversary`,**派完立刻
 `scripts/gates/findings dispatched --gate G9 --model <實際用的模型>`(G10 同;退過級就加 `--degraded`)** —— 零 finding 的乾淨審查也要留下派過的紀錄,
-否則「沒派」和「派了沒事」在證據上分不出來。每條 finding 用 `findings add` 收進來 ——
+否則「沒派」和「派了沒事」在證據上分不出來。它同時把被審的那棵樹留成本機 ref
+`refs/pipeline/dispatch/<卡>/<關>/<時間>`(不是分支,一般的 push 不會帶上去)—— 修正前的狀態只存在那棵樹裡,
+沒留的話兩週後被 git gc 清掉,召回考題就少一題。每條 finding 用 `findings add` 收進來 ——
 沒重現的 `must_fix` / `ask_user` / `overbuilt` **收不進去**;同一個重現換 id 重 add 也**收不進去**(計數會歸零)。
 實跑重現:紅 → `set confirmed`;不紅 → `set void`。**停在 proposed 的 finding 算沒處理完**,擋 G9/10。然後分流:
 
@@ -643,6 +645,28 @@ Fable 額度只留給兩個地方:**S3 `spec-grill`**(一行程式沒寫就抓�
 - 紀錄會被 `cleanupPeriodDays`(預設 30 天)清掉,要留基準就把它調高
 - 時間:每張卡 history 首筆到末筆的總長,與 `blocked_on: human` 區段的佔比
 
+**召回考題:`scripts/bench/recall`。** 換審查的模型、effort 或 prompt 之前與之後各跑一次,看還抓不抓得到
+當初那些 must_fix —— 「換便宜的模型審得一樣好」只能這樣驗,不能靠感覺。
+
+```bash
+scripts/bench/recall inventory --repo <專案> > q.json      # 盤點題目(不花 token)
+scripts/bench/recall validate q.json [--setup "npm ci"]    # 原本的回歸測試:修正前要紅、修正後要綠(不花 token)
+scripts/bench/recall run q.json --model fable --effort xhigh --setup "npm ci" --out r.json [--only <卡@樹>] [--limit N]
+```
+
+- `--setup` 在每棵新建的樹先跑一次。要裝依賴的專案(npm、pip…)一定要給:沒給的話 repro 只會因為缺依賴非零,
+  整輪判定是假的(soundroots 實測 5 條有 4 條是「沒有 node_modules」)。setup 失敗就直接停;結果的 config 會記下用了什麼
+
+- 題目 = 歷史上 fixed 的 G10 must_fix,輸入是「修正前的樹 + 規格」;負樣本 = 派過 G10、零 must_fix 的乾淨卡
+- 判定全機械:審查者每條 must_fix 交一條 repro,問題存在時非零。在全新的修正前樹上非零、
+  修正後的樹上為零 → 命中;負樣本上非零 → 誤擋。測試假綠類的 repro 是「套變異後跑整套測試,仍綠就非零」
+- validate 判不成立(踢出分母)只有兩種:回歸測試真的跑了、修正前卻綠;修正後的樹本身不綠。
+  驗不了的 —— 測試假綠類、回歸測試放在 `specs/` 底下(不在測試套件裡)、修正後的樹找不到那個檔 —— 標 null,照計入
+- 一份輸入有多條已知 finding 時只數命中條數(上限 = 已知條數),不逐條對到是哪一條
+- 審查者用 headless `claude -p` 跑 `agents/code-adversary.md`,隔離使用者層級的 hook 與 plugin;
+  結果記 model、effort、prompt 版本(agent 定義 + bench prompt 的雜湊)與實際用到的模型
+- 一次 G10 審查的 cache 讀取中位數約 4.8M token、全吃 Fable 額度 —— 整輪要先跟人確認,不要順手跑
+
 ## 同時進行多個需求
 
 **pipeline,不是 parallel。** 機器階段 30–60 分鐘、人類階段約 6 分鐘,比例 7:1 ——
@@ -722,6 +746,7 @@ Fable 額度只留給兩個地方:**S3 `spec-grill`**(一行程式沒寫就抓�
 - `commands/workflow/init.md` —— S0 問卷
 - `scripts/gates/runs --yield` —— 哪道關擋過東西、擋了幾次;跑過 ≥5 次從沒擋過的會被點名
 - `scripts/gates/runs --cost` —— 每張卡、每一站的 token 數,與花了多久、等人多久
+- `scripts/bench/recall` —— 召回考題:換審查設定前後的召回率與誤擋率
 - `eli5` skill —— S5 的說明頁
 - `test-writer` / `rd-implementer` —— **專案自備**的兩個 skill
 - `PIPELINE.md` —— 對外的簡介(不是鏡像,只是入口)

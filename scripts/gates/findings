@@ -38,6 +38,31 @@ NEEDS_REPRO = {"must_fix", "ask_user", "overbuilt"}
 STATUSES = {"proposed", "confirmed", "void", "fixed", "accepted_risk", "added_example"}
 
 
+def keep_dispatch_tree(root: pathlib.Path, card: str, gate: str, tree: str) -> str | None:
+    """被審的那棵樹留一個本機 ref,召回考題(scripts/bench/recall)之後才找得回「修正前」。
+
+    派遣樹是 write-tree 寫出的孤兒物件,兩週後就被 git gc 清掉;流程到 S10 才第一次 commit,
+    所以修正前的狀態只存在這裡。實測 152 條 fixed must_fix 只剩 35 條找得回。
+    包成 commit(parent = 當時的 HEAD)再掛 ref:直接指向 tree 的 ref 會讓 `git log --all` 報錯。
+    refs/pipeline/* 不是分支,一般的 push 不會帶上去。留不住只警告,不擋派遣紀錄。"""
+    import os
+    import subprocess
+    env = {**os.environ, "GIT_AUTHOR_NAME": "pipeline", "GIT_AUTHOR_EMAIL": "pipeline@localhost",
+           "GIT_COMMITTER_NAME": "pipeline", "GIT_COMMITTER_EMAIL": "pipeline@localhost"}
+    head = subprocess.run(["git", "rev-parse", "--verify", "-q", "HEAD"], cwd=root, capture_output=True, text=True)
+    parent = ["-p", head.stdout.strip()] if head.returncode == 0 else []
+    made = subprocess.run(["git", "commit-tree", tree.removeprefix("tree:"), *parent,
+                           "-m", f"pipeline: {card} {gate} 派遣時被審的樹"],
+                          cwd=root, env=env, capture_output=True, text=True)
+    stamp = datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+    ref = f"refs/pipeline/dispatch/{card}/{gate}/{stamp}"
+    if made.returncode != 0 or subprocess.run(["git", "update-ref", ref, made.stdout.strip()],
+                                              cwd=root, capture_output=True).returncode != 0:
+        print(f"⚠ 派遣樹沒留住(召回考題會少一題):{(made.stderr or '').strip()[:120]}")
+        return None
+    return ref
+
+
 def flag(argv: list[str], name: str) -> str | None:
     return argv[argv.index(name) + 1] if name in argv and argv.index(name) + 1 < len(argv) else None
 
@@ -106,9 +131,12 @@ def main(argv: list[str]) -> int:
         if gate not in ("G9", "G10"):
             print("✘ --gate 只能是 G9 或 G10")
             return 2
+        tree = tree_fingerprint(root)
+        keep = keep_dispatch_tree(root, spec_path.parent.name, gate, tree)
         state.setdefault("dispatched", {})[gate] = {
             "at": datetime.datetime.now().astimezone().isoformat(timespec="seconds"),
-            "tree": tree_fingerprint(root),
+            "tree": tree,
+            **({"keep": keep} if keep else {}),
             **({"model": flag(argv, "--model")} if flag(argv, "--model") else {}),
             **({"degraded": True} if "--degraded" in argv else {}),
         }

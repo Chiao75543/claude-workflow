@@ -1,0 +1,479 @@
+#!/usr/bin/env python3
+"""recall — 召回考題:同一份「修正前的樹 + 規格」,換一組審查設定,還抓不抓得到當初那些 must_fix。
+
+  recall inventory [--repo DIR] [--negatives 20]            > questions.json   盤點題目(不花 token)
+  recall validate questions.json [--setup CMD] [--test-cmd CMD]                 驗題目本身(不花 token)
+  recall run questions.json --model M --effort E [--only 卡@樹 ...] [--limit N]
+                            [--setup CMD] [--out results.json]                 派審查、判定、算分
+
+  --setup 每棵新建的樹都先跑一次(例:npm ci)。要裝依賴的專案一定要給 —— 沒給的話 repro 只會因為缺依賴非零,
+          整輪判定全是假的;setup 失敗就直接停。
+
+題目來源(由強到弱):
+  kept_ref       findings dispatched 留下的 refs/pipeline/dispatch/<卡>/G10/<時間>(之後的卡都有)
+  dispatch_tree  findings.json 記的 G10 派遣樹還沒被 gc,且 finding 屬於那一輪
+  parent_commit  加入回歸測試的 commit 的上一版,而且上一版已經有這張卡的規格測試(= 實作已在)
+修正和整個功能在同一個 commit 進來、派遣樹又被 gc 的,修正前的狀態已經不存在,只能跳過。
+
+判定(全部機械,不靠模型):審查者每條 must_fix 要交一條 repro 指令 —— **問題存在時以非零結束**。
+  在全新的修正前樹上非零、在修正後的樹上為零 → 命中。
+  測試假綠類一樣:「套用變異後跑整套測試,仍全綠就非零」;修正後補的測試會殺掉變異 → 為零。
+  負樣本(歷史上零 must_fix 的乾淨卡)上任一條 repro 非零 → 誤擋。
+召回率 = Σ min(命中, 該輸入的已知題數) / Σ 已知題數;誤擋率 = 被擋的負樣本 / 跑過的負樣本。
+
+validate 用原本的回歸測試驗題目:複製進修正前的樹要紅、修正後的樹要綠。
+重現是變異(假綠類)或不是測試檔的,無法這樣驗,標 null(照樣計入,但會列出來)。
+
+審查者用 headless `claude -p` 跑 agents/code-adversary.md 的定義,隔離使用者層級的 hook 與 plugin
+(--setting-sources project + disableAllHooks + --disable-slash-commands)。$RECALL_CLAUDE 可換掉 claude(測試用)。
+prompt 版本 = agent 定義 + 本檔 PROMPT 的 sha256 前 12 碼,結果裡會記下來,比較兩組設定時要看它。
+"""
+
+from __future__ import annotations
+
+import datetime
+import hashlib
+import json
+import os
+import pathlib
+import re
+import shutil
+import subprocess
+import sys
+import tempfile
+
+HERE = pathlib.Path(__file__).resolve().parent
+REPO = HERE.parents[1]
+sys.path.insert(0, str(HERE.parent / "gates"))
+import _config  # noqa: E402
+
+AGENT = REPO / "agents" / "code-adversary.md"
+PATH_IN_TEXT = re.compile(r"[\w./-]+\.(?:swift|ts|tsx|mjs|js|py|kt|sh)")
+GIT_ENV = {"GIT_AUTHOR_NAME": "recall", "GIT_AUTHOR_EMAIL": "recall@localhost",
+           "GIT_COMMITTER_NAME": "recall", "GIT_COMMITTER_EMAIL": "recall@localhost"}
+TMP_ROOT = pathlib.Path(os.environ.get("RECALL_TMPDIR") or pathlib.Path.home() / ".cache" / "recall")
+REVIEW_TIMEOUT_S = 3 * 3600
+REPRO_TIMEOUT_S = 45 * 60
+
+PROMPT = """這是召回考題的審查,不是 pipeline 裡的真卡;規則照你的定義。
+
+素材:
+- 工作目錄就是要審的實作(它自己跑 `git diff {base}...HEAD` 看變更)
+- 規格:{spec}
+- 測試指令:{test}
+- 專案鐵則與 Security Baseline:{rules}
+
+找不到就誠實寫「must_fix:無」,並詳列你檢查過哪些面向。
+那是有價值的資訊,不是失敗。不要為了交差硬湊。
+
+**輸出的最後一段必須是一個 ```json 區塊**(機器會讀它,其他文字照你的格式寫):
+
+```json
+{{"findings": [{{"class": "must_fix", "title": "…", "files": ["你寫的重現測試檔,相對路徑"],
+                 "repro": "一條 shell 指令:問題存在時以非零結束,不存在時以零結束"}}]}}
+```
+
+- repro 會在**另一份全新的樹**上重跑,所以只能依賴 files 裡列的檔與樹本身;不要依賴你改過的東西。
+  repro 用到的每一個你寫的檔(含輔助腳本)都要列進 files
+- 測試假綠類:repro 要自己套用變異、再跑**整個測試指令**;測試仍全綠就以非零結束
+- 不要改產品程式碼;重現測試寫在新檔,**檔名(不含目錄)以 `recall-` 開頭**,不要沿用或覆寫既有檔名
+"""
+
+
+# ---------------------------------------------------------------- git
+
+def git(repo: pathlib.Path, *args: str, check: bool = False) -> str | None:
+    proc = subprocess.run(["git", *args], cwd=repo, capture_output=True, text=True,
+                          env={**os.environ, **GIT_ENV})
+    if proc.returncode != 0:
+        if check:
+            raise RuntimeError(f"git {' '.join(args[:3])}: {proc.stderr.strip()[:200]}")
+        return None
+    return proc.stdout
+
+
+def when(text: str) -> datetime.datetime:
+    return datetime.datetime.fromisoformat(text.replace("Z", "+00:00"))
+
+
+def main_ref(repo: pathlib.Path) -> str:
+    branch = str(_config.load(repo).get("integration_branch") or "main")
+    return f"origin/{branch}" if git(repo, "rev-parse", "--verify", "-q", f"origin/{branch}") else branch
+
+
+def merge_of(repo: pathlib.Path, main: str, card: str) -> tuple[str, str] | None:
+    """(base, tip):把這張卡帶進整合分支的那個 merge 的分岔點與功能分支頂端。
+
+    錨在 findings.json 第一次出現的 commit(S10,實作與證據一起進來),不錨在卡目錄最後一次變動 ——
+    之後的追加 PR 或只有規格的 PR 都會把錨點帶偏。"""
+    adds = (git(repo, "log", main, "--diff-filter=A", "--format=%H", "--",
+                f"specs/{card}/evidence/findings.json") or "").split()
+    if not adds:
+        return None
+    # --first-parent 和 --ancestry-path 不能合用:從 main 沿第一個 parent 走,永遠走不到功能分支上的 commit。
+    # 改成「整合分支第一個 parent 的鏈」∩「錨點的後代」,取最早那個。
+    descendants = set((git(repo, "rev-list", "--ancestry-path", f"{adds[-1]}..{main}") or "").split())
+    chain = (git(repo, "rev-list", "--first-parent", "--reverse", main) or "").split()
+    merge = next((c for c in chain if c in descendants), None)
+    if merge is None:
+        return None
+    tip = (git(repo, "rev-parse", "--verify", "-q", f"{merge}^2") or "").strip()
+    base = (git(repo, "merge-base", f"{merge}^1", tip) or "").strip()
+    return (base, tip) if base and tip else None
+
+
+def kept_refs(repo: pathlib.Path, card: str, gate: str = "G10") -> list[tuple[datetime.datetime, str]]:
+    out = git(repo, "for-each-ref", "--format=%(refname) %(objectname)", f"refs/pipeline/dispatch/{card}/{gate}/") or ""
+    refs = []
+    for line in out.splitlines():
+        name, sha = line.split()
+        stamp = name.rsplit("/", 1)[-1]
+        try:
+            t = datetime.datetime.strptime(stamp, "%Y%m%dT%H%M%S%fZ").replace(tzinfo=datetime.timezone.utc)
+        except ValueError:
+            continue
+        refs.append((t.replace(microsecond=0), sha))   # findings.json 的時間只到秒,同一秒的派遣不能被當成「之後」
+    return sorted(refs)
+
+
+def regression_file(finding: dict) -> str | None:
+    """重現裡提到的回歸測試檔(找「加入回歸測試的 commit」用)。
+    路徑含 regression 的優先 —— 重現文字常同時提到測試執行腳本(run-tests.sh)或變異的目標檔。"""
+    paths = [p for p in PATH_IN_TEXT.findall(finding.get("repro") or "") if re.search(r"(?i)(test|spec|regression)", p)]
+    paths.sort(key=lambda p: "regression" not in p.lower())
+    return paths[0] if paths else None
+
+
+def is_fake_green(finding: dict) -> bool:
+    """測試假綠類:產品沒錯、是測試沒牙齒。它的回歸測試在修正前也是綠的,不能拿「紅→綠」驗題。"""
+    return "假綠" in (finding.get("title") or "") or "變異" in (finding.get("repro") or "")
+
+
+# ---------------------------------------------------------------- inventory
+
+def inventory(repo: pathlib.Path, negatives: int) -> dict:
+    main = main_ref(repo)
+    paths = [p for p in (git(repo, "ls-tree", "-r", "--name-only", main) or "").splitlines()
+             if p.endswith("/evidence/findings.json") and p.startswith("specs/")]
+    positives, clean, skipped = {}, [], []
+    for path in paths:
+        card = path.split("/")[1]
+        state = json.loads(git(repo, "show", f"{main}:{path}") or "{}")
+        items = state.get("items") or []
+        record = (state.get("dispatched") or {}).get("G10") or {}
+        landed = merge_of(repo, main, card)
+        if not landed:
+            skipped.append({"card": card, "why": "找不到把這張卡帶進整合分支的 merge"})
+            continue
+        base, tip = landed
+        refs = kept_refs(repo, card)
+        tree = (record.get("tree") or "").removeprefix("tree:")
+        tree_alive = bool(tree) and (git(repo, "cat-file", "-t", tree) or "").strip() == "tree"
+        spec_tests = [ln.split("  ", 1)[1] for ln in
+                      (git(repo, "show", f"{main}:specs/{card}/evidence/tests.hash") or "").splitlines() if "  " in ln]
+        fixed = [i for i in items if i.get("gate") == "G10" and i.get("class") == "must_fix" and i.get("status") == "fixed"]
+        if record and not any(i.get("class") == "must_fix" for i in items):
+            pre = refs[-1][1] if refs else (f"tree:{tree}" if tree_alive else tip)
+            clean.append({"id": f"{card}@clean", "kind": "negative", "card": card, "pre": pre, "base": base,
+                          "post": tip, "source": "kept_ref" if refs else ("dispatch_tree" if tree_alive else "tip"),
+                          "findings": [], "at": record.get("at") or ""})
+        for item in fixed:
+            regression = regression_file(item)
+            entry = {"id": item["id"], "title": item.get("title"), "repro": item.get("repro"),
+                     "fake_green": is_fake_green(item),
+                     "test_file": None if is_fake_green(item) else regression, "validated": None}
+            pre = source = post = None
+            older = [sha for t, sha in refs if t <= when(item["at"])]
+            if older:
+                pre, source, post = older[-1], "kept_ref", tip
+            elif tree_alive and record.get("at") and when(item["at"]) >= when(record["at"]):
+                pre, source, post = f"tree:{tree}", "dispatch_tree", tip
+            elif regression and spec_tests:
+                fix = (git(repo, "log", main, "--diff-filter=A", "--format=%H", "-1", "--", regression) or "").strip()
+                if fix and all(git(repo, "cat-file", "-e", f"{fix}^:{t}") is not None for t in spec_tests):
+                    pre, source, post = f"{fix}^", "parent_commit", fix
+            if pre is None:
+                skipped.append({"card": card, "finding": item["id"], "why": "修正前的樹已不存在"})
+                continue
+            key = f"{card}@{(pre.removeprefix('tree:'))[:10]}"
+            group = positives.setdefault(key, {"id": key, "kind": "positive", "card": card, "pre": pre,
+                                               "base": base, "post": post, "source": source, "findings": []})
+            group["findings"].append(entry)
+    clean.sort(key=lambda q: q["at"], reverse=True)
+    return {"repo": str(repo), "main": main, "generated_at": datetime.datetime.now().astimezone().isoformat(timespec="seconds"),
+            "inputs": list(positives.values()) + clean[:negatives], "skipped": skipped}
+
+
+# ---------------------------------------------------------------- 樹與指令
+
+class Tree:
+    """一份可丟棄的 worktree:題目的 pre / post 都在這裡展開,跑完就拆。"""
+
+    def __init__(self, repo: pathlib.Path, rev: str, base: str, setup: str | None):
+        self.repo = repo
+        if rev.startswith("tree:"):   # 孤兒樹 → 包成 parent = base 的 commit,審查者才 diff 得出變更
+            rev = (git(repo, "commit-tree", rev[5:], "-p", base, "-m", "recall pre", check=True) or "").strip()
+        else:
+            rev = (git(repo, "rev-parse", rev, check=True) or "").strip()
+        self.rev = rev
+        # 不能放在 /var 或 /tmp:macOS 的 Foundation 會把 /private/var 正規化成 /var,mindey-mobile 的
+        # 靜態規格測試用路徑長度切相對路徑,差 8 個字(/private)就整套紅 —— 實測 7 題全被誤判「修正後的樹不綠」,
+        # 先解析 symlink 也沒用。真的 pipeline 在 <repo>/.worktrees/ 跑所以沒事;這裡預設放家目錄底下。
+        TMP_ROOT.mkdir(parents=True, exist_ok=True)
+        self.path = pathlib.Path(tempfile.mkdtemp(prefix="recall-", dir=TMP_ROOT)).resolve()
+        git(repo, "worktree", "add", "--detach", "--force", str(self.path), rev, check=True)
+        if setup:   # 依賴沒裝好,之後每條 repro 都會因為環境非零 —— 實測 soundroots 5 條 4 條是「沒有 node_modules」
+            proc = subprocess.run(setup, shell=True, cwd=self.path, capture_output=True, text=True, errors="replace")
+            if proc.returncode != 0:
+                self.close()
+                raise SystemExit(f"✘ setup 失敗(exit {proc.returncode}):{setup}\n{(proc.stdout + proc.stderr)[-600:]}")
+
+    def run(self, cmd: str, timeout: int = REPRO_TIMEOUT_S) -> int:
+        return self.run_tail(cmd, timeout)[0]
+
+    def run_tail(self, cmd: str, timeout: int = REPRO_TIMEOUT_S) -> tuple[int, str]:
+        """(退出碼, 輸出最後 600 字)。只看退出碼的話,「問題存在」和「檔案不存在」都是 1,事後分不出來。"""
+        try:
+            proc = subprocess.run(cmd, shell=True, cwd=self.path, capture_output=True, text=True,
+                                  errors="replace", timeout=timeout)
+            return proc.returncode, (proc.stdout + proc.stderr)[-600:]
+        except subprocess.TimeoutExpired:
+            return 124, "(逾時)"
+
+    def close(self) -> None:
+        git(self.repo, "worktree", "remove", "--force", str(self.path))
+        shutil.rmtree(self.path, ignore_errors=True)
+
+
+def test_command(tree: Tree, override: str | None) -> str:
+    cmd = override or _config.load(tree.path).get("test")
+    if not cmd:
+        raise RuntimeError("沒有測試指令:pipeline.yaml 沒設 test,也沒給 --test-cmd")
+    return cmd
+
+
+def load(path: str) -> dict:
+    return json.loads(pathlib.Path(path).read_text())
+
+
+def flag(argv: list[str], name: str) -> str | None:
+    return argv[argv.index(name) + 1] if name in argv and argv.index(name) + 1 < len(argv) else None
+
+
+# ---------------------------------------------------------------- validate
+
+def validate(questions: dict, setup: str | None, test_override: str | None) -> dict:
+    repo = pathlib.Path(questions["repo"])
+    for group in (q for q in questions["inputs"] if q["kind"] == "positive"):
+        todo = [f for f in group["findings"] if f["test_file"] and f.get("validated") is None]
+        for f in todo:   # 驗不了 ≠ 不成立:不成立會被踢出分母,只有「回歸測試真的跑了、修正前卻綠」才算
+            f["why"] = ("回歸測試放在 specs/ 底下,不在測試套件裡,跑整套測試跑不到它" if f["test_file"].startswith("specs/")
+                        else "修正後的樹沒有這個回歸測試檔(沒 commit,或重現文字裡的檔名不完整)"
+                        if git(repo, "cat-file", "-e", f"{group['post']}:{f['test_file']}") is None else None)
+        todo = [f for f in todo if not f["why"]]
+        if not todo:
+            continue
+        trees = []
+        try:
+            post = Tree(repo, group["post"], group["base"], setup)
+            trees.append(post)
+            pre = Tree(repo, group["pre"], group["base"], setup)
+            trees.append(pre)
+            post_code, post_tail = post.run_tail(test_command(post, test_override))
+            post_green = post_code == 0
+            for f in todo:
+                if not post_green:   # 留輸出尾段:實測一次是 symlink 路徑、一次是別的,沒有尾段就得整棵重跑才知道
+                    f.update(validated=False, why="修正後的樹本身不綠(環境?)", tail=post_tail[-400:])
+                    continue
+                body = git(repo, "show", f"{post.rev}:{f['test_file']}")
+                target = pre.path / f["test_file"]
+                existed = target.exists()
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_text(body)
+                red = pre.run(test_command(pre, test_override)) != 0
+                f.update(validated=red, why=None if red else "回歸測試在修正前的樹上也是綠的")
+                if existed:
+                    git(pre.path, "checkout", "--", f["test_file"])
+                else:
+                    target.unlink()
+        finally:
+            for tree in trees:
+                tree.close()
+        print(f"  {group['id']}: " + " ".join(f"{f['id']}={f['validated']}" for f in group["findings"]))
+    return questions
+
+
+# ---------------------------------------------------------------- run
+
+def prompt_version() -> str:
+    return hashlib.sha256(AGENT.read_bytes() + PROMPT.encode()).hexdigest()[:12]
+
+
+def agent_json() -> str:
+    """agents/code-adversary.md → --agents 的 JSON。從 repo 讀,不靠 ~/.claude/agents 的 symlink。"""
+    text = AGENT.read_text()
+    _, front, body = text.split("---", 2)
+    import yaml
+    meta = yaml.safe_load(front)
+    tools = [t.strip() for t in str(meta.get("tools") or "").split(",") if t.strip()]
+    return json.dumps({"code-adversary": {"description": meta["description"], "prompt": body.strip(), "tools": tools}},
+                      ensure_ascii=False)
+
+
+def review(tree: Tree, group: dict, model: str, effort: str) -> dict:
+    config = _config.load(tree.path)
+    prompt = PROMPT.format(base=group["base"], spec=f"specs/{group['card']}/spec.yaml",
+                           test=config.get("test") or "(pipeline.yaml 沒設)",
+                           rules=", ".join(config.get("rules_files") or []) or "(無)")
+    cmd = [os.environ.get("RECALL_CLAUDE", "claude"), "-p", prompt, "--model", model, "--effort", effort,
+           "--agents", agent_json(), "--agent", "code-adversary",
+           "--setting-sources", "project", "--settings", json.dumps({"disableAllHooks": True}),
+           "--disable-slash-commands", "--strict-mcp-config", "--allowedTools", "Read Grep Glob Bash",
+           "--output-format", "json", "--no-session-persistence"]
+    try:
+        proc = subprocess.run(cmd, cwd=tree.path, capture_output=True, text=True, timeout=REVIEW_TIMEOUT_S)
+        out = json.loads(proc.stdout)
+    except (subprocess.TimeoutExpired, json.JSONDecodeError) as exc:
+        return {"error": f"審查沒有正常結束:{exc!r}"[:300], "findings": []}
+    blocks = re.findall(r"```json\s*(\{.*?\})\s*```", out.get("result") or "", re.S)
+    try:
+        findings = (json.loads(blocks[-1]).get("findings") or []) if blocks else None
+    except json.JSONDecodeError:
+        findings = None
+    return {"error": None if findings is not None else "審查輸出沒有可讀的 ```json 區塊",
+            "findings": findings or [], "usage": out.get("usage"), "models": list((out.get("modelUsage") or {}).keys()),
+            "is_error": out.get("is_error"), "cwd": str(tree.path)}
+
+
+def judge(repo: pathlib.Path, group: dict, reviewed: Tree, findings: list, setup: str | None) -> list:
+    """每條 must_fix 的 repro 在全新的 pre 上跑一次、post 上跑一次。檔案從審查者的工作目錄複製過去。"""
+    must = [f for f in findings if isinstance(f, dict) and f.get("class") == "must_fix" and f.get("repro")]
+    if not must:
+        return []
+    trees = {}
+    try:
+        trees["pre"] = Tree(repo, group["pre"], group["base"], setup)
+        if group["kind"] == "positive":
+            trees["post"] = Tree(repo, group["post"], group["base"], setup)
+        verdicts = []
+        for f in must:
+            files = [r for r in (f.get("files") or []) if isinstance(r, str)]
+            result = {"title": f.get("title"), "repro": f["repro"], "files": files, "missing": [], "collided": []}
+            for rel in files:
+                src = reviewed.path / rel
+                if not src.is_file() or pathlib.Path(rel).is_absolute() or ".." in pathlib.Path(rel).parts:
+                    result["missing"].append(rel)
+            for name, tree in trees.items():
+                for rel in files:
+                    if rel in result["missing"]:
+                        continue
+                    src, dst = reviewed.path / rel, tree.path / rel
+                    # 撞到樹裡已有的同名檔(例如修正後才加的歷史回歸測試)會把它蓋掉 → 這條判不準
+                    if dst.exists() and dst.read_bytes() != src.read_bytes() and f"{name}:{rel}" not in result["collided"]:
+                        result["collided"].append(f"{name}:{rel}")
+                    dst.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copyfile(src, dst)
+                result[name], result[f"{name}_tail"] = tree.run_tail(f["repro"])
+            # 缺檔或撞名的條目不算命中也不算誤擋 —— 非零可能只是「檔不在」,不是「問題在」
+            result["judgeable"] = not result["missing"] and not result["collided"]
+            result["problem_on_pre"] = result["judgeable"] and result["pre"] != 0
+            result["hit"] = group["kind"] == "positive" and result["problem_on_pre"] and result.get("post") == 0
+            verdicts.append(result)
+        return verdicts
+    finally:
+        for tree in trees.values():
+            tree.close()
+
+
+def run(questions: dict, argv: list[str]) -> dict:
+    model, effort = flag(argv, "--model"), flag(argv, "--effort")
+    if not model or not effort:
+        raise SystemExit("✘ run 需要 --model 與 --effort(例:--model fable --effort xhigh)")
+    setup = flag(argv, "--setup")
+    only = {argv[i + 1] for i, a in enumerate(argv) if a == "--only" and i + 1 < len(argv)}
+    limit = int(flag(argv, "--limit") or 0)
+    repo = pathlib.Path(questions["repo"])
+    chosen, budget = [], limit or 10 ** 9
+    for group in questions["inputs"]:
+        if only and group["id"] not in only:
+            continue
+        usable = [f for f in group["findings"] if f.get("validated") is not False]
+        if group["kind"] == "positive" and not usable:
+            continue
+        cost = len(usable) if group["kind"] == "positive" else 1
+        if cost > budget:
+            continue
+        chosen.append((group, usable))
+        budget -= cost
+    results = []
+    for group, usable in chosen:
+        print(f"  ▸ {group['id']}({group['kind']},{len(usable)} 題)", flush=True)
+        tree = Tree(repo, group["pre"], group["base"], setup)
+        try:
+            reviewed = review(tree, group, model, effort)
+            verdicts = judge(repo, group, tree, reviewed["findings"], setup)
+        finally:
+            tree.close()
+        known = len(usable)
+        hits = sum(v["hit"] for v in verdicts)
+        results.append({"id": group["id"], "kind": group["kind"], "known": known,
+                        "hits": min(hits, known),   # ponytail: 只數「修正前紅、修正後綠」的條數,不逐條對到已知 finding;同輪修了別的東西也可能被算進來
+                        "blocked": group["kind"] == "negative" and any(v["problem_on_pre"] for v in verdicts),
+                        "review": {k: v for k, v in reviewed.items() if k != "findings"},
+                        "reviewer_findings": reviewed["findings"], "verdicts": verdicts,
+                        "unjudgeable": sum(not v["judgeable"] for v in verdicts),
+                        "unvalidated": sum(f.get("validated") is None for f in usable)})
+    pos = [r for r in results if r["kind"] == "positive" and not r["review"].get("error")]
+    neg = [r for r in results if r["kind"] == "negative" and not r["review"].get("error")]
+    known, hits = sum(r["known"] for r in pos), sum(r["hits"] for r in pos)
+    return {"config": {"model": model, "effort": effort, "prompt_version": prompt_version(), "setup": setup},
+            "repo": questions["repo"], "ran_at": datetime.datetime.now().astimezone().isoformat(timespec="seconds"),
+            "summary": {"recall": hits / known if known else None, "hits": hits, "known": known,
+                        "unvalidated": sum(r["unvalidated"] for r in pos),
+                        "unjudgeable": sum(r["unjudgeable"] for r in results),
+                        "false_block_rate": sum(r["blocked"] for r in neg) / len(neg) if neg else None,
+                        "negatives": len(neg), "errors": [r["id"] for r in results if r["review"].get("error")]},
+            "results": results}
+
+
+# ---------------------------------------------------------------- main
+
+def main(argv: list[str]) -> int:
+    if not argv or argv[0] not in ("inventory", "validate", "run"):
+        print(__doc__)
+        return 2
+    verb, rest = argv[0], argv[1:]
+    if verb == "inventory":
+        repo = pathlib.Path(flag(rest, "--repo") or ".").resolve()
+        q = inventory(repo, int(flag(rest, "--negatives") or 20))
+        pos = [g for g in q["inputs"] if g["kind"] == "positive"]
+        print(json.dumps(q, ensure_ascii=False, indent=2))
+        print(f"題目 {sum(len(g['findings']) for g in pos)} 條(輸入 {len(pos)} 份)· 負樣本 "
+              f"{len(q['inputs']) - len(pos)} · 跳過 {len(q['skipped'])}", file=sys.stderr)
+        return 0
+    if not rest:
+        print(__doc__)
+        return 2
+    questions = load(rest[0])
+    if verb == "validate":
+        validate(questions, flag(rest, "--setup"), flag(rest, "--test-cmd"))
+        pathlib.Path(rest[0]).write_text(json.dumps(questions, ensure_ascii=False, indent=2) + "\n")
+        found = [f for g in questions["inputs"] for f in g["findings"]]
+        print(f"驗過 {sum(f['validated'] is True for f in found)} · 不成立 {sum(f['validated'] is False for f in found)}"
+              f" · 無法機械驗證 {sum(f['validated'] is None for f in found)}")
+        return 0
+    result = run(questions, rest)
+    out = flag(rest, "--out")
+    if out:
+        pathlib.Path(out).write_text(json.dumps(result, ensure_ascii=False, indent=2) + "\n")
+    s = result["summary"]
+    print(f"設定 {result['config']} · 召回 {s['hits']}/{s['known']}"
+          + (f"({s['recall']:.0%})" if s["recall"] is not None else "")
+          + f" · 其中無法機械驗證 {s['unvalidated']} · 判不準(缺檔/撞名){s['unjudgeable']} · 誤擋 "
+          + (f"{s['false_block_rate']:.0%}({s['negatives']} 個負樣本)" if s["false_block_rate"] is not None else "—")
+          + (f" · 審查出錯 {', '.join(s['errors'])}" if s["errors"] else ""))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))
