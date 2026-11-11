@@ -1,0 +1,133 @@
+#!/usr/bin/env python3
+"""escape — 漏網回填:上線後才發現的 bug,一筆一行記在 specs/_escapes.jsonl。
+
+  escape add --summary "一句話" --card <卡名|none|unknown> --severity blocker|major|minor
+             --gate <本該擋到的關> --why <類別> --note "為何沒擋到" [--found YYYY-MM-DD]
+  escape list                      全部列出,並依「本該擋到的關」「為何沒擋到」統計
+
+嚴重度:   blocker 功能不能用或資料錯 / major 主要流程受影響但有繞路 / minor 外觀、文案、少數情境
+本該擋到: S3 S4 S5 S7 S7½ G0 G1/2 G2b G3 G4 G5 G6 G7 smoke G9 G10 6d(人工驗) none(pipeline 擋不到)
+為何沒擋到:
+  spec-gap     規格沒寫到這個情境
+  test-gap     測試沒測到(假綠或根本沒測)
+  review-miss  審查看過但漏看
+  gate-hole    關卡規則本身有漏洞
+  env-only     只在真機 / 正式資料 / 特定裝置出現
+  outside      不是 pipeline 的卡造成(手改、第三方、後端)
+  unknown      追查不出來
+
+所屬卡必須是整合分支上已經有的 specs/<卡>/;none = 不是哪張卡造成的,unknown = 追查不出來。
+每筆自己開一個小 PR 進整合分支(/workflow:escape),所以 id 不用流水號 —— 兩個還沒合的 PR 會撞號。
+"""
+
+from __future__ import annotations
+
+import collections
+import datetime
+import hashlib
+import json
+import pathlib
+import sys
+
+sys.path.insert(0, str(pathlib.Path(__file__).parent))
+from _common import NAME, repo_root  # noqa: E402
+
+SEVERITIES = ("blocker", "major", "minor")
+GATES = ("S3", "S4", "S5", "S7", "S7½", "G0", "G1/2", "G2b", "G3", "G4", "G5", "G6", "G7",
+         "smoke", "G9", "G10", "6d", "none")
+WHYS = ("spec-gap", "test-gap", "review-miss", "gate-hole", "env-only", "outside", "unknown")
+NO_CARD = ("none", "unknown")
+
+
+def flag(argv: list[str], name: str) -> str | None:
+    return argv[argv.index(name) + 1] if name in argv and argv.index(name) + 1 < len(argv) else None
+
+
+def ledger(root: pathlib.Path) -> pathlib.Path:
+    return root / "specs" / "_escapes.jsonl"
+
+
+def read(root: pathlib.Path) -> tuple[list[dict], int]:
+    """(紀錄, 壞掉的行數)。用 split("\\n") 不用 splitlines:後者會在 U+2028 切斷 JSON。"""
+    path = ledger(root)
+    if not path.exists():
+        return [], 0
+    rows, bad = [], 0
+    for line in path.read_text().split("\n"):
+        if not line.strip():
+            continue
+        try:
+            rows.append(json.loads(line))
+        except json.JSONDecodeError:
+            bad += 1
+    return rows, bad
+
+
+def add(root: pathlib.Path, argv: list[str]) -> int:
+    fields = {k: (flag(argv, f"--{k}") or "").strip() for k in ("summary", "card", "severity", "gate", "why", "note")}
+    missing = [k for k, v in fields.items() if not v]
+    if missing:
+        print("✘ 缺 " + " ".join(f"--{k}" for k in missing) + "(追查不出來就填 unknown,不要空著)")
+        return 2
+    errors = []
+    if fields["severity"] not in SEVERITIES:
+        errors.append(f"--severity 只能是 {' / '.join(SEVERITIES)}")
+    if fields["gate"] not in GATES:
+        errors.append(f"--gate 只能是 {' '.join(GATES)}")
+    if fields["why"] not in WHYS:
+        errors.append(f"--why 只能是 {' / '.join(WHYS)}")
+    card = fields["card"]
+    if card not in NO_CARD and not (NAME.match(card) and (root / "specs" / card / "spec.yaml").is_file()):
+        errors.append(f"--card {card}:specs/{card}/spec.yaml 不存在(要在整合分支上的樹裡登記;不是哪張卡造成的填 none)")
+    today = datetime.date.today()
+    try:
+        found = datetime.date.fromisoformat(flag(argv, "--found") or today.isoformat())
+        if found > today:
+            errors.append(f"--found {found} 在未來")
+    except ValueError:
+        errors.append("--found 要是 YYYY-MM-DD")
+        found = today
+    if errors:
+        for e in errors:
+            print(f"✘ {e}")
+        return 2
+    now = datetime.datetime.now().astimezone().isoformat(timespec="seconds")
+    eid = f"E-{found:%Y%m%d}-" + hashlib.sha256(f"{fields['summary']}\n{now}".encode()).hexdigest()[:4]
+    entry = {"id": eid, "found": found.isoformat(), "recorded_at": now, **fields}
+    path = ledger(root)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    head = path.read_text() if path.exists() else ""
+    with path.open("a") as fh:   # 上一行沒換行就先補一個,不然兩筆會黏成一行壞 JSON
+        fh.write(("\n" if head and not head.endswith("\n") else "") + json.dumps(entry, ensure_ascii=False) + "\n")
+    print(f"{eid} [{fields['severity']}] {fields['summary']}")
+    return 0
+
+
+def show(root: pathlib.Path) -> int:
+    rows, bad = read(root)
+    if bad:
+        print(f"⚠ {ledger(root)} 有 {bad} 行讀不懂,沒算進來")
+    if not rows:
+        print("還沒有漏網紀錄(上線後發現 bug 用 /workflow:escape 登記)。")
+        return 0
+    for r in sorted(rows, key=lambda r: r.get("found", "")):
+        print(f"{r.get('id')}  {r.get('found')}  {r.get('severity', '?'):<7} {r.get('card', '?')}  "
+              f"該由 {r.get('gate', '?')} 擋 · {r.get('why', '?')} —— {r.get('summary', '')}")
+    for label, key in (("本該擋到的關", "gate"), ("為何沒擋到", "why")):
+        counts = collections.Counter(r.get(key, "?") for r in rows)
+        print(f"\n{label}: " + " · ".join(f"{k} {n}" for k, n in counts.most_common()))
+    return 0
+
+
+def main(argv: list[str]) -> int:
+    root = repo_root()
+    if argv[:1] == ["add"]:
+        return add(root, argv[1:])
+    if argv[:1] == ["list"]:
+        return show(root)
+    print(__doc__)
+    return 2
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

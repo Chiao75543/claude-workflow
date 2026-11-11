@@ -2421,6 +2421,46 @@ def test_recall_bench(tmp: pathlib.Path) -> None:
           and any("不存在" in s.get("why", "") for s in q_gone["skipped"]), json.dumps(q_gone, ensure_ascii=False)[:400])
 
 
+def test_escape(tmp: pathlib.Path) -> None:
+    """0.5 漏網回填:上線後才發現的 bug 一筆一行,欄位是固定選項才統計得出哪一類最常漏。"""
+    import re
+    root = make_repo(tmp / "escape")
+    ledger = root / "specs" / "_escapes.jsonl"
+    rows = lambda: [json.loads(ln) for ln in ledger.read_text().split("\n") if ln.strip()] if ledger.exists() else []
+    ok = ["--summary", "登入後頭像不見", "--card", "demo", "--severity", "major", "--gate", "G10",
+          "--why", "review-miss", "--note", "審查沒看快取", "--found", "2026-11-10"]
+    code, out = run_gate("escape", "add", *ok, cwd=root)
+    got = rows()
+    check("escape add:一句話 + 追查欄位寫成一行,id 帶發現日期,印出 id",
+          code == 0 and len(got) == 1 and bool(re.match(r"^E-20261110-[0-9a-f]{4}$", got[0].get("id", "")))
+          and got[0]["card"] == "demo" and got[0]["why"] == "review-miss" and got[0]["note"] == "審查沒看快取"
+          and out.startswith(got[0]["id"]), out + str(got))
+    bad = {"嚴重度不在三級裡": ("--severity", "huge"), "關不在清單裡": ("--gate", "G8"),
+           "原因不在固定選項裡": ("--why", "lazy"), "卡不存在": ("--card", "ghost"),
+           "卡名是路徑(繞回存在的卡)": ("--card", "../specs/demo"), "發現日期在未來": ("--found", "2099-01-01"),
+           "日期格式錯": ("--found", "11/10")}
+    for label, (key, value) in bad.items():
+        args = list(ok)
+        args[args.index(key) + 1] = value
+        code, out = run_gate("escape", "add", *args, cwd=root)
+        check(f"escape add:{label} → 拒收、不寫入", code != 0 and len(rows()) == 1, out)
+    code, out = run_gate("escape", "add", "--summary", "只有一句話", cwd=root)
+    check("escape add:追查欄位空著 → 拒收(追查不出來要寫 unknown,不能空著)",
+          code != 0 and "缺 --card" in out and len(rows()) == 1, out)
+    outside = list(ok)
+    outside[outside.index("--card") + 1], outside[outside.index("--why") + 1] = "none", "outside"
+    ledger.write_text(ledger.read_text().rstrip("\n"))   # 有人手改過、檔尾沒換行
+    code, out = run_gate("escape", "add", *outside, cwd=root)
+    got = rows()
+    check("escape add:不是哪張卡造成的填 none;檔尾沒換行也不會跟上一筆黏成一行",
+          code == 0 and len(got) == 2 and got[1]["card"] == "none", ledger.read_text())
+    with ledger.open("a") as fh:
+        fh.write("{壞掉的行\n")
+    code, out = run_gate("escape", "list", cwd=root)
+    check("escape list:列出全部、依關與原因統計;讀不懂的行點名不算",
+          code == 0 and "G10 2" in out and "review-miss 1" in out and "outside 1" in out and "1 行讀不懂" in out, out)
+
+
 # ---------------------------------------------------------------- main
 
 def main() -> int:
@@ -2434,7 +2474,7 @@ def main() -> int:
                    test_test_review, test_loop, test_findings, test_smoke,
                    test_dashboard_gating_order, test_dashboard_approval_anchor_phases,
                    test_config_check, test_adversary_s7plus, test_risk_lanes, test_cost_ledger,
-                   test_recall_bench):
+                   test_recall_bench, test_escape):
             try:
                 fn(tmp)
             except Exception as exc:  # noqa: BLE001

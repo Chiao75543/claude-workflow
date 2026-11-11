@@ -127,6 +127,7 @@ cp ~/code/claude-workflow/templates/project-AGENTS.md.template <repo>/AGENTS.md
 | `/workflow:verify` | 跑 S9:腳本 → smoke → 付費審查 |
 | `/workflow:dashboard` | 產出證據表 |
 | `/workflow:runs` | 跨 worktree 看誰卡在哪、誰在等你 |
+| `/workflow:escape <一句話>` | 上線後發現的 bug 登記成漏網紀錄,追查是哪張卡、本該哪一關擋到 |
 | `scripts/gates/runs --yield` | 哪道關擋過東西、擋了幾次;跑過 ≥5 次從沒擋過的會被點名 |
 
 ---
