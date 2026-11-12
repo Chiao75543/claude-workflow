@@ -78,6 +78,7 @@ S13 ⏸ 你按 merge
   G8   變異測試        有工具才跑
   G9   spec-oracle     隔離的第二讀者,只憑規格寫驗收測試
   G10  code-adversary  每條主張附可執行的重現;must_fix / ask_user / overbuilt / style
+       fix-reviewer    審查後的修正只派增量審查:修好了沒、有沒有帶進新問題(opus)
   G11  UI 截圖         smoke 順便截
 ```
 
@@ -96,7 +97,7 @@ git clone https://github.com/<you>/claude-workflow.git ~/code/claude-workflow
 ~/code/claude-workflow/scripts/setup.sh
 ```
 
-`setup.sh` 會 symlink skill、slash commands、以及 `agents/` 底下的七個精簡 agent。
+`setup.sh` 會 symlink skill、slash commands、以及 `agents/` 底下的八個精簡 agent。
 **agent 定義要重啟 Claude Code session 才會載入。**
 
 ### 每個專案
@@ -160,11 +161,12 @@ claude-workflow/
 │   └── references/
 │       ├── spec-template.yaml      通得過自己的 spec-lint
 │       └── dispatch-prompts.md
-├── agents/                          六個精簡定義
+├── agents/                          精簡定義(節錄)
 │   ├── spec-grill.md               fable · 挑洞,兼第一個讀者
 │   ├── spec-reader.md              opus  · 隔離,tools: []
 │   ├── spec-oracle.md              opus  · 隔離,tools: []
 │   ├── code-adversary.md           fable · 有 Bash,要真的去跑重現
+│   ├── fix-reviewer.md             opus  · 審查後的修正只看那段 diff(增量審查)
 │   ├── red-writer.md               opus  · S7 寫測試並擷取 RED 證據
 │   └── green-writer.md             opus  · S8 實作;「衝突就停」寫死在定義裡
 ├── scripts/

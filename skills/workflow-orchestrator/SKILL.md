@@ -350,7 +350,7 @@ runner log、錄影、截圖或產物)。缺 Scenario、缺 example、`ok:false`
 
 | class | 然後 |
 |---|---|
-| `must_fix` | `loop fix F-n` → 修 → 重跑 G0–G7 + 那條重現 → 不紅了 `loop resolved` + `findings set fixed` |
+| `must_fix` | `loop fix F-n` → 修 → 重跑 G0–G7 + smoke + 那條重現 → 派增量審查 G10-fix(見「迴圈與收斂」)→ 不紅了且增量審查說已解 `loop resolved` + `findings set fixed` |
 | `overbuilt` | 同上,修 = 拿掉 |
 | `ask_user` | **不修。** full:留給 S11 的 PR 留言問人,分支停著等。**lite:預設接受風險、不擋推**;PR 留言獨立一段列出,人可 `findings set F-n added_example` 推翻 |
 | `style` | 記下,不動 |
@@ -565,9 +565,13 @@ loop <spec> check            有沒有任何一條停住(dashboard 也讀)
 
 - 修完之後**重跑 G0–G7**(腳本,幾乎免費)+ 那條重現測試 + **smoke(一律重跑)**:
   dashboard 要求 smoke 指紋與工作樹一致,對不上就判 S 過期、G9/10 變「未跑」
-- **不重派 G9/G10**,除非 fix diff 超過 **1 檔、40 行**(加刪合計);G10 最多重派 **1 次**。
-  門檻由 dashboard 檢查,三個條件全成立才不判「審查過期」:算得出派遣時 tree 到現在的 diff、
-  diff 在門檻內且沒有二進位檔、派遣之後有 `loop fix` 紀錄。證據表會列出沒有重審的檔(「未重審」,不擋推)
+- **修正不重派整張 G9/G10,改派增量審查 `fix-reviewer`(G10-fix,opus)**:只給它
+  `findings fix-diff`(上次審過的樹 → 現在)和要修的 finding,問修好了沒、有沒有帶進新問題
+  (派法見 `references/dispatch-prompts.md`)。派完記 `findings dispatched --gate G10-fix --finding F-n`;
+  它**不算** G10 重派(G10 整張最多重派 **1 次** 不變)。它提出的新 must_fix 照常進 loop,同一條修到第 3 次照樣 parked。
+- dashboard 從派遣時的樹開始,用增量審查一段一段往後接:每一段的起點是上一段審完的樹,
+  點名的 finding 在上一段審完之後有 `loop fix`。接得到現在的樹才不判「審查過期」。
+  **沒有 `loop fix` 紀錄的審查後變更(臨時加功能)接不上 → 照舊整張重審。** 舊的「≤ 1 檔、40 行免審」已拿掉,小改也要增量審查
 - 停下來不是叫你看程式碼,是 PR 留言上多一行「需要你決定」:
   「F-3 修 2 次未果 —— 照樣出貨 / 分支停在這 / 回頭改規格?」**這是決策,不是 code review。**
 
@@ -748,7 +752,7 @@ scripts/bench/recall run q.json --model fable --effort xhigh --setup "npm ci" --
 ## Related
 
 - `scripts/gates/*` —— 關卡的實作;S7 以後新增 `test-review` `smoke` `findings` `loop` `pr-comment` `config-check`
-- `agents/*` —— spec-grill / code-adversary(fable)+ spec-reader / spec-oracle / red-writer / test-reviewer / green-writer(opus);模型只在這裡設
+- `agents/*` —— spec-grill / code-adversary(fable)+ spec-reader / spec-oracle / red-writer / test-reviewer / green-writer / fix-reviewer(opus);模型只在這裡設
 - `templates/ci/*` —— S12 的 CI 範本(要裝進專案是人的決定)
 - `commands/workflow/init.md` —— S0 問卷
 - `scripts/gates/runs --yield` —— 哪道關擋過東西、擋了幾次;跑過 ≥5 次從沒擋過的會被點名

@@ -91,12 +91,6 @@ def constructible_enum_names(text: str) -> list[str]:
 # 這幾個標籤是「要人做決定」,其他的只是讓人知道。自動推只被前者擋。
 DECISION_TAGS = {"需要你決定", "要重新批准", "要人工驗", "無法驗證", "無外部錨定"}
 
-# 審查後的小修不必重派 G9/G10(SKILL.md 的「1 檔、40 行」)。刻意寫成常數、不做設定:
-# 這是 pipeline 的規則,不是各專案的偏好。超過就照舊判過期,要重派。
-POST_REVIEW_MAX_FILES = 1
-POST_REVIEW_MAX_LINES = 40
-
-
 def git(root: pathlib.Path, *args: str) -> str:
     try:
         return subprocess.run(["git", *args], cwd=root, capture_output=True,
@@ -160,38 +154,32 @@ def approval_anchor_state(root: pathlib.Path, approved: pathlib.Path) -> str:
     return approval_anchor_snapshot(root, approved)[0]
 
 
-def post_review_fix(root: pathlib.Path, record: dict, current_tree: str, loop: dict) -> dict | None:
-    """派遣後到現在的 diff 若是門檻內、且確實在修 finding,回傳 {files, added, deleted};否則 None = 過期。
+def fix_review_chain(record: dict, increments: list, current_tree: str, loop: dict) -> list[dict] | None:
+    """派遣時的樹 → 現在的樹,能不能用增量審查(findings dispatched --gate G10-fix)一段一段接起來。
+    接得上回傳用到的段;接不上 None = 審查過期,照舊整張重審。
 
-    soundroots 第 1 輪實測:G10 之後只多了審查者自己寫的 20 行重現測試就判過期,
-    而規則是「小修不重派、G10 最多重派 1 次」—— 只要 G10 找到問題,修完必卡死。
-    三個條件缺一就照舊過期:
-      · 算得出 diff —— 兩邊都是 write-tree 寫進 object store 的;tree 被 gc 或根本不存在就無從判斷
-      · diff 夠小 —— --no-renames:搬檔算兩個檔;二進位檔 numstat 是 `-`,行數無意義
-      · 派遣之後(含同一秒)有 loop fix —— 審查乾淨之後偷改的東西不能靠「改很少」混過去
+    改造方案 1.1:修 finding 的改動不讓整張審查過期,改派增量審查看那段 diff。
+    以前的「≤ 1 檔、40 行就不重審」拿掉了 —— 小改也要有人看過。每一段要成立:
+      · 起點是上一段審完的樹(第一段是派遣時的樹)、在上一段之後才審
+      · 點名的 finding 至少一條在「上一段審完 → 這段審完」之間有 `loop fix` ——
+        沒有 fix 紀錄的審查後變更(臨時加功能)接不上;拿舊的 fix 重複接也不行
     """
+    def at(text):
+        return datetime.datetime.fromisoformat(text)
     try:
-        numstat = git_required(root, "審查後 diff", "diff", "--numstat", "--no-renames",
-                               record["tree"].removeprefix("tree:"), current_tree.removeprefix("tree:"))
-    except RuntimeError:
-        return None
-    rows = [ln.split("\t", 2) for ln in numstat.splitlines() if ln]
-    if len(rows) > POST_REVIEW_MAX_FILES or any("-" in (a, d) for a, d, _ in rows):
-        return None
-    added, deleted = sum(int(r[0]) for r in rows), sum(int(r[1]) for r in rows)
-    if added + deleted > POST_REVIEW_MAX_LINES:
-        return None
-    try:
-        since = datetime.datetime.fromisoformat(record["at"])
-        fixed_after = any(
-            ev.get("event") == "fix" and datetime.datetime.fromisoformat(ev["at"]) >= since
-            for item in (loop.get("findings") or {}).values() for ev in item.get("history") or []
-        )
+        fixes = {fid: [at(ev["at"]) for ev in item.get("history") or [] if ev.get("event") == "fix"]
+                 for fid, item in (loop.get("findings") or {}).items()}
+        cursor, since, used = record["tree"], at(record["at"]), []
+        for inc in increments:
+            if not isinstance(inc, dict) or inc.get("base") != cursor:
+                continue
+            done = at(inc["at"])
+            if done >= since and any(since <= t <= done for fid in inc.get("findings") or [] for t in fixes.get(fid, [])):
+                cursor, since = inc["tree"], done
+                used.append(inc)
     except (KeyError, TypeError, ValueError, AttributeError):
         return None   # 時間缺漏、格式錯、naive 對 aware 比不了 —— 一律當成沒有證據
-    if not fixed_after:
-        return None
-    return {"files": [r[2] for r in rows], "added": added, "deleted": deleted}
+    return used if cursor == current_tree else None
 
 
 def in_reach_scope(root: pathlib.Path, rel: str, globs: list[str]) -> bool:
@@ -590,14 +578,15 @@ def main(argv: list[str]) -> int:
             or re.fullmatch(r"tree:(?:[0-9a-f]{40}|[0-9a-f]{64})", dispatched[gate]["tree"]) is None
         )
     ]
+    increments = findings.get("increments") or []
     drifted = {
-        gate: post_review_fix(root, dispatched[gate], current_tree, loop)
+        gate: fix_review_chain(dispatched[gate], increments if isinstance(increments, list) else [], current_tree, loop)
         for gate in required_reviews
         if gate not in missing_dispatch and gate not in invalid_dispatch
         and dispatched[gate]["tree"] != current_tree
     }
-    stale_dispatch = [gate for gate, fix in drifted.items() if fix is None]
-    unreviewed = {gate: fix for gate, fix in drifted.items() if fix is not None}
+    stale_dispatch = [gate for gate, used in drifted.items() if used is None]
+    fix_reviewed = {gate: used for gate, used in drifted.items() if used is not None}
     # G9/10 為什麼沒過要分得出來(寫進 _yield):全算「失敗」的話,306/435 這種數字無法解讀
     if not (scripts_green and smoke_ok):
         review_state = "upstream_red"
@@ -622,15 +611,9 @@ def main(argv: list[str]) -> int:
                       "note": f"提出 {s.get('proposed', 0)} → 作廢 {s.get('void', 0)} → 證實 {s.get('confirmed', 0)}"
                               + (f" · {len(pending)} 條沒處理完" if pending else "")
                               + (" · lite:只要求 G10" if spec_lane == "lite" else "")
-                              + "".join(f" · {gate} 審查後修復 {len(fix['files'])} 檔 "
-                                        f"+{fix['added']}/−{fix['deleted']} 行（門檻內，不重派）"
-                                        for gate, fix in unreviewed.items())})
-        if unreviewed:
-            files = sorted({f for fix in unreviewed.values() for f in fix["files"]})
-            attention.append({"tag": "未重審", "title": f"{'、'.join(unreviewed)} 審查後改過的 {len(files)} 個檔沒有重審",
-                              "body": "、".join(files) + f" —— 修 finding 的小 diff(≤{POST_REVIEW_MAX_FILES} 檔、"
-                                      f"≤{POST_REVIEW_MAX_LINES} 行,派遣後有 loop fix),依規則不重派。"
-                                      "不擋推 —— 但這幾行付費審查沒看過,你該知道。"})
+                              + "".join(f" · {gate} 之後的修正走增量審查 {len(used)} 段"
+                                        f"({'、'.join(f for inc in used for f in inc.get('findings') or [])})"
+                                        for gate, used in fix_reviewed.items())})
     for fid, it in halted.items():
         attention.append({
             "tag": "需要你決定", "title": f"{fid} {'修 2 次未果' if it['status'] == 'parked' else '解過又出現'}",

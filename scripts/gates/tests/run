@@ -1545,24 +1545,23 @@ def test_dashboard_gating_order(tmp: pathlib.Path) -> None:
               and last_yield(root)["review_state"] == "stale",
               review_line.strip())
 
-    # 審查後的小修不重派(SKILL.md:fix diff ≤ 1 檔、≤ 40 行)。soundroots 第 1 輪實測:
-    # G10 之後只多了審查者自己寫的 20 行重現測試,dashboard 照判過期,而 G10 重派額度只有 1 次 → 卡死。
-    # 三個條件缺一就照舊過期。改完檔都重跑 smoke,G9/10 那一行才會真的走到審查判定。
-    def post_review_fix(name: str, edits: dict[str, str], fix_after_dispatch: bool = True):
+    # 改造方案 1.1:修 finding 的改動不讓整張審查過期,改派增量審查(G10-fix)看那段 diff。
+    # 以前的「≤ 1 檔、40 行免審」拿掉了 —— 小改也要增量審查。沒有 loop fix 紀錄的審查後變更照舊過期。
+    # 改完檔都重跑 smoke,G9/10 那一行才會真的走到審查判定。
+    from _state import tree_fingerprint  # noqa: E402
+
+    def fix_case(name: str) -> pathlib.Path:
         case_root = review_ready(name)
         run_gate("findings", spec, "add", "--id", "F-1", "--gate", "G10", "--class", "must_fix",
                  "--title", "重現", "--repro", "fix.txt", cwd=case_root)
         run_gate("findings", spec, "set", "F-1", "fixed", cwd=case_root)
-        run_gate("loop", spec, "fix", "F-1", cwd=case_root)
-        if not fix_after_dispatch:
-            # 只有派遣前的 fix(上一輪留下的):審查乾淨之後再改的東西,不能靠舊紀錄混過去
-            loop_path = case_root / "specs/demo/evidence/loop.json"
-            state = json.loads(loop_path.read_text())
-            for ev in state["findings"]["F-1"]["history"]:
-                ev["at"] = "2000-01-01T00:00:00+00:00"
-            loop_path.write_text(json.dumps(state))
-        for rel, text in edits.items():
-            (case_root / rel).write_text(text)
+        return case_root
+
+    def fix_review(case_root: pathlib.Path, fids: str = "F-1") -> tuple[int, str]:
+        return run_gate("findings", spec, "dispatched", "--gate", "G10-fix", "--finding", fids, "--model", "opus",
+                        cwd=case_root)
+
+    def verdict(case_root: pathlib.Path):
         run_gate("smoke", spec, cwd=case_root)
         code, out = run_gate("dashboard", spec, cwd=case_root)
         # dashboard 崩潰就沒有 G9/10 那行、也沒有 dashboard.json —— 讓 check 乾淨地紅,別讓整支 run 跟著炸
@@ -1570,26 +1569,138 @@ def test_dashboard_gating_order(tmp: pathlib.Path) -> None:
         dash = json.loads(dash_path.read_text()) if dash_path.exists() else {"attention": []}
         return code, next((ln for ln in out.splitlines() if "G9/10" in ln), out), dash
 
-    code, review_line, dash = post_review_fix("order-post-fix-small", {"fix.txt": "x\n" * 40})
-    note = next((a for a in dash["attention"] if a["tag"] == "未重審"), None)
-    check("審查後 1 檔 40 行小修 + 派遣後有 loop fix → G9/10 不判過期,備註寫出檔數行數",
-          code == 0 and "✓" in review_line and "審查後修復 1 檔 +40/−0 行" in review_line, review_line.strip())
-    check("審查後小修 → attention 列出未重審的檔,是資訊不是決策,不擋自動推",
-          note is not None and "fix.txt" in note["body"] and not note["decision"] and dash["auto_push_ok"],
-          str(note))
-    for name, edits, fixed, why in (
-        ("two-files", {"fix.txt": "x\n", "fix2.txt": "y\n"}, True, "跨 2 個檔"),
-        ("41-lines", {"fix.txt": "x\n" * 41}, True, "1 檔但 41 行"),
-        ("no-fix", {"fix.txt": "x\n"}, False, "1 檔小修但派遣後沒有 fix 紀錄"),
+    def stamp(case_root: pathlib.Path, dispatch: str, fixes: dict[str, str], increments: list[str]) -> None:
+        """把派遣、loop fix、增量審查的時間改成指定值 —— 同一秒內跑完的案例分不出先後。"""
+        fpath, lpath = case_root / "specs/demo/evidence/findings.json", case_root / "specs/demo/evidence/loop.json"
+        state, loop_state = json.loads(fpath.read_text()), json.loads(lpath.read_text())
+        for rec in state["dispatched"].values():
+            rec["at"] = dispatch
+        for inc, at in zip(state["increments"], increments):
+            inc["at"] = at
+        for fid, at in fixes.items():
+            for ev in loop_state["findings"][fid]["history"]:
+                ev["at"] = at
+        fpath.write_text(json.dumps(state))
+        lpath.write_text(json.dumps(loop_state))
+
+    findings_of = lambda r: json.loads((r / "specs/demo/evidence/findings.json").read_text())
+    root = fix_case("order-fix-review")
+    reviewed = findings_of(root)["dispatched"]["G10"]["tree"]
+    code, out = run_gate("findings", spec, "fix-diff", cwd=root)
+    check("fix-diff:審查之後沒動 → 說沒有變更", code == 0 and "審查之後沒有變更" in out, out[:300])
+    run_gate("loop", spec, "fix", "F-1", cwd=root)
+    (root / "fix.txt").write_text("x\n" * 60)
+    (root / "fix2.txt").write_text("y\n" * 40)
+    code, out = run_gate("findings", spec, "fix-diff", cwd=root)
+    check("fix-diff:印出上次審過的樹 → 現在的樹的 diff",
+          code == 0 and f"上次審過 {reviewed} → 現在 {tree_fingerprint(root)}" in out
+          and "+++ b/fix.txt" in out and "+++ b/fix2.txt" in out, out[:300])
+    code, out = fix_review(root)
+    inc = findings_of(root)["increments"][-1]
+    check("dispatched --gate G10-fix 記下審了哪一段、為了哪條 finding、用哪個模型",
+          code == 0 and inc["base"] == reviewed and inc["tree"] == tree_fingerprint(root)
+          and inc["findings"] == ["F-1"] and inc["model"] == "opus", f"{code} {out} {inc}")
+    code, review_line, dash = verdict(root)
+    check("審查後 2 檔 100 行的修正 + loop fix + 增量審查 → G9/10 不判過期,備註寫出接了幾段",
+          code == 0 and "✓" in review_line and "增量審查 1 段(F-1)" in review_line and dash["auto_push_ok"],
+          review_line.strip())
+    check("增量審查不會留下「未重審」標籤(舊規則的小改免審已拿掉)",
+          not any(a["tag"] == "未重審" for a in dash["attention"]), str(dash["attention"]))
+    # 「上次審過的樹」看時間、同一秒取後記的。同一秒內跑完的案例 max 和 min 選到同一筆,所以時間直接寫死
+    stamp(root, "2026-01-01T00:00:00+00:00", {"F-1": "2026-01-01T00:00:00+00:00"}, ["2026-01-01T00:00:00+00:00"])
+    code, out = run_gate("findings", spec, "fix-diff", cwd=root)
+    check("fix-diff:整張審查與增量審查同一秒 → 從後記的增量審查算起",
+          f"上次審過 {inc['tree']} → 現在" in out and "審查之後沒有變更" in out, out[:300])
+    stamp(root, "2026-01-01T00:00:00+00:00", {"F-1": "2026-01-01T00:00:01+00:00"}, ["2026-01-01T00:00:02+00:00"])
+    # 增量審查提出的新 finding:模型記增量審查的,不是整張 G10 的;修完再接一段
+    run_gate("findings", spec, "add", "--id", "F-2", "--gate", "G10-fix", "--class", "must_fix",
+             "--title", "修正帶進來的", "--repro", "fix3.txt", cwd=root)
+    check("增量審查收的 finding 記增量審查用的模型",
+          next(i for i in findings_of(root)["items"] if i["id"] == "F-2").get("model") == "opus",
+          str(findings_of(root)["items"]))
+    run_gate("findings", spec, "set", "F-2", "fixed", cwd=root)
+    run_gate("loop", spec, "fix", "F-2", cwd=root)
+    (root / "fix3.txt").write_text("z\n")
+    code, out = run_gate("findings", spec, "fix-diff", cwd=root)
+    check("fix-diff 從上一段增量審查審完的樹算起",
+          f"上次審過 {inc['tree']} → 現在" in out and "+++ b/fix3.txt" in out and "fix2.txt" not in out, out[:300])
+    fix_review(root, "F-2")
+    code, review_line, _ = verdict(root)
+    check("兩段增量審查一路接到現在的樹 → 不判過期", code == 0 and "增量審查 2 段(F-1、F-2)" in review_line,
+          review_line.strip())
+    code, out = run_gate("loop", spec, "check", cwd=root)
+    check("增量審查不算 G10 重派(loop check 照樣 OK、沒有重派紀錄)",
+          code == 0 and not json.loads((root / "specs/demo/evidence/loop.json").read_text())["redispatch"], out)
+
+    root = fix_case("order-fix-review-none")
+    run_gate("loop", spec, "fix", "F-1", cwd=root)
+    (root / "fix.txt").write_text("x\n")
+    code, review_line, dash = verdict(root)
+    check("審查後 1 檔 1 行小修 + loop fix、但沒派增量審查 → 審查過期(小改免審已拿掉)",
+          code == 1 and "✘" in review_line and "審查過期" in review_line, review_line.strip())
+
+    for name, fix_at, why in (
+        ("before", "2026-01-01T00:00:00+00:00", "fix 在整張審查之前(上一輪留下的)"),
+        ("after", "2026-01-01T00:00:09+00:00", "fix 在增量審查之後才記"),
     ):
-        code, review_line, _ = post_review_fix(f"order-post-fix-{name}", edits, fixed)
-        check(f"審查後 {why} → 審查過期",
+        root = fix_case(f"order-fix-review-{name}")
+        run_gate("loop", spec, "fix", "F-1", cwd=root)
+        (root / "fix.txt").write_text("x\n")
+        fix_review(root)
+        stamp(root, "2026-01-01T00:00:01+00:00", {"F-1": fix_at}, ["2026-01-01T00:00:05+00:00"])
+        code, review_line, _ = verdict(root)
+        check(f"增量審查點名的 finding,{why} → 接不上,審查過期",
               code == 1 and "✘" in review_line and "審查過期" in review_line, review_line.strip())
-    # 二進位檔 numstat 是 `-\t-`,行數無意義 —— 只有 1 檔也照判過期
-    code, review_line, dash = post_review_fix("order-post-fix-binary", {"fix.bin": "\x00\x01\x02"})
-    check("審查後只改 1 個二進位檔 + 派遣後有 loop fix → 審查過期,attention 沒有未重審",
-          code == 1 and "✘" in review_line and "審查過期" in review_line
-          and not any(a["tag"] == "未重審" for a in dash["attention"]), review_line.strip())
+
+    root = fix_case("order-fix-review-reuse")
+    run_gate("loop", spec, "fix", "F-1", cwd=root)
+    (root / "fix.txt").write_text("x\n")
+    fix_review(root)
+    (root / "feature.txt").write_text("臨時加的功能\n")
+    fix_review(root)   # 沒有新的 loop fix,拿同一條舊 fix 再接一段
+    stamp(root, "2026-01-01T00:00:00+00:00", {"F-1": "2026-01-01T00:00:01+00:00"},
+          ["2026-01-01T00:00:02+00:00", "2026-01-01T00:00:03+00:00"])
+    code, review_line, _ = verdict(root)
+    check("第二段沒有新的 loop fix(拿上一段的 fix 重複接)→ 審查過期",
+          code == 1 and "✘" in review_line and "審查過期" in review_line, review_line.strip())
+
+    root = fix_case("order-fix-review-drift")
+    run_gate("loop", spec, "fix", "F-1", cwd=root)
+    (root / "fix.txt").write_text("x\n")
+    fix_review(root)
+    (root / "feature.txt").write_text("增量審查之後又改\n")
+    code, review_line, _ = verdict(root)
+    check("增量審查之後工作樹又變了 → 接不到現在的樹,審查過期",
+          code == 1 and "✘" in review_line and "審查過期" in review_line, review_line.strip())
+
+    code, out = fix_review(root, "F-404")
+    check("dispatched --gate G10-fix 點名不存在的 finding → 拒收,不記",
+          code == 2 and "F-404" in out and len(findings_of(root)["increments"]) == 1, out)
+    code, out = run_gate("findings", spec, "dispatched", "--gate", "G10-fix", cwd=root)
+    check("dispatched --gate G10-fix 沒給 --finding → 拒收", code == 2 and "--finding" in out, out)
+    root = repo("order-fix-review-nobase")
+    run_gate("findings", spec, "add", "--id", "F-1", "--gate", "G10", "--class", "must_fix",
+             "--title", "重現", "--repro", "fix.txt", cwd=root)
+    code, out = fix_review(root)
+    code2, out2 = run_gate("findings", spec, "fix-diff", cwd=root)
+    check("還沒派過整張審查 → G10-fix 與 fix-diff 都拒絕(沒有可以接的樹)",
+          code == 1 and code2 == 1 and "還沒有派過整張審查" in out and "還沒有派過整張審查" in out2
+          and "increments" not in findings_of(root), f"{out} | {out2}")
+
+    # G9 與 G10 審的不是同一棵樹:G10 之前改過、沒有增量審查。增量審查從 G10 那棵接起,G9 那條鏈接不上
+    root = review_ready("order-fix-review-split")
+    (root / "between.txt").write_text("G9 之後、G10 之前改的\n")
+    run_gate("findings", spec, "dispatched", "--gate", "G10", cwd=root)
+    run_gate("findings", spec, "add", "--id", "F-1", "--gate", "G10", "--class", "must_fix",
+             "--title", "重現", "--repro", "fix.txt", cwd=root)
+    run_gate("findings", spec, "set", "F-1", "fixed", cwd=root)
+    run_gate("loop", spec, "fix", "F-1", cwd=root)
+    (root / "fix.txt").write_text("x\n")
+    fix_review(root)
+    code, review_line, _ = verdict(root)
+    check("增量審查的起點接不上 G9 審的樹 → G9 審查過期(G10 那條接得上也一樣擋)",
+          code == 1 and "審查過期" in review_line and "G9" in review_line and "G10" not in review_line.split("審查過期")[1],
+          review_line.strip())
 
     root = review_ready("order-tree-changed-during-dashboard")
     wrapper_dir = tmp / "dashboard-git-wrapper"

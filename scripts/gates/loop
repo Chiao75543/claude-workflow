@@ -4,7 +4,7 @@
 規則(寫在這裡,不靠自律):
   · 同一條 finding 修 2 次還沒解 → parked,停
   · 同一條 finding 解了又出現       → flipflop,立即停
-  · G10 對抗審查最多重派 1 次
+  · G10 對抗審查最多重派 1 次(修 finding 後的增量審查 G10-fix 不算重派,記在 findings dispatched)
 
 狀態在 evidence/loop.json。停下來不是叫人看程式碼,是在 PR 上列一行「需要你決定」。
 

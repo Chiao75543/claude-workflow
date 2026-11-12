@@ -106,6 +106,28 @@ Agent(subagent_type="code-adversary", description="G10 code-adversary {name}", p
 
 ---
 
+## G10-fix · fix-reviewer(opus,增量審查)
+
+審查後為了修 finding 改了程式,不重派整張 G10,改派這個。**不算 G10 重派。**
+
+```
+Agent(subagent_type="fix-reviewer", description="G10-fix fix-reviewer {name}", prompt=...)
+```
+
+素材:
+
+- `scripts/gates/findings specs/{name}/spec.yaml fix-diff > specs/{name}/evidence/fix-review-<F-n>.diff`
+  的檔案路徑 —— 上次審過的樹(整張審查或上一段增量審查)到現在的 diff,讓它自己讀
+- 這段修正要解的 finding:id、標題、class、重現(一次修好幾條就全列)
+- 規格路徑、**測試指令**(它要實跑重現)
+
+派完立刻 `scripts/gates/findings specs/{name}/spec.yaml dispatched --gate G10-fix --finding F-n[,F-m] --model opus`。
+例外:它點名了「無關改動」—— 那不是修正,**這次不記**;拿掉無關改動後重新 `fix-diff` 再派,或整張重派 G10。
+它說「未解」→ 不要 `findings set fixed`,回去再修(`loop fix` 第 3 次照樣 parked)。
+它提出的新 finding 用 `findings add --gate G10-fix` 收,之後照常分流、進 loop。
+
+---
+
 ## S7 · red-writer(opus)
 
 ```
