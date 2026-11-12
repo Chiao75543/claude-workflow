@@ -114,6 +114,7 @@ digraph workflow {
   precommit [shape=box, label="S9d pre-commit dashboard\n候選樹可提交，不可推送"];
   s10 [shape=box, label="S10 commit"];
   delivery [shape=box, label="S10½ delivery dashboard\n批准快照已 commit 且乾淨"];
+  sync [shape=box, label="S10¾ 同步 main\nfindings synced · 併了就重跑 smoke"];
   s11 [shape=box, label="S11 自動推 + 開 PR\n證據表貼成留言"];
   s12 [shape=box, label="S12 CI 獨立重跑\n(ci: none 就跳過)"];
   s13a [shape=diamond, label="⏸ PR 上有「需要你決定」\n才叫你"];
@@ -130,8 +131,11 @@ digraph workflow {
   s9c -> s8 [label="must_fix / overbuilt(loop 數)"];
   s9c -> precommit [label="乾淨或只剩 ask_user"];
   precommit -> s10 [label="全綠，候選快照已 stage"];
-  s10 -> delivery -> s11 -> s12 -> s13a -> s13 -> done;
-  s12 -> s8 [label="CI 紅:自己拉 log 修"];
+  s10 -> delivery -> sync -> s11 -> s12 -> s13a -> s13 -> done;
+  sync -> s9c [label="衝突解決動到本卡:增量審查"];
+  sync -> s8 [label="併完關卡紅"];
+  s12 -> sync [label="CI 紅 / PR 落後 main"];
+  s12 -> s8 [label="同步過還紅:自己拉 log 修"];
 }
 ```
 
@@ -391,6 +395,31 @@ scripts/gates/dashboard specs/{name}/spec.yaml --trigger <同一輪的原因>
 只有 owner 批准快照存在 `HEAD` 且工作樹對該檔乾淨時，才是 `approval_anchor: committed`。
 新快照未 commit、或已 commit 快照之後又被修改，delivery 關卡都必須 fail closed。
 
+### S10¾ 同步 main
+
+推之前先併最新的整合分支;PR 落後 main、CI 紅時也回到這一站。**只用 merge,不 rebase** ——
+已經推過的分支 rebase 之後要 force push。
+
+```bash
+git fetch origin
+git merge origin/{INTEGRATION_BRANCH}                   # 有衝突就在這裡解,解完 commit
+scripts/gates/findings specs/{name}/spec.yaml synced     # 審查還算不算數
+scripts/gates/smoke specs/{name}/spec.yaml               # 併了新東西就一律重跑(smoke 綁整棵樹)
+scripts/gates/dashboard specs/{name}/spec.yaml --trigger merge-main   # G0–G7 也在這裡重跑;這就是新的 delivery 裁決
+```
+
+審查的新鮮度看**本卡自己的改動**(整合分支的 merge-base → 工作樹,只比 +/- 行),所以併 main 不必重派審查。
+`synced` 的三種結果:
+
+- **審查照算**:本卡的改動沒變,衝突也沒碰到 `impact.files` → 往 S11
+- **點名某次併 main**:那次的衝突解決動到 `impact.files` 的檔,或改到本卡自己的行 → 派增量審查看那次的衝突解決:
+  `findings fix-diff --merge <sha>` 給 `fix-reviewer`,派完記 `findings dispatched --gate G10-fix --merge <sha>`
+  (派法見 `references/dispatch-prompts.md`)。不算 G10 重派
+- **本卡的改動變了、卻沒有衝突解決可以審**(例如審查後還有沒審的修正)→ 整張重審
+
+`synced` 也會把「上次審過的樹」移到併完的樹,之後再修 finding,`fix-diff` 才不會混進 main 的改動。
+沒跑 `synced` 就 `fix-diff`,它會拒絕。這個 PR 之前派的審查沒有本卡改動的指紋,併 main 後只能整張重審。
+
 ### S11 自動推 + 開 PR + 證據表貼成留言
 
 ```bash
@@ -415,7 +444,8 @@ gh pr create --base {INTEGRATION_BRANCH} --body-file <(scripts/gates/pr-comment 
 CI 是唯一**不在 AI 手裡**的執行環境 —— `evidence/` 全是 AI 在你機器上寫的,這一步讓它們得到外部確認。
 `templates/ci/` 有 GitHub / GitLab 的範本,只跑腳本關卡 + `pr-comment`;要不要裝進專案是人的決定(改 CI 要人確認)。
 
-**CI 紅了,orchestrator 自己去抓原因,不丟給人:**
+**CI 紅了,orchestrator 自己去抓原因,不丟給人。** PR 落後 main 就先回 S10¾ 同步、重推,CI 會跟著重跑;
+同步過還紅才看 log:
 
 ```bash
 gh run list --branch "feat/${branch_name}" --limit 1     # 或 glab ci list
@@ -424,7 +454,7 @@ gh run view <id> --log-failed                            # 拉失敗的 log
 
 分兩種:**環境差異**(CI 上缺工具、路徑不同、權限)→ 修 CI 設定或 pipeline.yaml,重推;
 **本機綠 CI 紅的關卡** → 那是本機證據不可信,退回 S8 當 `must_fix` 處理,走 `loop`。
-兩輪還紅 → parked,PR 留言加一行「需要你決定」。整合分支動了 CI 會自動重跑,不用記得 rebase 後重驗。
+兩輪還紅 → parked,PR 留言加一行「需要你決定」。
 
 ### S13 ⏸ 你按 merge
 
@@ -569,9 +599,11 @@ loop <spec> check            有沒有任何一條停住(dashboard 也讀)
   `findings fix-diff`(上次審過的樹 → 現在)和要修的 finding,問修好了沒、有沒有帶進新問題
   (派法見 `references/dispatch-prompts.md`)。派完記 `findings dispatched --gate G10-fix --finding F-n`;
   它**不算** G10 重派(G10 整張最多重派 **1 次** 不變)。它提出的新 must_fix 照常進 loop,同一條修到第 3 次照樣 parked。
-- dashboard 從派遣時的樹開始,用增量審查一段一段往後接:每一段的起點是上一段審完的樹,
-  點名的 finding 在上一段審完之後有 `loop fix`。接得到現在的樹才不判「審查過期」。
+- dashboard 從派遣時開始,用增量審查一段一段往後接:每一段的起點是上一段審完的狀態,
+  點名的 finding 在上一段審完之後有 `loop fix`。接得到現在才不判「審查過期」。
   **沒有 `loop fix` 紀錄的審查後變更(臨時加功能)接不上 → 照舊整張重審。** 舊的「≤ 1 檔、40 行免審」已拿掉,小改也要增量審查
+- 接的是**本卡自己改動的指紋**(整合分支的 merge-base → 工作樹,只比 +/- 行),所以併 main 不會打斷這條鏈。
+  併 main 的規則見 S10¾
 - 停下來不是叫你看程式碼,是 PR 留言上多一行「需要你決定」:
   「F-3 修 2 次未果 —— 照樣出貨 / 分支停在這 / 回頭改規格?」**這是決策,不是 code review。**
 

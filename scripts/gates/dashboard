@@ -39,10 +39,10 @@ import sys
 sys.path.insert(0, str(pathlib.Path(__file__).parent))
 import _config  # noqa: E402
 from _common import (  # noqa: E402
-    LITE_WAIVED_GATES, WAIVABLE_GATES, evidence_dir, integration_branch, lane, load_spec, read_json,
+    LITE_WAIVED_GATES, WAIVABLE_GATES, evidence_dir, impact_files, integration_branch, lane, load_spec, read_json,
     scenario_ids, triage_findings, write_json, write_status,
 )
-from _state import index_fingerprint, tree_fingerprint  # noqa: E402
+from _state import branch_fingerprint, index_fingerprint, sync_merges, tree_fingerprint  # noqa: E402
 
 # 型別宣告。要吃得下常見寫法,否則最該檢查的東西反而隱形:
 #   @MainActor final class XViewModel / actor XService / data class / sealed class / object
@@ -154,32 +154,39 @@ def approval_anchor_state(root: pathlib.Path, approved: pathlib.Path) -> str:
     return approval_anchor_snapshot(root, approved)[0]
 
 
-def fix_review_chain(record: dict, increments: list, current_tree: str, loop: dict) -> list[dict] | None:
-    """派遣時的樹 → 現在的樹,能不能用增量審查(findings dispatched --gate G10-fix)一段一段接起來。
+def fix_review_chain(record: dict, increments: list, current: dict, loop: dict, merges: dict) -> list[dict] | None:
+    """派遣時 → 現在,能不能用增量審查(findings dispatched --gate G10-fix)一段一段接起來。
     接得上回傳用到的段;接不上 None = 審查過期,照舊整張重審。
 
     改造方案 1.1:修 finding 的改動不讓整張審查過期,改派增量審查看那段 diff。
     以前的「≤ 1 檔、40 行就不重審」拿掉了 —— 小改也要有人看過。每一段要成立:
-      · 起點是上一段審完的樹(第一段是派遣時的樹)、在上一段之後才審
+      · 起點是上一段審完的狀態(第一段是派遣時的)、在上一段之後才審
       · 點名的 finding 至少一條在「上一段審完 → 這段審完」之間有 `loop fix` ——
         沒有 fix 紀錄的審查後變更(臨時加功能)接不上;拿舊的 fix 重複接也不行
+      · 或是 --merge 那種段:審的是一次併 main 的衝突解決。merge 必須在 merges 裡
+        (審查後併進來的 main),而且在這段審完之前就併了
+    改造方案 1.2:接的是本卡自己改動的指紋(current["diff"]),不是整棵樹 —— 併 main 不打斷這條鏈。
+    這個 PR 之前派的審查沒有 diff 指紋,照舊接整棵樹(dashboard 也不會給它 merges)。
     """
+    key, base_key = ("diff", "base_diff") if "diff" in record else ("tree", "base")
     def at(text):
         return datetime.datetime.fromisoformat(text)
     try:
         fixes = {fid: [at(ev["at"]) for ev in item.get("history") or [] if ev.get("event") == "fix"]
                  for fid, item in (loop.get("findings") or {}).items()}
-        cursor, since, used = record["tree"], at(record["at"]), []
+        cursor, since, used = record[key], at(record["at"]), []
         for inc in increments:
-            if not isinstance(inc, dict) or inc.get("base") != cursor:
+            if not isinstance(inc, dict) or inc.get(base_key) != cursor:
                 continue
             done = at(inc["at"])
-            if done >= since and any(since <= t <= done for fid in inc.get("findings") or [] for t in fixes.get(fid, [])):
-                cursor, since = inc["tree"], done
+            fixed = any(since <= t <= done for fid in inc.get("findings") or [] for t in fixes.get(fid, []))
+            merged = inc.get("merge") in merges and at(merges[inc["merge"]]) <= done
+            if done >= since and (fixed or merged):
+                cursor, since = inc[key], done
                 used.append(inc)
     except (KeyError, TypeError, ValueError, AttributeError):
         return None   # 時間缺漏、格式錯、naive 對 aware 比不了 —— 一律當成沒有證據
-    return used if cursor == current_tree else None
+    return used if cursor == current.get(key) else None
 
 
 def in_reach_scope(root: pathlib.Path, rel: str, globs: list[str]) -> bool:
@@ -576,17 +583,49 @@ def main(argv: list[str]) -> int:
             not isinstance(dispatched[gate], dict)
             or not isinstance(dispatched[gate].get("tree"), str)
             or re.fullmatch(r"tree:(?:[0-9a-f]{40}|[0-9a-f]{64})", dispatched[gate]["tree"]) is None
+            or ("diff" in dispatched[gate] and (
+                re.fullmatch(r"diff:[0-9a-f]{64}", str(dispatched[gate]["diff"])) is None
+                or re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", str(dispatched[gate].get("mb"))) is None))
         )
     ]
     increments = findings.get("increments") or []
+    increments = increments if isinstance(increments, list) else []
+    try:
+        current_diff, diff_problem = branch_fingerprint(root, current_tree, base)[0], ""
+    except RuntimeError as exc:
+        current_diff, diff_problem = None, str(exc)
+    impact = impact_files(spec)
+
+    def review_drift(record: dict) -> tuple[list | None, str]:
+        """審查後工作樹變了:回傳 (接上的增量審查段, 過期原因);段是 None = 過期。
+        改造方案 1.2:併 main 只要本卡的改動沒變就照算;衝突解決動到 impact.files、
+        或改到本卡自己的行,那次併 main 要有 --merge 的增量審查(chiao 選「兩者任一就審」)。"""
+        merges, need = {}, []
+        if "diff" in record:
+            if current_diff is None:
+                return None, diff_problem[:120]
+            try:
+                synced = sync_merges(root, record["mb"], base)
+            except (RuntimeError, KeyError) as exc:
+                return None, f"算不出審查後併進來的 main:{exc}"[:120]
+            merges = {m["sha"]: m["at"] for m in synced}
+            need = [m["sha"] for m in synced if set(m["files"]) & impact]
+        used = fix_review_chain(record, increments, {"tree": current_tree, "diff": current_diff}, loop, merges)
+        if used is None:
+            return None, "本卡的改動變了" if "diff" in record else "工作樹變了"
+        missing = [sha[:10] for sha in need if sha not in {inc.get("merge") for inc in used}]
+        if missing:
+            return None, f"併 main 的衝突解決動到本卡的檔案,沒有增量審查:{', '.join(missing)}"
+        return used, ""
+
     drifted = {
-        gate: fix_review_chain(dispatched[gate], increments if isinstance(increments, list) else [], current_tree, loop)
+        gate: review_drift(dispatched[gate])
         for gate in required_reviews
         if gate not in missing_dispatch and gate not in invalid_dispatch
         and dispatched[gate]["tree"] != current_tree
     }
-    stale_dispatch = [gate for gate, used in drifted.items() if used is None]
-    fix_reviewed = {gate: used for gate, used in drifted.items() if used is not None}
+    stale_dispatch = {gate: why for gate, (used, why) in drifted.items() if used is None}
+    fix_reviewed = {gate: used for gate, (used, _) in drifted.items() if used is not None}
     # G9/10 為什麼沒過要分得出來(寫進 _yield):全算「失敗」的話,306/435 這種數字無法解讀
     if not (scripts_green and smoke_ok):
         review_state = "upstream_red"
@@ -603,7 +642,7 @@ def main(argv: list[str]) -> int:
     elif stale_dispatch:
         review_state = "stale"
         gates.append({"id": "G9/10", "what": "獨立讀者 + 對抗審查", "ok": False,
-                      "note": f"審查過期(工作樹變了: {', '.join(stale_dispatch)})"})
+                      "note": "審查過期(" + "; ".join(f"{gate}: {why}" for gate, why in stale_dispatch.items()) + ")"})
     else:
         review_state = "findings_pending" if pending or halted else "pass"
         s = findings.get("summary") or {}
@@ -612,7 +651,8 @@ def main(argv: list[str]) -> int:
                               + (f" · {len(pending)} 條沒處理完" if pending else "")
                               + (" · lite:只要求 G10" if spec_lane == "lite" else "")
                               + "".join(f" · {gate} 之後的修正走增量審查 {len(used)} 段"
-                                        f"({'、'.join(f for inc in used for f in inc.get('findings') or [])})"
+                                        f"({'、'.join(f for inc in used for f in inc.get('findings') or ['併 main ' + inc['merge'][:10]])})"
+                                        if used else f" · {gate} 之後併過 main,本卡的改動沒變"
                                         for gate, used in fix_reviewed.items())})
     for fid, it in halted.items():
         attention.append({

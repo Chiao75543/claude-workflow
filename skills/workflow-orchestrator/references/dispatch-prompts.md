@@ -126,6 +126,13 @@ Agent(subagent_type="fix-reviewer", description="G10-fix fix-reviewer {name}", p
 它說「未解」→ 不要 `findings set fixed`,回去再修(`loop fix` 第 3 次照樣 parked)。
 它提出的新 finding 用 `findings add --gate G10-fix` 收,之後照常分流、進 loop。
 
+**審的是併 main 的衝突解決時**(S10¾ 的 `findings synced` 點名了某次併 main):
+
+- 素材換成 `scripts/gates/findings specs/{name}/spec.yaml fix-diff --merge <sha> > specs/{name}/evidence/fix-review-merge-<sha 前 8 碼>.diff`
+  (自動合併的結果 → 實際 commit 的版本),加上規格路徑、測試指令。明講「這是併 main 的衝突解決,不是修 finding」
+- 派完立刻 `findings dispatched --gate G10-fix --merge <sha> --model opus`
+- 它說衝突解決有問題,會附一條 finding → 照常收、進 loop,修完走一般的增量審查
+
 ---
 
 ## S7 · red-writer(opus)
