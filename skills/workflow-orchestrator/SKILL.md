@@ -667,6 +667,13 @@ scripts/bench/recall run q.json --model fable --effort xhigh --setup "npm ci" --
   結果記 model、effort、prompt 版本(agent 定義 + bench prompt 的雜湊)與實際用到的模型
 - 一次 G10 審查的 cache 讀取中位數約 4.8M token、全吃 Fable 額度 —— 整輪要先跟人確認,不要順手跑
 
+**漏網回填:`/workflow:escape`。** 上線後才發現的 bug,人講一句話,你追查所屬卡、本該哪一關擋到、為何沒擋到,
+給人確認後用 `scripts/gates/escape add` 寫進 `specs/_escapes.jsonl`,從整合分支開臨時 worktree、**自己一個小 PR**。
+召回考題量的是「抓不抓得到已知的蟲」,這裡量的是「哪些蟲根本沒被抓過」—— 兩個都要看。
+
+- 嚴重度、本該擋到的關、為何沒擋到都是固定選項,才統計得出哪一類最常漏(`scripts/gates/escape list`)
+- 追查不出來就填 `unknown`,不要猜;不是 pipeline 的卡造成的填 `--card none --why outside`
+
 ## 同時進行多個需求
 
 **pipeline,不是 parallel。** 機器階段 30–60 分鐘、人類階段約 6 分鐘,比例 7:1 ——
@@ -747,6 +754,7 @@ scripts/bench/recall run q.json --model fable --effort xhigh --setup "npm ci" --
 - `scripts/gates/runs --yield` —— 哪道關擋過東西、擋了幾次;跑過 ≥5 次從沒擋過的會被點名
 - `scripts/gates/runs --cost` —— 每張卡、每一站的 token 數,與花了多久、等人多久
 - `scripts/bench/recall` —— 召回考題:換審查設定前後的召回率與誤擋率
+- `commands/workflow/escape.md` + `scripts/gates/escape` —— 漏網回填:上線後發現的 bug 一句話登記
 - `eli5` skill —— S5 的說明頁
 - `test-writer` / `rd-implementer` —— **專案自備**的兩個 skill
 - `PIPELINE.md` —— 對外的簡介(不是鏡像,只是入口)

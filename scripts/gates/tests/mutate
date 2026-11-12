@@ -539,6 +539,18 @@ MUTATIONS: list[tuple[str, str, str, str]] = [
     ("dashboard", "裁決期間工作樹變了,review_state 仍記 pass",
      '                if gate["id"] == "G9/10":\n                    review_state = "stale"',
      '                if gate["id"] == "G9/10":\n                    pass'),
+    # ---- 漏網回填(scripts/gates/escape)----
+    ("escape", "嚴重度不驗", '    if fields["severity"] not in SEVERITIES:', "    if False:"),
+    ("escape", "本該擋到的關不驗", '    if fields["gate"] not in GATES:', "    if False:"),
+    ("escape", "為何沒擋到不驗(固定選項統計不出來)", '    if fields["why"] not in WHYS:', "    if False:"),
+    ("escape", "所屬卡不查存在",
+     '    if card not in NO_CARD and not (NAME.match(card) and (root / "specs" / card / "spec.yaml").is_file()):',
+     "    if False:"),
+    ("escape", "卡名可以是路徑(../specs/x 繞回別的卡)", "not (NAME.match(card) and (", "not (True and ("),
+    ("escape", "未來日期照收", "        if found > today:", "        if False:"),
+    ("escape", "追查欄位空著照收", "    if missing:", "    if False:"),
+    ("escape", "檔尾沒換行就黏成一行",
+     '("\\n" if head and not head.endswith("\\n") else "")', '""'),
     # ---- 召回考題(scripts/bench/recall + 派遣樹保留)----
     ("findings", "派遣樹不留 ref(兩週後 gc 掉,召回考題又少一題)",
      "        keep = keep_dispatch_tree(root, spec_path.parent.name, gate, tree)",
