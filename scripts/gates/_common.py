@@ -98,6 +98,13 @@ def sha256(path: pathlib.Path) -> str:
     return "sha256:" + hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+def impact_files(spec: dict) -> set[str]:
+    """impact.files 的路徑;每條後面可以帶「  # 說明」。"""
+    impact = spec.get("impact")
+    files = (impact.get("files") or []) if isinstance(impact, dict) else []
+    return {f for f in (entry.split("#")[0].strip() for entry in files if isinstance(entry, str)) if f}
+
+
 def scenarios(spec: dict):
     """走訪 (requirement, scenario),兩者都保證是 dict。"""
     for req in spec.get("requirements") or []:

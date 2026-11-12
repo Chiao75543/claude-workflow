@@ -15,6 +15,7 @@
 
 from __future__ import annotations
 
+import datetime
 import json
 import os
 import pathlib
@@ -1532,17 +1533,35 @@ def test_dashboard_gating_order(tmp: pathlib.Path) -> None:
               and last_yield(root)["review_state"] == "invalid_dispatch",
               review_line.strip())
 
-    for stale_gate in ("G9", "G10"):
-        root = review_ready(f"order-stale-{stale_gate.lower()}")
+    for stale_gate, legacy in (("G9", False), ("G10", False), ("G9", True)):
+        root = review_ready(f"order-stale-{stale_gate.lower()}{'-legacy' if legacy else ''}")
         findings_path = root / "specs/demo/evidence/findings.json"
         state = json.loads(findings_path.read_text())
-        state["dispatched"][stale_gate]["tree"] = "tree:" + "0" * 40
+        record = state["dispatched"][stale_gate]
+        record["tree"] = "tree:" + "0" * 40
+        if legacy:   # 這個 PR 之前派的審查:沒有本卡改動的指紋,照舊比整棵樹
+            record.pop("diff")
+            record.pop("mb")
+        else:
+            record["diff"] = "diff:" + "0" * 64
         findings_path.write_text(json.dumps(state))
         code, out = run_gate("dashboard", spec, cwd=root)
         review_line = next(ln for ln in out.splitlines() if "G9/10" in ln)
-        check(f"只有 {stale_gate} dispatch 過期 → fail closed",
+        check(f"只有 {stale_gate} dispatch 過期{'(舊紀錄只比整棵樹)' if legacy else ''} → fail closed",
               code == 1 and "✘" in review_line and "過期" in review_line and stale_gate in review_line
+              and ("工作樹變了" if legacy else "本卡的改動變了") in review_line
               and last_yield(root)["review_state"] == "stale",
+              review_line.strip())
+    for name, damage in (("bad-diff", {"diff": "diff:" + "z" * 64}), ("diff-without-mb", {"mb": None})):
+        root = review_ready(f"order-malformed-{name}")
+        findings_path = root / "specs/demo/evidence/findings.json"
+        state = json.loads(findings_path.read_text())
+        state["dispatched"]["G10"].update(damage)
+        findings_path.write_text(json.dumps(state))
+        code, out = run_gate("dashboard", spec, cwd=root)
+        review_line = next(ln for ln in out.splitlines() if "G9/10" in ln)
+        check(f"G10 dispatch {name} → fail closed(本卡改動的指紋格式也要驗)",
+              code == 1 and "無效" in review_line and last_yield(root)["review_state"] == "invalid_dispatch",
               review_line.strip())
 
     # 改造方案 1.1:修 finding 的改動不讓整張審查過期,改派增量審查(G10-fix)看那段 diff。
@@ -1701,6 +1720,220 @@ def test_dashboard_gating_order(tmp: pathlib.Path) -> None:
     check("增量審查的起點接不上 G9 審的樹 → G9 審查過期(G10 那條接得上也一樣擋)",
           code == 1 and "審查過期" in review_line and "G9" in review_line and "G10" not in review_line.split("審查過期")[1],
           review_line.strip())
+
+    # 改造方案 1.2:審查的新鮮度綁「本卡自己的改動」(整合分支的 merge-base → 工作樹),併 main 不讓審查過期。
+    # 衝突解決動到 impact.files、或改到本卡自己的行(chiao 選「兩者任一就審」)→ 那次併 main 要有 --merge 的增量審查。
+    git = lambda r, *a: subprocess.run(["git", *a], cwd=r, capture_output=True, text=True)
+    thing = "".join(f"line {i}\n" for i in range(1, 21))
+    card_thing = thing.replace("line 10\n", "line 10 本卡改的\n")
+
+    def sync_case(name: str, before_review=None) -> pathlib.Path:
+        """main 上有 src/Thing.ext(在 impact.files 裡)和 scripts/helper.sh(不在);
+        功能分支改 Thing 第 10 行、helper 第 2 行,commit 後審過。before_review:審查前先做的事(例如先併一次 main)。"""
+        case_root = repo(name)
+        (case_root / "src").mkdir()
+        (case_root / "src/Thing.ext").write_text(thing)
+        (case_root / "scripts").mkdir()
+        (case_root / "scripts/helper.sh").write_text("a\nb\nc\n")
+        git(case_root, "add", "-A")
+        git(case_root, "commit", "-qm", "app")
+        git(case_root, "checkout", "-qb", "feat/demo")
+        (case_root / "src/Thing.ext").write_text(card_thing)
+        (case_root / "scripts/helper.sh").write_text("a\nB 本卡改的\nc\n")
+        git(case_root, "commit", "-qam", "card")
+        if before_review:
+            before_review(case_root)
+        run_gate("test-review", spec, cwd=case_root)
+        freeze(case_root, ["Tests/DemoTests.swift"])
+        run_gate("smoke", spec, cwd=case_root)
+        dispatched(case_root)
+        return case_root
+
+    def on_main(case_root: pathlib.Path, path: str, text: str) -> None:
+        """在另一個 worktree 改 main,不動功能分支的工作樹。"""
+        wt = case_root.parent / "main-wt"
+        if not wt.exists():
+            git(case_root, "worktree", "add", "-q", str(wt), "main")
+        (wt / path).write_text(text)
+        git(wt, "commit", "-qam", f"main 改 {path}")
+
+    def merge_main(case_root: pathlib.Path, resolve: dict | None = None, ref: str = "main") -> str:
+        git(case_root, "merge", "-q", "--no-edit", ref)
+        for path, text in (resolve or {}).items():
+            (case_root / path).write_text(text)
+            git(case_root, "add", path)
+        if resolve:
+            git(case_root, "commit", "-q", "--no-edit")
+        return git(case_root, "rev-parse", "HEAD").stdout.strip()
+
+    # 同一個檔:上面多兩行(行號全移、blob 也變),改第 13 行 —— 落在本卡第 10 行的 3 行上下文內,但沒有衝突
+    clean_main = "header 1\nheader 2\n" + thing.replace("line 13\n", "line 13 main 改的\n")
+    root = sync_case("sync-clean")
+    on_main(root, "src/Thing.ext", clean_main)
+    merge_main(root)
+    code, out = run_gate("dashboard", spec, cwd=root)
+    check("併 main 之後 smoke 證據過期(smoke 綁整棵樹,併 main 後一律重跑)",
+          code == 1 and "證據過期" in out, out[:400])
+    code, review_line, dash = verdict(root)
+    check("併 main 沒碰到本卡的行(同一個檔上面多兩行、改別處)→ 審查照算,備註寫出併過 main",
+          code == 0 and "✓" in review_line and "G10 之後併過 main,本卡的改動沒變" in review_line and dash["auto_push_ok"],
+          review_line.strip())
+    code, out = run_gate("findings", spec, "fix-diff", cwd=root)
+    check("併 main 之後沒跑 synced 就要 fix-diff → 拒絕(diff 會混進 main 的改動)",
+          code == 1 and "findings synced" in out, out[:300])
+    code, out = run_gate("findings", spec, "synced", cwd=root)
+    check("synced:本卡的改動沒變、衝突沒碰到 impact.files → 審查照算,記下併完的樹",
+          code == 0 and "審查照算" in out and findings_of(root)["synced"][-1]["tree"] == tree_fingerprint(root), out)
+    run_gate("findings", spec, "add", "--id", "F-1", "--gate", "G10", "--class", "must_fix",
+             "--title", "重現", "--repro", "src/Thing.ext", cwd=root)
+    run_gate("findings", spec, "set", "F-1", "fixed", cwd=root)
+    run_gate("loop", spec, "fix", "F-1", cwd=root)
+    merged = "header 1\nheader 2\n" + card_thing.replace("line 13\n", "line 13 main 改的\n")
+    check("併完的檔 = main 的改動 + 本卡的改動(下面的修正就是改這份)", (root / "src/Thing.ext").read_text() == merged)
+    (root / "src/Thing.ext").write_text(merged.replace("line 10 本卡改的\n", "line 10 本卡修的\n"))
+    code, out = run_gate("findings", spec, "fix-diff", cwd=root)
+    check("synced 之後的 fix-diff 從併完的樹算起:只有本卡的修正,沒有 main 的改動",
+          code == 0 and "+line 10 本卡修的" in out
+          and not any(ln[:1] in "+-" and ("main 改的" in ln or "header" in ln) for ln in out.splitlines()), out[:400])
+    fix_review(root)
+    code, review_line, _ = verdict(root)
+    check("併 main → synced → 修正 + 增量審查 → 審查照算(增量審查接在本卡改動的指紋上)",
+          code == 0 and "增量審查 1 段(F-1)" in review_line, review_line.strip())
+    code, out = run_gate("findings", spec, "synced", cwd=root)
+    check("synced:上次審查之後沒再併 main → 照實說,不記", code == 0 and "沒有併進新的 main" in out
+          and len(findings_of(root)["synced"]) == 1, out)
+
+    root = sync_case("sync-legacy")
+    state = findings_of(root)
+    for rec in state["dispatched"].values():
+        rec.pop("diff")
+        rec.pop("mb")
+    (root / "specs/demo/evidence/findings.json").write_text(json.dumps(state))
+    on_main(root, "src/Thing.ext", clean_main)
+    merge_main(root)
+    code, review_line, _ = verdict(root)
+    code2, out2 = run_gate("findings", spec, "synced", cwd=root)
+    check("這個 PR 之前派的審查(沒有本卡改動的指紋)+ 併 main → 照舊比整棵樹,審查過期;synced 也不放行",
+          code == 1 and "工作樹變了" in review_line and code2 == 1 and "整張重審" in out2, f"{review_line} | {out2}")
+
+    def merged_before_review(case_root: pathlib.Path) -> None:
+        on_main(case_root, "src/Thing.ext", thing.replace("line 11\n", "line 11 審查前 main 改的\n"))
+        merge_main(case_root, {"src/Thing.ext": card_thing.replace("line 11\n", "line 11 審查前 main 改的\n")})
+
+    root = sync_case("sync-before-review", merged_before_review)
+    on_main(root, "src/Thing.ext", thing.replace("line 11\n", "line 11 審查前 main 改的\n")
+            .replace("line 18\n", "line 18 main 改的\n"))
+    merge_main(root)
+    code, review_line, _ = verdict(root)
+    code2, out2 = run_gate("findings", spec, "synced", cwd=root)
+    check("審查前那次併 main 的衝突(動到 impact.files)已經被整張審查看過 → 審查後的乾淨併 main 照算",
+          code == 0 and "本卡的改動沒變" in review_line and code2 == 0, f"{review_line} | {out2}")
+
+    root = sync_case("sync-origin")
+    on_main(root, "src/Thing.ext", clean_main)
+    old_main = git(root, "rev-parse", "main~1").stdout.strip()
+    git(root, "update-ref", "refs/remotes/origin/main", git(root, "rev-parse", "main").stdout.strip())
+    git(root, "update-ref", "refs/heads/main", old_main)   # fetch 過的 origin/main 是新的,本機 main 還停在舊的
+    merge_main(root, ref="origin/main")
+    code, review_line, _ = verdict(root)
+    check("併的是 origin/main、本機 main 落後 → merge-base 兩條都看,審查照算",
+          code == 0 and "本卡的改動沒變" in review_line, review_line.strip())
+
+    # 衝突:main 改第 11 行(緊貼本卡的第 10 行)。解法保留本卡的行 → 本卡的改動沒變,但衝突動到 impact.files
+    root = sync_case("sync-conflict-kept")
+    on_main(root, "src/Thing.ext", thing.replace("line 11\n", "line 11 main 改的\n"))
+    sha = merge_main(root, {"src/Thing.ext": card_thing.replace("line 11\n", "line 11 main 改的\n")})
+    code, out = run_gate("findings", spec, "synced", cwd=root)
+    check("衝突解決動到 impact.files 的檔(本卡的行沒變)→ synced 點名那次併 main,不記",
+          code == 1 and sha[:10] in out and "impact.files" in out and "本卡自己的改動" not in out
+          and "synced" not in findings_of(root), out)
+    code, review_line, _ = verdict(root)
+    check("衝突解決動到 impact.files、沒有增量審查 → 審查過期,點名那次併 main",
+          code == 1 and "審查過期" in review_line and sha[:10] in review_line, review_line.strip())
+    code, out = run_gate("findings", spec, "fix-diff", "--merge", sha, cwd=root)
+    check("fix-diff --merge 印出那次的衝突解決(自動合併的結果 → 實際 commit 的版本)",
+          code == 0 and "衝突解決" in out and "line 11 main 改的" in out and "<<<<<<<" in out, out[:400])
+    base_diff = findings_of(root)["dispatched"]["G10"]["diff"]
+    code, out = run_gate("findings", spec, "dispatched", "--gate", "G10-fix", "--merge", sha[:10], "--model", "opus", cwd=root)
+    inc = findings_of(root)["increments"][-1]
+    check("dispatched --gate G10-fix --merge 記下審的是哪次併 main(短 sha 也認得)",
+          code == 0 and inc["merge"] == sha and "findings" not in inc and inc["base_diff"] == base_diff
+          and inc["diff"] == base_diff and inc["model"] == "opus", f"{out} {inc}")
+    code, review_line, _ = verdict(root)
+    check("那次併 main 有增量審查 → 審查照算,備註點名",
+          code == 0 and f"併 main {sha[:10]}" in review_line, review_line.strip())
+
+    # 衝突解決改到本卡自己的行:在 impact.files 裡、和不在裡面(scripts/helper.sh)都要審
+    for name, path, main_text, resolved in (
+        ("changed", "src/Thing.ext", thing.replace("line 10\n", "line 10 main 改的\n"),
+         thing.replace("line 10\n", "line 10 兩邊合起來\n")),
+        ("outside", "scripts/helper.sh", "a\nb main 改的\nc\n", "a\nB 兩邊合起來\nc\n"),
+    ):
+        root = sync_case(f"sync-conflict-{name}")
+        on_main(root, path, main_text)
+        sha = merge_main(root, {path: resolved})
+        code, out = run_gate("findings", spec, "synced", cwd=root)
+        code2, review_line, _ = verdict(root)
+        check(f"衝突解決改到本卡自己的行({path})→ synced 拒絕、審查過期",
+              code == 1 and "本卡自己的改動和上次審查時不一樣了" in out and sha[:10] in out
+              and code2 == 1 and "本卡的改動變了" in review_line, f"{out} | {review_line}")
+        run_gate("findings", spec, "dispatched", "--gate", "G10-fix", "--merge", sha, cwd=root)
+        code, review_line, _ = verdict(root)
+        check(f"衝突解決改到本卡的行({path})+ --merge 增量審查 → 審查照算",
+              code == 0 and f"併 main {sha[:10]}" in review_line, review_line.strip())
+
+    # 那段增量審查的時間早於整張審查 → 接不上(時間寫死,不靠執行快慢)
+    state = findings_of(root)
+    for rec in state["dispatched"].values():
+        rec["at"] = "2999-01-01T00:00:00+00:00"
+    (root / "specs/demo/evidence/findings.json").write_text(json.dumps(state))
+    code, review_line, _ = verdict(root)
+    check("--merge 那段審完的時間比整張審查還早 → 接不上,審查過期",
+          code == 1 and "審查過期" in review_line, review_line.strip())
+    # 增量審查的時間早於那次併 main(在併之前就審了)→ 那段接不上
+    state = findings_of(root)
+    for rec in state["dispatched"].values():
+        rec["at"] = "2000-01-01T00:00:00+00:00"
+    state["increments"][-1]["at"] = "2000-01-01T00:00:01+00:00"
+    (root / "specs/demo/evidence/findings.json").write_text(json.dumps(state))
+    code, review_line, _ = verdict(root)
+    check("--merge 那段審完的時間比那次併 main 還早 → 接不上,審查過期",
+          code == 1 and "審查過期" in review_line, review_line.strip())
+
+    root = sync_case("sync-merge-guard")
+    card_commit = git(root, "rev-parse", "HEAD").stdout.strip()
+    git(root, "checkout", "-qb", "other", "main")
+    (root / "other.txt").write_text("別的功能分支\n")
+    git(root, "add", "other.txt")
+    git(root, "commit", "-qm", "other")
+    git(root, "checkout", "-q", "feat/demo")
+    other_merge = merge_main(root, ref="other")
+    for label, target in (("不是 merge 的 commit", card_commit), ("併進來的是別的功能分支", other_merge),
+                          ("不存在的 sha", "0" * 40)):
+        code, out = run_gate("findings", spec, "dispatched", "--gate", "G10-fix", "--merge", target, cwd=root)
+        code2, out2 = run_gate("findings", spec, "fix-diff", "--merge", target, cwd=root)
+        check(f"--merge 點名{label} → dispatched 與 fix-diff 都拒絕,不記",
+              code == 1 and code2 == 1 and "不是上次審查之後併進來的 main" in out
+              and "increments" not in findings_of(root), f"{out} | {out2}")
+    run_gate("findings", spec, "add", "--id", "F-1", "--gate", "G10", "--class", "must_fix",
+             "--title", "重現", "--repro", "fix.txt", cwd=root)
+    code, out = run_gate("findings", spec, "dispatched", "--gate", "G10-fix", "--merge", other_merge,
+                         "--finding", "F-1", cwd=root)
+    check("--finding(認得的)和 --merge 一起給 → 拒收", code == 2 and "--merge" in out, out)
+    state = findings_of(root)
+    state["increments"] = [{"at": datetime.datetime.now().astimezone().isoformat(timespec="seconds"),
+                            "base": state["dispatched"]["G10"]["tree"], "base_diff": state["dispatched"]["G10"]["diff"],
+                            "merge": other_merge, **{k: v for k, v in state["dispatched"]["G10"].items()
+                                                     if k in ("tree", "diff", "mb")}}]
+    state["increments"][0]["diff"] = "diff:" + "1" * 64
+    (root / "specs/demo/evidence/findings.json").write_text(json.dumps(state))
+    code, review_line, _ = verdict(root)
+    check("手寫一段 --merge 增量審查、點名的卻是別的功能分支 → 接不上,審查過期",
+          code == 1 and "審查過期" in review_line, review_line.strip())
+
+    from _common import impact_files  # noqa: E402
+    check("impact.files 每條後面帶「  # 說明」也讀得出路徑",
+          impact_files({"impact": {"files": ["App/A.swift  # 改:說明", "B.swift", 3, "  "]}}) == {"App/A.swift", "B.swift"})
 
     root = review_ready("order-tree-changed-during-dashboard")
     wrapper_dir = tmp / "dashboard-git-wrapper"

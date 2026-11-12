@@ -16,11 +16,15 @@
   findings <spec.yaml> dispatched --gate G9|G10 [--model opus] [--degraded]
                            記「派過了」—— 零 finding 的乾淨審查也要留下派過的紀錄。
                            --degraded:該用的模型額度用完,退到次一級才派得出去(證據表會標出來)
-  findings <spec.yaml> fix-diff
-                           印出「上次審過的樹 → 現在的樹」的 diff,給增量審查看
-  findings <spec.yaml> dispatched --gate G10-fix --finding F-001[,F-002] [--model opus]
-                           記「增量審查派過了」:審的是 fix-diff 那段、為了哪幾條 finding。
+  findings <spec.yaml> fix-diff [--merge <sha>]
+                           印出「上次審過的樹 → 現在的樹」的 diff,給增量審查看。
+                           --merge:改印那次併 main 的衝突解決(git show --remerge-diff)
+  findings <spec.yaml> dispatched --gate G10-fix --finding F-001[,F-002] | --merge <sha> [--model opus]
+                           記「增量審查派過了」:審的是 fix-diff 那段、為了哪幾條 finding(或哪次併 main)。
                            它不算 G10 重派;增量審查提出的新 finding 用 --gate G10-fix 收
+  findings <spec.yaml> synced
+                           S10¾ 併完 main 之後跑:本卡自己的改動沒變、衝突沒碰到 impact.files → 審查照算,
+                           之後的 fix-diff 從併完的樹算起;否則點名要用 --merge 增量審查的那次併 main
   findings <spec.yaml> list
   findings <spec.yaml> check     還有沒有沒處理完的(proposed 也算)、或等人回答的 ask_user
 
@@ -35,8 +39,10 @@ import pathlib
 import sys
 
 sys.path.insert(0, str(pathlib.Path(__file__).parent))
-from _common import evidence_dir, read_json, repo_root, triage_findings, write_json  # noqa: E402
-from _state import tree_fingerprint  # noqa: E402
+from _common import (  # noqa: E402
+    evidence_dir, impact_files, integration_branch, load_spec, read_json, repo_root, triage_findings, write_json,
+)
+from _state import EXCLUDED, branch_fingerprint, sync_merges, tree_fingerprint  # noqa: E402
 
 CLASSES = {"must_fix", "ask_user", "overbuilt", "style"}
 NEEDS_REPRO = {"must_fix", "ask_user", "overbuilt"}
@@ -69,13 +75,39 @@ def keep_dispatch_tree(root: pathlib.Path, card: str, gate: str, tree: str) -> s
 
 
 def last_reviewed(state: dict) -> dict | None:
-    """最近一次被審過的樹(整張審查或增量審查),增量審查的 diff 從這裡算起。同一秒取後記的。"""
-    records = [r for r in [*(state.get("dispatched") or {}).values(), *(state.get("increments") or [])]
+    """最近一次被審過的樹(整張審查、增量審查,或併完 main 確認照算的那棵),增量審查的 diff 從這裡算起。
+    同一秒取後記的。"""
+    records = [r for r in [*(state.get("dispatched") or {}).values(), *(state.get("increments") or []),
+                           *(state.get("synced") or [])]
                if isinstance(r, dict) and isinstance(r.get("tree"), str)]
     try:
         return max(reversed(records), key=lambda r: datetime.datetime.fromisoformat(r["at"]), default=None)
     except (KeyError, TypeError, ValueError):
         return None   # 時間缺漏或格式錯:不猜從哪裡算起
+
+
+def review_point(root: pathlib.Path) -> dict:
+    """被審的那一刻:整棵樹(fix-diff 用),加上本卡自己改動的指紋與 merge-base(併 main 後還算不算數用)。"""
+    point = {"tree": tree_fingerprint(root)}
+    try:
+        point["diff"], point["mb"] = branch_fingerprint(root, point["tree"], integration_branch(root))
+    except RuntimeError as exc:
+        print(f"⚠ {exc} —— 這次只記整棵樹,之後併 main 就會判審查過期")
+    return point
+
+
+def sync_merge(root: pathlib.Path, base: dict, sha: str) -> tuple[dict | None, str]:
+    """--merge 點名的 commit 必須是「上次審查之後併進來的 main」。"""
+    import subprocess
+    if "mb" not in base:
+        return None, "上次審查沒有記 merge-base(這個 PR 之前派的)—— 只能整張重審"
+    full = subprocess.run(["git", "rev-parse", "--verify", "-q", f"{sha}^{{commit}}"],
+                          cwd=root, capture_output=True, text=True).stdout.strip()
+    try:
+        merge = next((m for m in sync_merges(root, base["mb"], integration_branch(root)) if m["sha"] == full), None)
+    except RuntimeError as exc:
+        return None, str(exc)
+    return merge, "" if merge else f"{sha} 不是上次審查之後併進來的 main"
 
 
 def flag(argv: list[str], name: str) -> str | None:
@@ -147,12 +179,28 @@ def main(argv: list[str]) -> int:
         if base is None:
             print("✘ 還沒有派過整張審查(或紀錄的時間讀不懂)—— 增量審查要有「上次審過的樹」才算得出 diff")
             return 1
-        current = tree_fingerprint(root)
+        import subprocess
+        if flag(argv, "--merge"):
+            merge, why = sync_merge(root, base, flag(argv, "--merge"))
+            if merge is None:
+                print(f"✘ {why}")
+                return 1
+            shown = subprocess.run(["git", "show", "--remerge-diff", "--format=", merge["sha"], "--", ".",
+                                    *[f":(exclude){p}" for p in EXCLUDED]],
+                                   cwd=root, capture_output=True, text=True, errors="replace")
+            print(f"併 main {merge['sha'][:10]} 的衝突解決(自動合併的結果 → 實際 commit 的版本)")
+            print(shown.stdout, end="")
+            return shown.returncode
+        point = review_point(root)
+        if "mb" in base and point.get("mb") != base["mb"]:
+            print("✘ 上次審查之後併過 main —— 直接 diff 會混進 main 的改動。先跑 `findings synced`;"
+                  "它點名的那次併 main 用 `fix-diff --merge <sha>`")
+            return 1
+        current = point["tree"]
         print(f"上次審過 {base['tree']} → 現在 {current}")
         if base["tree"] == current:
             print("審查之後沒有變更")
             return 0
-        import subprocess
         diff = subprocess.run(["git", "diff", "--no-renames", base["tree"].removeprefix("tree:"),
                                current.removeprefix("tree:")], cwd=root, capture_output=True, text=True, errors="replace")
         if diff.returncode != 0:
@@ -163,21 +211,64 @@ def main(argv: list[str]) -> int:
 
     if verb == "dispatched" and flag(argv, "--gate") == "G10-fix":
         fids = [f for f in (flag(argv, "--finding") or "").split(",") if f]
+        sha = flag(argv, "--merge")
         known = {i["id"] for i in items}
-        if not fids or set(fids) - known:
-            print(f"✘ --finding 要列這次修的 finding,而且都要在 findings.json 裡(不認得:{', '.join(sorted(set(fids) - known)) or '沒給'})")
+        if bool(fids) == bool(sha) or set(fids) - known:
+            print("✘ --finding(這次修的 finding,都要在 findings.json 裡)和 --merge(這次審的併 main)要給一個"
+                  f"(不認得:{', '.join(sorted(set(fids) - known)) or '沒有'})")
             return 2
         base = last_reviewed(state)
         if base is None:
             print("✘ 還沒有派過整張審查(或紀錄的時間讀不懂)—— 沒有可以接的樹")
             return 1
+        merge, why = sync_merge(root, base, sha) if sha else (None, "")
+        if sha and merge is None:
+            print(f"✘ {why}")
+            return 1
         state.setdefault("increments", []).append({
             "at": datetime.datetime.now().astimezone().isoformat(timespec="seconds"),
-            "base": base["tree"], "tree": tree_fingerprint(root), "findings": fids,
+            "base": base["tree"], **({"base_diff": base["diff"]} if "diff" in base else {}),
+            **review_point(root), **({"merge": merge["sha"]} if merge else {"findings": fids}),
             **({"model": flag(argv, "--model")} if flag(argv, "--model") else {}),
         })
         write_json(ev / "findings.json", state)
-        print(f"G10-fix 派過了({', '.join(fids)})")
+        print(f"G10-fix 派過了({', '.join(fids) if fids else '併 main ' + merge['sha'][:10]})")
+        return 0
+
+    if verb == "synced":
+        base = last_reviewed(state)
+        if base is None or "diff" not in base:
+            print("✘ 上次審查沒有本卡改動的指紋(還沒派過,或是這個 PR 之前派的)—— 併 main 之後只能整張重審")
+            return 1
+        point = review_point(root)
+        if "diff" not in point:
+            return 1
+        if point["mb"] == base["mb"]:
+            print("上次審查之後沒有併進新的 main")
+            return 0
+        try:
+            merges = sync_merges(root, base["mb"], integration_branch(root))
+        except RuntimeError as exc:
+            print(f"✘ {exc}")
+            return 1
+        impact = impact_files(load_spec(spec_path))
+        touched = {m["sha"] for m in merges if set(m["files"]) & impact}
+        if touched or point["diff"] != base["diff"]:
+            if point["diff"] != base["diff"]:
+                print("✘ 本卡自己的改動和上次審查時不一樣了")
+            for m in merges:
+                if m["files"]:
+                    print(f"  併 main {m['sha'][:10]} 的衝突解決動到:{', '.join(m['files'])}"
+                          + (" ← 有本卡 impact.files 的檔" if m["sha"] in touched else ""))
+            print("→ 點名的那次併 main:fix-diff --merge <sha> 給 fix-reviewer 看,再 dispatched --gate G10-fix --merge <sha>。"
+                  "改動變了卻沒有衝突解決可以審(例如審查後還有沒審的修正)→ 整張重審")
+            return 1
+        state.setdefault("synced", []).append({
+            "at": datetime.datetime.now().astimezone().isoformat(timespec="seconds"),
+            "base": base["tree"], **point, "merges": [m["sha"] for m in merges],
+        })
+        write_json(ev / "findings.json", state)
+        print("✓ 審查照算:本卡自己的改動沒變,衝突沒碰到 impact.files。接著重跑 smoke 與 dashboard --trigger merge-main")
         return 0
 
     if verb == "dispatched":
@@ -185,11 +276,11 @@ def main(argv: list[str]) -> int:
         if gate not in ("G9", "G10"):
             print("✘ --gate 只能是 G9、G10 或 G10-fix")
             return 2
-        tree = tree_fingerprint(root)
-        keep = keep_dispatch_tree(root, spec_path.parent.name, gate, tree)
+        point = review_point(root)
+        keep = keep_dispatch_tree(root, spec_path.parent.name, gate, point["tree"])
         state.setdefault("dispatched", {})[gate] = {
             "at": datetime.datetime.now().astimezone().isoformat(timespec="seconds"),
-            "tree": tree,
+            **point,
             **({"keep": keep} if keep else {}),
             **({"model": flag(argv, "--model")} if flag(argv, "--model") else {}),
             **({"degraded": True} if "--degraded" in argv else {}),

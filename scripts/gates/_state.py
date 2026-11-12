@@ -12,6 +12,8 @@ tree hash 就是指紋。對抗審查實證了三個用 diff + ls-files 手刻�
 
 from __future__ import annotations
 
+import fnmatch
+import hashlib
 import os
 import pathlib
 import subprocess
@@ -75,3 +77,69 @@ def index_fingerprint(root: pathlib.Path) -> str:
         git("rm", "-r", "-q", "--cached", "--ignore-unmatch", "--", *EXCLUDED)
         tree = git("write-tree")
         return "tree:" + tree.stdout.strip()
+
+
+def _git(root: pathlib.Path, *args: str) -> subprocess.CompletedProcess:
+    try:
+        return subprocess.run(["git", "-c", "core.quotePath=false", *args], cwd=root, capture_output=True)
+    except OSError as exc:
+        raise RuntimeError(f"git {args[0]}: {exc}") from exc
+
+
+def integration_refs(root: pathlib.Path, integration: str) -> list[str]:
+    """本機與 origin 上的整合分支。併 main 常是併 origin/<分支>,本機那條可能落後,兩條都看。"""
+    return [ref for ref in (integration, f"origin/{integration}")
+            if _git(root, "rev-parse", "--verify", "-q", f"{ref}^{{commit}}").returncode == 0]
+
+
+def branch_fingerprint(root: pathlib.Path, tree: str, integration: str) -> tuple[str, str]:
+    """審查指紋:本卡自己的改動(整合分支的 merge-base → 工作樹)。回傳 (指紋, merge-base)。
+
+    改造方案 1.2:併 main 不該讓審查過期,可是工作樹指紋算整棵樹,併 main 必然改變它。
+    這個指紋只看本卡的 +/- 行:-U0 拿掉上下文,再去掉 index(blob hash)與 @@(行號)——
+    main 改了同一個檔的別處、或在上面多插幾行,本卡的 +/- 行沒變,指紋就不變。
+    只有衝突解決改到本卡的行、或 main 也做了一樣的改動,指紋才會變。
+    用 plumbing(diff-tree)、core.quotePath 寫死:使用者的 diff 設定不影響輸出,本機和 CI 算得出同一個指紋。"""
+    refs = integration_refs(root, integration)
+    if not refs:
+        raise RuntimeError(f"算不出本卡改動的指紋:找不到整合分支 {integration}")
+    # 三個以上的參數 = HEAD 和「這幾條合起來」的 merge-base,也就是 HEAD 裡最新的那個整合分支 commit
+    found = _git(root, "merge-base", "HEAD", *refs)
+    if found.returncode != 0:
+        raise RuntimeError(f"算不出本卡改動的指紋:git merge-base: {found.stderr.decode(errors='replace').strip()[:120]}")
+    mb = found.stdout.decode().strip()
+    diff = _git(root, "diff-tree", "-p", "-U0", "--no-renames", "--binary",
+                mb, tree.removeprefix("tree:"), "--", ".", *[f":(exclude){p}" for p in EXCLUDED])
+    if diff.returncode != 0:
+        raise RuntimeError(f"算不出本卡改動的指紋:git diff-tree: {diff.stderr.decode(errors='replace').strip()[:120]}")
+    body = [line for line in diff.stdout.split(b"\n") if not line.startswith((b"index ", b"@@ "))]
+    return "diff:" + hashlib.sha256(b"\n".join(body)).hexdigest(), mb
+
+
+def sync_merges(root: pathlib.Path, since_mb: str, integration: str) -> list[dict]:
+    """since_mb(上次審查時的 merge-base)之後併進來的整合分支:HEAD first-parent 上的 merge,
+    另一個 parent 是整合分支上、since_mb 還沒有的 commit。
+
+    files = 衝突解決動到的檔(`git show --remerge-diff`:自動合併的結果 → 實際 commit 的版本,
+    乾淨的合併是空的),排除 evidence。併進來的若是別的功能分支就不算 —— 那是本卡多了別人的改動。"""
+    refs = integration_refs(root, integration)
+    listed = _git(root, "rev-list", "--first-parent", "--merges", "--parents", "HEAD", f"^{since_mb}")
+    if listed.returncode != 0:
+        raise RuntimeError(f"git rev-list: {listed.stderr.decode(errors='replace').strip()[:120]}")
+    found = []
+    for line in listed.stdout.decode().splitlines():
+        sha, _first, *others = line.split()
+        if not any(_git(root, "merge-base", "--is-ancestor", p, since_mb).returncode != 0
+                   and any(_git(root, "merge-base", "--is-ancestor", p, ref).returncode == 0 for ref in refs)
+                   for p in others):
+            continue
+        shown = _git(root, "show", "--remerge-diff", "--format=", "--name-only", "-z", sha)
+        when = _git(root, "show", "-s", "--format=%cI", sha)
+        if shown.returncode != 0 or when.returncode != 0:
+            raise RuntimeError(f"git show --remerge-diff {sha[:10]}(要 git 2.36 以上):"
+                               f"{(shown.stderr or when.stderr).decode(errors='replace').strip()[:120]}")
+        names = [f.strip() for f in shown.stdout.decode(errors="replace").split("\0") if f.strip()]
+        files = [f for f in names if not any(fnmatch.fnmatch(f, p) for p in EXCLUDED)]
+        found.append({"sha": sha, "at": when.stdout.decode().strip(), "files": files})
+    return found
+

@@ -48,6 +48,7 @@ S9c 付費審查 G9/G10   四類分流,loop 腳本數次數
 S9d pre-commit 證據表  候選快照已 stage 才能 commit;絕不自動推
 S10 commit
 S10½ delivery 證據表   批准快照已 commit 且乾淨才可推
+S10¾ 同步 main        merge 不 rebase;本卡的改動沒變就不重審,smoke 一律重跑
 S11 自動推 + 開 PR    證據表貼成留言;有「需要你決定」才叫你
 S12 CI 獨立重跑       ci: none 就跳過
 S13 ⏸ 你按 merge

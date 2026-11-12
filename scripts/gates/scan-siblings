@@ -16,16 +16,7 @@ import pathlib
 import sys
 
 sys.path.insert(0, str(pathlib.Path(__file__).parent))
-from _common import in_flight_specs, load_spec, repo_root, sibling_worktrees  # noqa: E402
-
-
-def impact_files(spec: dict) -> set[str]:
-    files = (spec.get("impact") or {}).get("files") or []
-    out = set()
-    for entry in files:
-        if isinstance(entry, str):
-            out.add(entry.split("#")[0].strip())
-    return {f for f in out if f}
+from _common import impact_files, in_flight_specs, load_spec, repo_root, sibling_worktrees  # noqa: E402
 
 
 def collect(root: pathlib.Path) -> list[dict]:
