@@ -16,6 +16,11 @@
   findings <spec.yaml> dispatched --gate G9|G10 [--model opus] [--degraded]
                            記「派過了」—— 零 finding 的乾淨審查也要留下派過的紀錄。
                            --degraded:該用的模型額度用完,退到次一級才派得出去(證據表會標出來)
+  findings <spec.yaml> fix-diff
+                           印出「上次審過的樹 → 現在的樹」的 diff,給增量審查看
+  findings <spec.yaml> dispatched --gate G10-fix --finding F-001[,F-002] [--model opus]
+                           記「增量審查派過了」:審的是 fix-diff 那段、為了哪幾條 finding。
+                           它不算 G10 重派;增量審查提出的新 finding 用 --gate G10-fix 收
   findings <spec.yaml> list
   findings <spec.yaml> check     還有沒有沒處理完的(proposed 也算)、或等人回答的 ask_user
 
@@ -61,6 +66,16 @@ def keep_dispatch_tree(root: pathlib.Path, card: str, gate: str, tree: str) -> s
         print(f"⚠ 派遣樹沒留住(召回考題會少一題):{(made.stderr or '').strip()[:120]}")
         return None
     return ref
+
+
+def last_reviewed(state: dict) -> dict | None:
+    """最近一次被審過的樹(整張審查或增量審查),增量審查的 diff 從這裡算起。同一秒取後記的。"""
+    records = [r for r in [*(state.get("dispatched") or {}).values(), *(state.get("increments") or [])]
+               if isinstance(r, dict) and isinstance(r.get("tree"), str)]
+    try:
+        return max(reversed(records), key=lambda r: datetime.datetime.fromisoformat(r["at"]), default=None)
+    except (KeyError, TypeError, ValueError):
+        return None   # 時間缺漏或格式錯:不猜從哪裡算起
 
 
 def flag(argv: list[str], name: str) -> str | None:
@@ -117,7 +132,8 @@ def main(argv: list[str]) -> int:
             "id": fid, "gate": gate, "class": cls, "title": title, "sc": flag(argv, "--sc"),
             "repro": repro, "question": question, "status": "proposed",
             # 是哪個模型審出來的:沒有這欄就永遠回答不了「換模型之後審得有沒有比較差」
-            **{k: v for k, v in (state.get("dispatched") or {}).get(gate, {}).items()
+            **{k: v for k, v in ((state.get("increments") or [{}])[-1] if gate == "G10-fix"
+                                 else (state.get("dispatched") or {}).get(gate, {})).items()
                if k in ("model", "degraded")},
             "at": datetime.datetime.now().astimezone().isoformat(timespec="seconds"),
         })
@@ -126,10 +142,48 @@ def main(argv: list[str]) -> int:
         print(f"{fid} [{cls}] {title}")
         return 0
 
+    if verb == "fix-diff":
+        base = last_reviewed(state)
+        if base is None:
+            print("✘ 還沒有派過整張審查(或紀錄的時間讀不懂)—— 增量審查要有「上次審過的樹」才算得出 diff")
+            return 1
+        current = tree_fingerprint(root)
+        print(f"上次審過 {base['tree']} → 現在 {current}")
+        if base["tree"] == current:
+            print("審查之後沒有變更")
+            return 0
+        import subprocess
+        diff = subprocess.run(["git", "diff", "--no-renames", base["tree"].removeprefix("tree:"),
+                               current.removeprefix("tree:")], cwd=root, capture_output=True, text=True, errors="replace")
+        if diff.returncode != 0:
+            print(f"✘ 算不出 diff(上次審過的樹可能被 gc 了,只能整張重審):{diff.stderr.strip()[:200]}")
+            return 1
+        print(diff.stdout, end="")
+        return 0
+
+    if verb == "dispatched" and flag(argv, "--gate") == "G10-fix":
+        fids = [f for f in (flag(argv, "--finding") or "").split(",") if f]
+        known = {i["id"] for i in items}
+        if not fids or set(fids) - known:
+            print(f"✘ --finding 要列這次修的 finding,而且都要在 findings.json 裡(不認得:{', '.join(sorted(set(fids) - known)) or '沒給'})")
+            return 2
+        base = last_reviewed(state)
+        if base is None:
+            print("✘ 還沒有派過整張審查(或紀錄的時間讀不懂)—— 沒有可以接的樹")
+            return 1
+        state.setdefault("increments", []).append({
+            "at": datetime.datetime.now().astimezone().isoformat(timespec="seconds"),
+            "base": base["tree"], "tree": tree_fingerprint(root), "findings": fids,
+            **({"model": flag(argv, "--model")} if flag(argv, "--model") else {}),
+        })
+        write_json(ev / "findings.json", state)
+        print(f"G10-fix 派過了({', '.join(fids)})")
+        return 0
+
     if verb == "dispatched":
         gate = flag(argv, "--gate")
         if gate not in ("G9", "G10"):
-            print("✘ --gate 只能是 G9 或 G10")
+            print("✘ --gate 只能是 G9、G10 或 G10-fix")
             return 2
         tree = tree_fingerprint(root)
         keep = keep_dispatch_tree(root, spec_path.parent.name, gate, tree)
