@@ -41,9 +41,20 @@ RISK_FLAGS = ["permissions", "privacy", "payments", "irreversible_data", "critic
 # lite 車道不要求的關:證明測試曾紅過(G5)、測試的語意審查(G2b 的 agent 半段)、
 # 可達性(G7)、獨立第二讀者(G9)。G10 對抗審查兩條車道都要。
 LITE_WAIVED_GATES = {"G5", "G7"}
-# 豁免只能落在腳本關(幾乎免費的那些)。smoke(S)與付費審查(G9/10)永遠不在豁免範圍 ——
+# 車道豁免只能落在腳本關(幾乎免費的那些)。smoke(S)與付費審查(G9/10)永遠不在車道豁免範圍 ——
 # 就算有人把它們加進上面那個集合也一樣。dashboard 用這份白名單再過濾一次。
 WAIVABLE_GATES = {"G0", "G1/2", "G2b", "G3", "G4", "G5", "G6", "G7"}
+# chiao 明確指示的豁免(loop waive,改造方案 1.6)只收 G9/10,而且只蓋「審查沒對到現在的樹」
+# (過期、沒派、派遣紀錄無效),不蓋沒處理完的 finding —— 那些有 loop decided / findings set。
+# 腳本關與 smoke 不收:誤擋就修關卡規則,不是豁免。歷史上豁免某一關的「代批」全落在 G9/10。
+HUMAN_WAIVABLE_GATES = {"G9/10"}
+# 原因類別是固定選項:runs --yield 依類別統計,才看得出是規則錯還是別的。
+WAIVE_CATEGORIES = {
+    "false-block": "誤擋 —— 關卡判錯了,該檢討的是規則",
+    "tool-failure": "工具故障 —— 關卡跑不出結果(額度、服務、環境)",
+    "accepted-risk": "接受風險 —— 沒審到的部分看過了,照現狀出貨",
+    "out-of-scope": "原因在本卡之外 —— main 或別張卡帶進來的",
+}
 
 
 def lane(spec: dict) -> str:

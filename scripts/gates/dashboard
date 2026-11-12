@@ -39,7 +39,7 @@ import sys
 sys.path.insert(0, str(pathlib.Path(__file__).parent))
 import _config  # noqa: E402
 from _common import (  # noqa: E402
-    LITE_WAIVED_GATES, WAIVABLE_GATES, evidence_dir, impact_files, integration_branch, lane, load_spec, read_json,
+    LITE_WAIVED_GATES, WAIVABLE_GATES, WAIVE_CATEGORIES, evidence_dir, impact_files, integration_branch, lane, load_spec, read_json,
     scenario_ids, triage_findings, write_json, write_status,
 )
 from _state import branch_fingerprint, index_fingerprint, sync_merges, tree_fingerprint  # noqa: E402
@@ -654,6 +654,25 @@ def main(argv: list[str]) -> int:
                                         f"({'、'.join(f for inc in used for f in inc.get('findings') or ['併 main ' + inc['merge'][:10]])})"
                                         if used else f" · {gate} 之後併過 main,本卡的改動沒變"
                                         for gate, used in fix_reviewed.items())})
+    # 改造方案 1.6:chiao 明確指示的豁免(loop waive)。只蓋「審查沒對到現在的樹」,不蓋沒處理完的 finding;
+    # 綁在豁免當下的樹上,改過就失效。關卡本身沒過的原因留在 note,另列「已豁免」讓 PR 上看得到。
+    review_gate = next(g for g in gates if g["id"] == "G9/10")
+    waivers = [w for w in loop.get("waivers") or [] if isinstance(w, dict) and w.get("gate") == "G9/10"
+               and w.get("category") in WAIVE_CATEGORIES
+               and all(isinstance(w.get(k), str) and w[k].strip() for k in ("id", "note", "quote"))]
+    waiver = next((w for w in reversed(waivers) if w.get("tree") == current_tree), None)
+    applied_waivers = []
+    if waivers and not review_gate["ok"]:
+        if waiver is None:
+            review_gate["note"] += f" · 豁免 {waivers[-1]['id']} 是給之前的樹,改過就失效"
+        elif review_state not in ("stale", "not_dispatched", "invalid_dispatch") or pending or halted:
+            review_gate["note"] += f" · 豁免 {waiver['id']} 只蓋審查過期 / 沒派,不蓋沒處理完的 finding 與上游的關"
+        else:
+            attention.append({"tag": "已豁免", "title": f"G9/10 由 chiao 豁免({waiver['id']},{waiver['category']})",
+                              "body": f"{waiver['note']} —— 原話「{waiver['quote']}」。關卡本身:{review_gate['note']}"})
+            review_gate.update(ok=True, waiver=waiver["id"],
+                               note=f"chiao 豁免 {waiver['id']}({waiver['category']})· {review_gate['note']}")
+            applied_waivers.append({k: waiver.get(k) for k in ("id", "gate", "category", "at")})
     for fid, it in halted.items():
         attention.append({
             "tag": "需要你決定", "title": f"{fid} {'修 2 次未果' if it['status'] == 'parked' else '解過又出現'}",
@@ -758,7 +777,8 @@ def main(argv: list[str]) -> int:
         "name": context_name,
         "lane": spec_lane,
         "trigger": trigger,
-        "gates": {g["id"]: g["ok"] for g in gates},
+        "gates": {g["id"]: g["ok"] and "waiver" not in g for g in gates},   # 豁免的關記沒過:它確實擋了
+        "waivers": applied_waivers,
         "review_state": review_state,
         "attention": [a["tag"] for a in attention],
         "review": findings.get("summary") or {},

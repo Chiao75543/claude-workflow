@@ -4,7 +4,8 @@
   runs                                    列出所有在飛的功能卡在哪
   runs --set <spec.yaml> S9 "驗證關"        更新狀態
   runs --set <spec.yaml> S5 "等你批說明頁" --blocked-on human
-  runs --yield                            哪道關擋過東西、擋了幾次(specs/_yield.jsonl)
+  runs --yield                            哪道關擋過東西、擋了幾次(specs/_yield.jsonl);
+                                          同一關 30 天內被豁免 ≥3 次會點名
   runs --cost                             每張卡、每一站用了多少 token,以及花了多久、等人多久
 
 狀態寫在 <spec 目錄>/evidence/status.json(含追加式 history)。
@@ -82,7 +83,37 @@ def show_yield(root: pathlib.Path) -> int:
         counts = collections.Counter(row[key] for row in rows if row.get(key))
         if counts:
             print(f"  {title}:" + " · ".join(f"{k}×{v}" for k, v in counts.most_common()))
+    # chiao 的豁免(loop waive):同一筆會出現在之後每一次證據表,依 (卡, 豁免 id) 只算一次
+    waivers: dict = {}
+    for row in rows:
+        for w in row.get("waivers") or []:
+            if isinstance(w, dict):
+                waivers.setdefault((row.get("name"), w.get("id")), w)
+    if waivers:
+        by_gate: dict = collections.defaultdict(list)
+        for (card, _), w in waivers.items():
+            by_gate[w.get("gate")].append((card, w))
+        cutoff = datetime.datetime.now().astimezone() - datetime.timedelta(days=WAIVE_WINDOW_DAYS)
+        for gate, hits in sorted(by_gate.items(), key=lambda kv: str(kv[0])):
+            kinds = collections.Counter(w.get("category") for _, w in hits)
+            print(f"  豁免 {gate}:{len(hits)} 次(" + " · ".join(f"{k}×{v}" for k, v in kinds.most_common()) + ")")
+            recent = [card for card, w in hits if (at := waived_at(w)) is not None and at >= cutoff]
+            if len(recent) >= WAIVE_FLAG_AT:
+                print(f"  ⚠ {gate} {WAIVE_WINDOW_DAYS} 天內被豁免 {len(recent)} 次({', '.join(sorted(set(recent)))})"
+                      " —— 該檢討這關的規則了")
     return 0
+
+
+WAIVE_WINDOW_DAYS, WAIVE_FLAG_AT = 30, 3
+
+
+def waived_at(waiver: dict) -> datetime.datetime | None:
+    """豁免的時間;讀不懂或沒有時區(沒辦法跟現在比)就是 None,不算進 30 天。"""
+    try:
+        at = parse_time(waiver["at"])
+    except (KeyError, TypeError, ValueError, AttributeError):
+        return None
+    return at if at.tzinfo is not None else None
 
 
 # ---------------------------------------------------------------- --cost

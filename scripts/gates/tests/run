@@ -1935,6 +1935,113 @@ def test_dashboard_gating_order(tmp: pathlib.Path) -> None:
     check("impact.files 每條後面帶「  # 說明」也讀得出路徑",
           impact_files({"impact": {"files": ["App/A.swift  # 改:說明", "B.swift", 3, "  "]}}) == {"App/A.swift", "B.swift"})
 
+    # 改造方案 1.6:正式的豁免路徑。只有 chiao 的明確指示能下(要附原話);只收 G9/10,只蓋審查過期 / 沒派;
+    # 綁在豁免當下的樹上;寫進 yield,runs --yield 同一關 30 天內 ≥3 次點名。
+    loop_path = lambda r: r / "specs/demo/evidence/loop.json"
+    loop_waivers = lambda r: json.loads(loop_path(r).read_text()).get("waivers") if loop_path(r).exists() else None
+    waive = lambda r, *a: run_gate("loop", spec, "waive", *a, cwd=r)
+    ok_args = ("--note", "Later.txt 只是文件", "--quote", "這張照現狀出")
+    root = review_ready("waive-stale")
+    (root / "Later.txt").write_text("審查之後的改動\n")
+    code, review_line, _ = verdict(root)
+    check("(前提)審查後改了東西 → G9/10 過期", code == 1 and "審查過期" in review_line, review_line.strip())
+    for label, args, expect in (
+            ("腳本關(G5)", ("G5", "accepted-risk", *ok_args), "只有 G9/10"),
+            ("smoke(S)", ("S", "accepted-risk", *ok_args), "只有 G9/10"),
+            ("不在清單的類別", ("G9/10", "because", *ok_args), "類別只能是"),
+            ("沒有 chiao 的原話", ("G9/10", "accepted-risk", "--note", "x"), "--quote(chiao 的原話)"),
+            ("原話只有空白", ("G9/10", "accepted-risk", "--note", "x", "--quote", "  "), "--quote(chiao 的原話)"),
+            ("沒寫為什麼", ("G9/10", "accepted-risk", "--quote", "照現狀出"), "--note(為什麼)")):
+        code, out = waive(root, *args)
+        check(f"loop waive {label} → 拒收、不記", code == 2 and expect in out and not loop_waivers(root), out)
+    code, out = waive(root, "G9/10", "accepted-risk", *ok_args)
+    check("loop waive G9/10 → 記一筆,印出 commit 訊息要帶的 Waived: 行",
+          code == 0 and "\nWaived: specs/demo/evidence/loop.json#W-1" in out
+          and [w["id"] for w in loop_waivers(root)] == ["W-1"], out)
+    w1 = loop_waivers(root)[0]
+    check("豁免紀錄有被豁免的關、類別、說明、chiao 的原話與當下的樹",
+          w1["gate"] == "G9/10" and w1["category"] == "accepted-risk" and w1["note"] == "Later.txt 只是文件"
+          and w1["quote"] == "這張照現狀出" and w1["tree"] == tree_fingerprint(root), str(w1))
+    code, review_line, dash = verdict(root)
+    tag = next((a for a in dash["attention"] if a["tag"] == "已豁免"), None)
+    check("豁免過的過期審查 → G9/10 放行並寫明 W-1,原本過期的原因還在;另列「已豁免」(資訊,不是待決)",
+          code == 0 and "chiao 豁免 W-1(accepted-risk)" in review_line and "審查過期" in review_line
+          and tag is not None and not tag["decision"] and "這張照現狀出" in tag["body"], f"{review_line} | {tag}")
+    check("豁免不算待決 → 自動推:可以", dash.get("auto_push_ok") is True, str(dash.get("auto_push_ok")))
+    row = last_yield(root)
+    check("yield 記這筆豁免(id、關、類別、時間);G9/10 記沒過(它確實擋了),review_state 仍是 stale",
+          row["gates"]["G9/10"] is False and row["gates"]["S"] is True and row["review_state"] == "stale"
+          and row["waivers"] == [{"id": "W-1", "gate": "G9/10", "category": "accepted-risk", "at": w1["at"]}], str(row))
+    code, out = run_gate("pr-comment", spec, cwd=root)
+    check("PR 留言看得到豁免與 chiao 的原話", "已豁免" in out and "這張照現狀出" in out, out[:600])
+    verdict(root)
+    code, out = run_gate("runs", "--yield", cwd=root)
+    check("同一筆豁免出現在兩次證據表 → runs --yield 只算一次",
+          "豁免 G9/10:1 次(accepted-risk×1)" in out and "⚠ G9/10" not in out, out[-400:])
+    (root / "Later.txt").write_text("又改了\n")
+    code, review_line, _ = verdict(root)
+    check("豁免之後又改了程式 → 豁免失效,照舊過期",
+          code == 1 and "審查過期" in review_line and "豁免 W-1 是給之前的樹" in review_line, review_line.strip())
+    waive(root, "G9/10", "false-block", "--note", "第二次", "--quote", "這次也照現狀")
+    code, review_line, _ = verdict(root)
+    check("對新的樹再豁免一次 → W-2 放行", code == 0 and "chiao 豁免 W-2(false-block)" in review_line, review_line.strip())
+
+    root = repo("waive-not-dispatched")
+    run_gate("test-review", spec, cwd=root)
+    freeze(root, ["Tests/DemoTests.swift"])
+    waive(root, "G9/10", "tool-failure", "--note", "額度用完", "--quote", "這張先不審")
+    code, review_line, _ = verdict(root)
+    check("沒派過審查、chiao 豁免(工具故障)→ 放行,「沒有派過」的原因還在",
+          code == 0 and "chiao 豁免 W-1(tool-failure)" in review_line and "沒有派過的紀錄" in review_line,
+          review_line.strip())
+
+    root = review_ready("waive-pending")
+    run_gate("findings", spec, "add", "--id", "F-1", "--gate", "G10", "--class", "must_fix",
+             "--title", "重現", "--repro", "fix.txt", cwd=root)
+    waive(root, "G9/10", "accepted-risk", *ok_args)
+    code, review_line, _ = verdict(root)
+    check("審查沒過期、是 finding 沒處理完 → 豁免不蓋",
+          code == 1 and "1 條沒處理完" in review_line and "只蓋審查過期" in review_line, review_line.strip())
+    (root / "Later.txt").write_text("x\n")
+    waive(root, "G9/10", "accepted-risk", *ok_args)
+    code, review_line, _ = verdict(root)
+    check("審查過期、同時有 finding 沒處理完 → 豁免也不蓋",
+          code == 1 and "審查過期" in review_line and "豁免 W-2 只蓋審查過期" in review_line, review_line.strip())
+
+    root = review_ready("waive-handwritten")
+    (root / "Later.txt").write_text("x\n")
+    for label, bad in (("類別不在清單", {"category": "whatever"}), ("沒有原話", {"quote": " "}),
+                       ("沒寫為什麼", {"note": ""}), ("別的關", {"gate": "S"})):
+        loop_path(root).write_text(json.dumps({"findings": {}, "redispatch": {}, "waivers": [{
+            "id": "W-1", "at": "2026-11-01T00:00:00+08:00", "gate": "G9/10", "category": "accepted-risk",
+            "note": "n", "quote": "q", "tree": tree_fingerprint(root), **bad}]}))
+        code, review_line, _ = verdict(root)
+        check(f"手寫的豁免{label} → 不認,照舊過期",
+              code == 1 and "審查過期" in review_line and "豁免" not in review_line, review_line.strip())
+
+    now = datetime.datetime.now().astimezone()
+    ago = lambda days: (now - datetime.timedelta(days=days)).isoformat(timespec="seconds")
+    waived_row = lambda card, wid, at, category="accepted-risk": {
+        "name": card, "gates": {}, "waivers": [{"id": wid, "gate": "G9/10", "category": category, "at": at}]}
+
+    def yield_of(rows: list) -> str:
+        (root / "specs/_yield.jsonl").write_text("".join(json.dumps(r, ensure_ascii=False) + "\n" for r in rows))
+        return run_gate("runs", "--yield", cwd=root)[1]
+
+    out = yield_of([waived_row("a", "W-1", ago(1)), waived_row("b", "W-1", ago(10)),
+                    waived_row("c", "W-1", ago(29), "false-block")])
+    check("G9/10 30 天內被豁免 3 次 → runs --yield 點名,並依類別統計",
+          "⚠ G9/10 30 天內被豁免 3 次(a, b, c)" in out and "豁免 G9/10:3 次(accepted-risk×2 · false-block×1)" in out,
+          out[-400:])
+    out = yield_of([waived_row("a", "W-1", ago(1)), waived_row("b", "W-1", ago(10)), waived_row("c", "W-1", ago(31))])
+    check("第 3 次在 30 天外 → 只統計,不點名", "豁免 G9/10:3 次" in out and "⚠ G9/10" not in out, out[-400:])
+    out = yield_of([waived_row("a", "W-1", ago(1)), waived_row("a", "W-1", ago(1)), waived_row("a", "W-2", ago(2)),
+                    waived_row("b", "W-1", "2026-11-01T00:00:00")])
+    check("同一筆重複只算一次、沒有時區的時間不算進 30 天 → 不點名",
+          "豁免 G9/10:3 次" in out and "⚠ G9/10" not in out, out[-400:])
+    out = yield_of([waived_row("a", "W-1", ago(1)), waived_row("a", "W-2", ago(2)), waived_row("a", "W-3", ago(3))])
+    check("同一張卡 30 天內豁免 3 次也點名(數的是豁免,不是卡)", "⚠ G9/10 30 天內被豁免 3 次(a)" in out, out[-400:])
+
     root = review_ready("order-tree-changed-during-dashboard")
     wrapper_dir = tmp / "dashboard-git-wrapper"
     wrapper_dir.mkdir()

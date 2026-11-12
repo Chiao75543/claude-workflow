@@ -29,6 +29,9 @@ scripts/gates/pr-comment specs/{name}/spec.yaml --check   # 退出碼 1 = 有事
 
   另外,審查後併 main 的衝突解決只要動到 `impact.files` 的檔,那次就一定要有 `--merge` 的增量審查,沒有就判過期。
   這個 PR 之前派的審查沒有本卡改動的指紋,照舊比整棵樹。
+- G9/10 有 chiao 的豁免(`loop waive`)、而且是給現在這棵樹的 → 放行,備註寫「chiao 豁免 W-n」、原本沒過的原因照留,
+  另列「已豁免」(不是待決,不擋自動推)。豁免只蓋審查過期 / 沒派,不蓋沒處理完的 finding;
+  `_yield.jsonl` 記這筆豁免,被豁免的關記沒過。
 - 表上會顯示**審查活動量**(提出 N → 作廢 M → 證實 K)。一張只有綠勾的表會訓練人變成橡皮圖章。
 - `auto_push: false` 的專案,dashboard 一律回「不行」,推之前把留言印給人看。
 - `--trigger` = 這次為什麼又跑:`first` / `fix` / `merge-main` / `ci-red`,同一輪的 pre-commit 與 delivery 傳同一個;

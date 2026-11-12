@@ -32,5 +32,8 @@ tags: [workflow, verify, gates]
 - `loop` 第 3 次 `fix` 會拒絕(parked)、解過又出現會拒絕(flipflop)、G10 重派第 2 次會拒絕。
   被拒絕就停,交給 PR 留言的「需要你決定」;人答了用 `loop decided F-n ship|hold|respec` 記,那是唯一的解除方式。
   換 id 再修會被 `findings add`(同 repro)與 `loop`(幽靈 id)雙雙拒收。
+- G9/10 卡住、沒有合規路徑(審查過期但 G10 已經重派過、額度用完)→ 停下來問 chiao。**orchestrator 不得自行豁免。**
+  chiao 說照現狀才跑 `loop waive G9/10 <類別> --note "<為什麼>" --quote "<他的原話>"`,
+  commit 訊息帶它印出的 `Waived:` 那一行,不寫「代批」。豁免綁在當下的樹上,之後改了程式就失效。
 - 做到哪算夠 = 批准的 examples。審查者發現例子外的 bug 是 `ask_user`,不是叫實作者修。
 - staged 的批准快照只是 `pending_commit`，不能當成 owner 批准證據。
