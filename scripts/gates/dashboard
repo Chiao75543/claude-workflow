@@ -434,7 +434,7 @@ def main(argv: list[str]) -> int:
     elif not review.get("ok"):
         gates.append({"id": "G2b", "what": "測試在凍結前審過", "ok": False,
                       "note": f"{len(review.get('errors') or [])} 條問題"})
-    elif (review.get("mechanical_only") or review.get("agent") is None) and lane(spec) != "lite":
+    elif (review.get("mechanical_only") or review.get("agent") is None) and lane(spec, config) != "lite":
         gates.append({"id": "G2b", "what": "測試在凍結前審過", "ok": False,
                       "note": "只跑過機械檢查,語意審查(test-reviewer)沒跑"})
     elif frozen_files and review.get("files") != frozen_files:
@@ -540,7 +540,7 @@ def main(argv: list[str]) -> int:
                       "note": index_note})
     # 車道豁免。豁免的關留在證據表上(note 寫明),不是消失 —— 「沒檢查」和「檢查過」要分得出來。
     # 只有 WAIVABLE_GATES(腳本關)能被豁免:smoke 與付費審查就算被塞進 LITE_WAIVED_GATES 也不會放行。
-    spec_lane = lane(spec)
+    spec_lane = lane(spec, config)
 
     def apply_lane_waivers() -> None:
         if spec_lane != "lite":

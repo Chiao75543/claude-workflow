@@ -13,7 +13,7 @@ tags: [workflow, test, tdd]
 然後 **S7½**:`scripts/gates/test-review --mechanical-only` → 派 `test-reviewer`→
 `test-review` 全過 → 才凍結。
 
-**lite 車道**(`meta.risk_flags` 六個全 false):red-writer 照樣先寫測試,但不跑 `red-capture`、
+**lite 車道**(`meta.risk_flags` 六個全 false、`impact.files` 沒命中 `risk_paths`):red-writer 照樣先寫測試,但不跑 `red-capture`、
 不派 `test-reviewer`;`test-review --mechanical-only` 過了就凍結。
 
 **注意**

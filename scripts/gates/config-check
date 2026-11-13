@@ -15,7 +15,7 @@ import sys
 
 sys.path.insert(0, str(pathlib.Path(__file__).parent))
 import _config  # noqa: E402
-from _common import repo_root  # noqa: E402
+from _common import repo_root, risk_paths_problem  # noqa: E402
 
 
 def main(argv: list[str]) -> int:
@@ -28,8 +28,13 @@ def main(argv: list[str]) -> int:
     gaps = _config.missing(config)
     if config.get("ci") not in ("none", "github", "gitlab"):
         gaps.append("ci(只能是 none / github / gitlab)")
+    if problem := risk_paths_problem(config):
+        gaps.append(f"risk_paths({problem};沒設就每張卡都走 full)")
     for key in ("runner", "lint", "test", "smoke", "integration_branch", "ci", "auto_push"):
         print(f"  {key:<20} {config.get(key)!r}")
+    if isinstance(config.get("risk_paths"), dict):
+        counts = " · ".join(f"{k} {len(v) if isinstance(v, list) else '?'}" for k, v in config["risk_paths"].items())
+        print(f"  {'risk_paths':<20} {counts}")
     if "models" in config:
         # 舊鍵。只提示不失敗:既有專案的 pipeline.yaml 不該因為這次改版就紅。
         print("  ℹ models 已停用 —— 模型只由 agents/*.md 決定,這個鍵沒有人讀,可以刪掉")

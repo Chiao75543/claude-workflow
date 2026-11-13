@@ -10,7 +10,8 @@ meta:
   capability: example            # 這個功能屬於哪個能力
   change_type: ADDED             # ADDED | MODIFIED
   draft_version: 1
-  risk_flags:                    # 六個全填 true/false。全 false → lite 車道;任一 true 或整段不寫 → full
+  risk_flags:                    # S1 依描述推定、S5 chiao 確認。六個全填 true/false;任一 true 或整段不寫 → full。
+                                 # 全 false 還要 impact.files 沒命中 pipeline.yaml 的 risk_paths 才是 lite
     permissions: false           # 系統 / 平台權限
     privacy: false               # 個資、錄音、位置、通訊內容
     payments: false              # 金流

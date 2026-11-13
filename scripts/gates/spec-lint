@@ -25,7 +25,7 @@ sys.path.insert(0, str(pathlib.Path(__file__).parent))
 import _config  # noqa: E402
 from _common import (  # noqa: E402
     COMPLETENESS_CATEGORIES, MODES, NAME, REQUIREMENT_ID, RISK_FLAGS, SCENARIO_ID,
-    Findings, load_spec, scenarios,
+    Findings, lane, load_spec, risk_hits, risk_paths_problem, scenarios,
 )
 
 # 最後一道網:硬塞進字串值的空話。schema 已經擋掉大部分。
@@ -252,6 +252,23 @@ def allowed_vague(root: pathlib.Path, f: Findings) -> set[str]:
     return set(allow)
 
 
+def report_lane(spec: dict, config: dict, f: Findings) -> None:
+    """車道與它的來由(改造方案 1.3):S1 推定的旗標、impact.files 命中 risk_paths 的檔。
+    兩者不一致不算錯 —— lane() 取較嚴的;印出來是給 S5 說明頁照抄,讓 chiao 確認或推翻旗標。"""
+    if problem := risk_paths_problem(config):
+        f.warn("specs/pipeline.yaml risk_paths", f"{problem} —— 路徑複核做不了,這張卡走 full")
+    meta = spec.get("meta")
+    flags = meta.get("risk_flags") if isinstance(meta, dict) else None
+    raised = [k for k in RISK_FLAGS if isinstance(flags, dict) and flags.get(k) is True]
+    print(f"  車道 {lane(spec, config)}")
+    print("    旗標推定: " + (", ".join(raised) if raised else "六個都 false" if isinstance(flags, dict) else "沒寫(算 full)"))
+    hits = risk_hits(spec, config)
+    for flag, paths in (hits or {}).items():
+        print(f"    路徑命中 {flag}: {', '.join(paths)}" + ("" if flag in raised else "  ← 旗標推定 false,取較嚴"))
+    if hits == {}:
+        print("    路徑命中: 沒有")
+
+
 def check_vague(spec: dict, f: Findings, allowed: set[str]) -> None:
     """最後一道網。只掃 then 與 examples.out —— 敘述性欄位(why/design/理由)不掃。"""
     for req, sc in scenarios(spec):
@@ -300,7 +317,9 @@ def main(argv: list[str]) -> int:
         check_completeness(spec, f)
         check_testability(spec, f)
         # root 跟 dashboard 一樣從規格路徑推(<root>/specs/<name>/spec.yaml),不看 cwd —— G0 才讀到同一份設定
-        check_vague(spec, f, allowed_vague(path.resolve().parents[2], f))
+        root = path.resolve().parents[2]
+        check_vague(spec, f, allowed_vague(root, f))
+        report_lane(spec, _config.load(root), f)
         worst = max(worst, f.report("spec-lint"))
     return worst
 

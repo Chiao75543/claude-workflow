@@ -152,6 +152,7 @@ digraph workflow {
 | 指令 | 跑測試、lint(接檔案路徑)、**smoke**(起 app 截圖 / 打端點 / 跑 CLI)、整支 smoke 的秒數上限(不填不檢查) | `test` `lint` `smoke` `smoke_timeout` `smoke_max_s` |
 | 版本 | 整合分支叫什麼、能不能自動推功能分支、有沒有 CI(github / gitlab / 沒有) | `integration_branch` `auto_push` `ci` |
 | 邊界 | G7 去哪些目錄找建構點、資安基準與架構鐵則在哪個檔 | `reachability.globs` `rules_files` |
+| 風險路徑 | 六類風險(權限、個資、金流、不可逆資料、資安、核心入口)各是哪些路徑樣式;沒有就 `[]` | `risk_paths` |
 
 smoke 沒有的專案要在這裡**一起寫出來**(通常是一支 `scripts/smoke.sh`),
 因為沒有 smoke 這條線跑不到付費審查。`ci: none` 是合法答案 —— 那就沒有 S12,證據只靠本機 + git。
@@ -162,10 +163,16 @@ smoke 沒有的專案要在這裡**一起寫出來**(通常是一支 `scripts/sm
 
 1. 問 ticket id(可跳過)、一句功能描述
 2. 記錄 `{name}`(kebab-case)與分支名 `feat/[{TICKET}-]{name}`
-2b. **問六個風險旗標**(一次問完,每個 true/false):碰不碰 **權限**(permissions)、**個資 / 隱私**(privacy)、
-    **金流**(payments)、**不可逆的資料操作 / 遷移**(irreversible_data)、**關鍵資安**(critical_security)、
-    **核心入口 / 登入 / session**(core_entrypoint)。答案寫進 `meta.risk_flags`。
-    六個全 false → **lite 車道**;任一 true 或沒填 → **full**。見「兩條車道」。
+2b. **推定六個風險旗標 —— 不問人**(改造方案 1.3)。依功能描述各判 true/false,寫進 `meta.risk_flags`:
+    - **permissions** 系統 / 平台權限(相機、麥克風、通知、定位;Info.plist 權限字串、entitlements)
+    - **privacy** 個資、錄音、位置、通訊內容(通話、聊天、錄音、逐字稿被讀、存、傳或給別人看)
+    - **payments** 金流
+    - **irreversible_data** 刪除、遷移、不可逆的資料操作
+    - **critical_security** 認證、token、加密、授權判斷
+    - **core_entrypoint** 登入、session、App 啟動路徑(含通話這類系統層進出點:來電、接聽、掛斷、背景喚醒)
+
+    純畫面、文案、排版、列表、導頁 → false。**拿不準就 true**(推成 full 只是多跑幾關;推成 lite 會少審)。
+    每個 true 記一句理由,S5 說明頁要列。S3 還會拿 `impact.files` 對路徑規則複核,見「兩條車道」。
 3. **跑 `scripts/gates/scan-siblings`** —— 列出所有 worktree 在飛的能力。
    同名能力會預警。在飛只算**每個 worktree 自己改過、還沒落地**的規格(merge-base 之後動過,或還沒 commit);
    判定前先 `git fetch` 整合分支。每個 worktree 都帶著別張卡的規格副本,那些不算。
@@ -201,6 +208,8 @@ wt="$(git worktree list --porcelain \
    (兼任 S4 的第一個讀者,省一次派遣)
 4. **跑 `scan-siblings specs/{name}/spec.yaml`** —— 比對 `impact.files`,
    把會跟其他在飛分支撞的檔案列出來。在寫程式之前知道,比合併時才發現便宜得多。
+5. **跑 `spec-lint specs/{name}/spec.yaml`,記下它印的車道** —— 旗標推定與 `impact.files` 命中
+   `risk_paths` 的檔。兩者不一致時取較嚴的(`lane()` 自己做),S5 說明頁照抄這段。
 
 ### S4 歧義偵測
 
@@ -228,6 +237,9 @@ wt="$(git worktree list --porcelain \
 - **分歧選擇題**(來自 S4)
 - **「我主張不需要處理」的清單**(六類遺漏裡寫 N/A 的,附理由)
 - 受影響的檔案 + 跨分支碰撞警告
+- **風險推定**:六個旗標的推定值與理由、`spec-lint` 印的路徑命中、結果是哪條車道。
+  你確認或推翻**旗標**(改 `meta.risk_flags`)。**路徑命中不能逐卡推翻** —— 誤中就改 `specs/pipeline.yaml`
+  的 `risk_paths`,跟豁免一樣是修規則
 - 具體例子用**真實數值**寫 —— 那是人最容易一眼看出「這不是我要的」的形式
 
 你做的事:回答分歧、挑戰 N/A、確認意圖。**不讀規格,不讀程式碼。**
@@ -476,8 +488,14 @@ PR 可合併、輪到你按時 `runs --set specs/{name}/spec.yaml S13 "等你按
 實測 mindey-mobile 九天:84 條 findings 有 43 條(51%)集中在兩張碰敏感東西的卡(錄音同意、即時通話);
 其餘每張 1–9 條,卻和它們走一樣的十關。只有兩個 Scenario 的分享功能,跑了 6 次證據表。
 
-`meta.risk_flags` 六個全 false 才是 **lite**;任一 true、沒填、型別不對都是 **full**(忘了填不能變成少過關)。
-判定在 `_common.lane()`,spec-lint 與 dashboard 共用同一個。
+**lite** 要兩件事都成立,否則 **full**(改造方案 1.3:兩者不一致取較嚴的):
+- `meta.risk_flags` 六個全 false —— S1 依描述推定,S5 你確認或推翻。任一 true、沒填、型別不對都是 full
+  (忘了填不能變成少過關)
+- `impact.files` 沒有一個檔命中 `specs/pipeline.yaml` 的 `risk_paths`。`risk_paths` 沒設或格式不對 → full
+  (路徑複核做不了,不能當成「沒命中」;`config-check` 也會 FAIL)
+
+樣式用 fnmatch,`*` 會跨過 `/`。判定在 `_common.lane()`,spec-lint 與 dashboard 共用同一個,
+每次都從當下的規格重算 —— `impact.files` 事後修正(不用重新批准的那種)加了命中的檔,車道就變 full。
 
 | | **lite**(一般畫面、列表、分享、設定) | **full**(權限、個資、金流、不可逆資料、資安、核心入口) |
 |---|---|---|
@@ -508,7 +526,7 @@ lite 砍的是「證明測試有牙齒」和「第二個人讀規格」;**沒砍
 
 ```
 腳本判定 · 幾乎不花錢 · 全綠才往下
-  G0  spec-lint        schema + 完備性六類 + 可測性 + 車道旗標。
+  G0  spec-lint        schema + 完備性六類 + 可測性 + 車道旗標;印出車道與 risk_paths 命中(S5 照抄)。
                        (實測 94 次 0 攔截 —— S3/S5 早就過了同樣的檢查;留著只因為幾乎免費)
   G1  freeze-check     規格指紋 + **可解析性**(凍結一個載不進來的檔毫無意義)
                        指紋不符時跑 spec-diff 分類:行為改變 → 退回 S5;
