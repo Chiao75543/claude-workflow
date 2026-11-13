@@ -636,7 +636,7 @@ MUTATIONS: list[tuple[str, str, str, str]] = [
     ("../bench/recall", "修正後也紅的重現照算命中",
      ' and result["problem_on_pre"] and result.get("post") == 0',
      ' and result["problem_on_pre"]'),
-    ("../bench/recall", "暫存樹放在系統暫存目錄(/var 底下,mindey 的靜態規格測試整套紅)",
+    ("../bench/recall", "暫存樹放在系統暫存目錄(/var 底下,iOS 專案的靜態規格測試整套紅)",
      '        self.path = pathlib.Path(tempfile.mkdtemp(prefix="recall-", dir=TMP_ROOT)).resolve()',
      '        self.path = pathlib.Path(tempfile.mkdtemp(prefix="recall-")).resolve()'),
     ("../bench/recall", "缺檔或撞名的重現照樣判定(非零可能只是檔不在)",

@@ -8,7 +8,7 @@ AGENTS.md 是寫給 AI 讀的散文;腳本需要真正的設定檔。
     tests:
       globs:
         - "Packages/*/Tests/**/*.swift"
-        - "MindEYTests/**/*.swift"
+        - "AppTests/**/*.swift"
       scenario_pattern: '@Test\\("(SC-[\\w]+)'
     reachability:
       globs: ["App/**/*.swift"]    # G8 在哪裡找建構點

@@ -286,7 +286,7 @@ def test_spec_size_warning(tmp: pathlib.Path) -> None:
 
 
 def test_spec_lint_allow_vague(tmp: pathlib.Path) -> None:
-    """領域名詞撞上空話黑名單(soundroots:欄目 WORKS、路徑 /works)—— 專案在 pipeline.yaml 放行,不在規格裡繞。"""
+    """領域名詞撞上空話黑名單(例:欄目 WORKS、路徑 /works)—— 專案在 pipeline.yaml 放行,不在規格裡繞。"""
     works = VALID_SPEC.replace("then: {returns: empty_list}", "then: {nav: OUR WORKS, href: /works}")
 
     def lint(name: str, spec: str, allow: str | None = None) -> tuple[int, str]:
@@ -706,7 +706,7 @@ def test_spec_diff(tmp: pathlib.Path) -> None:
 # ---------------------------------------------------------------- landed
 
 def test_in_flight_and_cleanup(tmp: pathlib.Path) -> None:
-    """改造方案 1.7。mindey-mobile 實測 runs 列出 205 個在飛,57 個 worktree 卻有 51 個早就 merge 了:
+    """改造方案 1.7。一個專案實測 runs 列出 205 個在飛,57 個 worktree 卻有 51 個早就 merge 了:
     每個 worktree 都帶著所有卡的規格,開得早的那幾份是舊版,和整合分支對不上就被當成在飛。
     現在只算每個 worktree 自己的改動;merge 之後清 worktree;yield 讀 origin 上合併好的那份。"""
     import importlib
@@ -1133,7 +1133,7 @@ def test_test_review(tmp: pathlib.Path) -> None:
           code == 0 and set(review.get("files", {})) == frozen, f"{sorted(review.get('files', {}))} vs {sorted(frozen)} | {out[:200]}")
 
     # example 的 out 值是網址時,`//` 是 scheme 不是註解。剝掉的話 anchor 永遠找不到,
-    # 而且測試怎麼寫都救不了(2026-09-18 event-share 實證)。
+    # 而且測試怎麼寫都救不了(2026-09-18 實證)。
     url_spec = VALID_SPEC.replace("out: {returns: empty_list}",
                                   'out: {share_url: "https://example.com/e/42"}')
     url_src = ('@Test("SC-001 分享連結") func a() { #expect(link(0) == "https://example.com/e/42") }\n'
@@ -2962,7 +2962,7 @@ def test_recall_bench(tmp: pathlib.Path) -> None:
     bf = {f["id"]: f for g in json.loads(broken.read_text())["inputs"] for f in g["findings"]}
     check("recall validate:修正後的樹本身不綠 → 不成立,並留下輸出尾段(不用整棵重跑才知道為什麼)",
           bf["F-001"]["validated"] is False and "boom-from-post" in bf["F-001"].get("tail", ""), str(bf.get("F-001")))
-    odd = json.loads(json.dumps(q))   # mindey 實測:重現檔放 evidence/g10(不在測試 target)、沒 commit、檔名寫簡稱
+    odd = json.loads(json.dumps(q))   # 實測:重現檔放 evidence/g10(不在測試 target)、沒 commit、檔名寫簡稱
     of = {f["id"]: f for g in odd["inputs"] for f in g["findings"]}
     of["F-001"]["test_file"] = "specs/demo/evidence/g10/F001Repro.sh"
     of["F-003"]["test_file"] = "tests/regression/never-committed.sh"
@@ -3020,7 +3020,7 @@ def test_recall_bench(tmp: pathlib.Path) -> None:
     check("recall run:結果記下模型、effort、prompt 版本與審查實際用的模型",
           res.get("config", {}).get("model") == "fable" and len(res.get("config", {}).get("prompt_version", "")) == 12
           and any(r["review"].get("models") == ["fake-model"] for r in res["results"]), str(res.get("config")))
-    # setup:soundroots 實測沒裝依賴,5 條 repro 4 條是「沒有 node_modules」才非零,整輪判定是假的
+    # setup:一個網站專案實測沒裝依賴,5 條 repro 4 條是「沒有 node_modules」才非零,整輪判定是假的
     def nth_fails(n: int) -> str:   # 第 n 棵樹的 setup 才失敗 —— 驗前面建好的樹有沒有拆掉
         cnt = tmp / f"setup-count-{n}"
         return f'c=$(cat {cnt} 2>/dev/null || echo 0); echo $((c+1)) > {cnt}; [ "$c" -lt {n - 1} ] || {{ echo 依賴裝不起來; exit 7; }}'

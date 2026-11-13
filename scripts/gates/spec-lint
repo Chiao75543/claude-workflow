@@ -239,7 +239,7 @@ def check_testability(spec: dict, f: Findings) -> None:
 
 def allowed_vague(root: pathlib.Path, f: Findings) -> set[str]:
     """specs/pipeline.yaml 的 spec_lint.allow_vague:在這個專案裡是具體值的黑名單字
-    (soundroots:欄目 WORKS、路徑 /works)。只能放行黑名單裡真的有的字;沒設 = 行為不變。"""
+    (例:欄目 WORKS、路徑 /works)。只能放行黑名單裡真的有的字;沒設 = 行為不變。"""
     section = _config.load(root).get("spec_lint") or {}
     allow = section.get("allow_vague", []) if isinstance(section, dict) else None
     where = "specs/pipeline.yaml spec_lint.allow_vague"

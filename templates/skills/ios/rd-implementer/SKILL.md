@@ -6,7 +6,7 @@ description: >
   只要任務牽涉到依照規格文件生成 iOS/SwiftUI 程式碼、串接 API、建立 ViewModel、Navigation，一律觸發此技能包。
 compatibility: "需要 bash / 檔案系統（寫入程式碼，必要）"
 ---
-> **套用注意**：本 template 以首個專案（MindEY）的具體規則與範例為示範；套用到新專案時，請將 MindEY 專屬細節（鐵則清單、web 對照路徑、端點與範例）替換為該專案 CLAUDE.md／架構文件的對應內容。
+> **套用注意**：本 template 以首個專案的具體規則與範例為示範；套用到新專案時，請將這些專屬細節（鐵則清單、web 對照路徑、端點與範例）替換為該專案 CLAUDE.md／架構文件的對應內容。
 
 # RD Implementer — iOS 實作 Agent
 
@@ -15,9 +15,9 @@ Claude 扮演資深 iOS RD，嚴格依照核准並凍結的規格逐層實作程
 
 ## Template 變數
 
-| 變數 | 說明 | MindEY 填值 |
+| 變數 | 說明 | 範例填值 |
 |---|---|---|
-| `{PROJECT_ROOT}` | repo 根目錄 | `mindey-mobile/` |
+| `{PROJECT_ROOT}` | repo 根目錄 | `app-ios/` |
 | `{TEST_COMMAND}` | 一鍵驗證指令（xcodegen → build → 全部測試） | `scripts/verify.sh` |
 | `{COVERAGE_COMMAND}` | 覆蓋率門檻指令（xccov 分層 Domain/Data/VM，GREEN 後執行，腳本由目標專案提供） | `./scripts/coverage.sh --gate 90` |
 | `{GITHUB_REPO}` | GitHub repo（PR 目的地） | fork 時填入 |
@@ -111,7 +111,7 @@ specs/{name}/
 - Domain Model（`design.md`）
 - UI 行為規格（`specs/*.md`）
 - Navigation / 深連結（`ios.md`）
-- web 對照元件（`ios.md` 或 `proposal.md` 指認的 `{PROJECT_ROOT}/pc/mindey-share/` 路徑）
+- web 對照元件（`ios.md` 或 `proposal.md` 指認的 `{PROJECT_ROOT}/web/` 路徑）
 
 ---
 
@@ -137,18 +137,18 @@ specs/{name}/
 📄 規格來源：specs/{name}/
 
 Phase 0: Web 對照檢查
-  - {PROJECT_ROOT}/pc/mindey-share/src/... <對應元件>（確認真的打 API，列出對應 route.ts）
+  - {PROJECT_ROOT}/web/src/... <對應元件>（確認真的打 API，列出對應 route.ts）
 
-Phase 1: Domain Layer（Packages/MindEYDomain，純 Swift 零依賴）
-  - Packages/MindEYDomain/Sources/MindEYDomain/Entities/Xxx.swift
-  - Packages/MindEYDomain/Sources/MindEYDomain/Repositories/XxxRepository.swift (protocol)
-  - Packages/MindEYDomain/Sources/MindEYDomain/UseCases/<capability>/XxxUseCase.swift
-  - (需要時) Packages/MindEYDomain/Sources/MindEYDomain/Support/...
+Phase 1: Domain Layer（Packages/AppDomain，純 Swift 零依賴）
+  - Packages/AppDomain/Sources/AppDomain/Entities/Xxx.swift
+  - Packages/AppDomain/Sources/AppDomain/Repositories/XxxRepository.swift (protocol)
+  - Packages/AppDomain/Sources/AppDomain/UseCases/<capability>/XxxUseCase.swift
+  - (需要時) Packages/AppDomain/Sources/AppDomain/Support/...
 
-Phase 2: Data Layer（Packages/MindEYData）
-  - Packages/MindEYData/Sources/MindEYData/DTO/XxxDTO.swift
-  - Packages/MindEYData/Sources/MindEYData/Mappers/XxxDTO+Mapping.swift
-  - Packages/MindEYData/Sources/MindEYData/Repositories/XxxRepositoryImpl.swift
+Phase 2: Data Layer（Packages/AppData）
+  - Packages/AppData/Sources/AppData/DTO/XxxDTO.swift
+  - Packages/AppData/Sources/AppData/Mappers/XxxDTO+Mapping.swift
+  - Packages/AppData/Sources/AppData/Repositories/XxxRepositoryImpl.swift
   - (需要時) Network/（APIClient、Endpoint）、Supabase/ adapter 更新
 
 Phase 3: Composition
@@ -174,7 +174,7 @@ Phase 5: View / Navigation
 依序執行 Phase 0–5。**Phase 1–5 每層完成後跑 `{TEST_COMMAND}` 驗證**（build + 全部測試；本階段允許尚未實作層的測試仍 RED，但不得出現編譯錯誤與已實作層的 FAIL），告知使用者後再進入下一個 Phase。
 
 #### Phase 0: Web 對照檢查（前置，不寫碼）
-- 逐一打開規格指認的 `{PROJECT_ROOT}/pc/mindey-share/` 對應元件
+- 逐一打開規格指認的 `{PROJECT_ROOT}/web/` 對應元件
 - 確認**有真的打 API**：元件呼叫的 endpoint 在 `src/app/api/**/route.ts` 有真實實作（非 stub）；supabase 直寫要能對上 RLS 表
 - demo/mock fallback（hardcoded 資料、假載入、mock 陣列）**一律不移植**；發現規格對照的元件是 mock → 停止並回報（實例：註冊精靈真實版在 `user-menu.tsx`，`register-dialog.tsx` 是純 mock）
 - 產出：endpoint + request/response 形狀清單，供 Phase 1 Domain Model 核對與 Phase 2 DTO 對照
@@ -202,7 +202,7 @@ Phase 5: View / Navigation
 
 #### Phase 4: Presentation Layer（ViewModel）
 - ViewModel — 依 `specs/*.md` 的 Requirement + Scenario；`@Observable @MainActor`，建構子收 UseCase，暴露狀態值 + intent 方法
-- async/await only（不引 Combine）；不碰 Repository 或任何 MindEYData 型別，僅依賴 MindEYDomain 的 UseCase／Entity／DomainError
+- async/await only（不引 Combine）；不碰 Repository 或任何 AppData 型別，僅依賴 AppDomain 的 UseCase／Entity／DomainError
 - 統一把 `DomainError` 轉顯示文案（`server` 的繁中 message 直顯）；**禁止吞錯改寫**
 - 完成後：`{TEST_COMMAND}`
 

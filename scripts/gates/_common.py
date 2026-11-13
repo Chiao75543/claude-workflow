@@ -251,7 +251,7 @@ def fetch_integration(root: pathlib.Path) -> str | None:
 
 def landing_ref(root: pathlib.Path, branch: str | None = None) -> str | None:
     """「落地」對照的 ref:merge 落在 remote 上,所以先看 origin/<整合分支>;沒有 remote 才用本機那條。
-    本機的整合分支常落後(mindey-mobile 實測落後 26 個 commit),只看它會把已經 merge 的卡當成在飛。"""
+    本機的整合分支常落後(一個專案實測落後 26 個 commit),只看它會把已經 merge 的卡當成在飛。"""
     branch = branch or integration_branch(root)
     return next((ref for ref in (f"origin/{branch}", branch)
                  if _git_out(root, "rev-parse", "--verify", "-q", f"{ref}^{{commit}}") is not None), None)
@@ -261,7 +261,7 @@ def in_flight_specs(root: pathlib.Path, branch: str | None = None) -> list[pathl
     """這個 worktree **自己**還沒落地的規格(改造方案 1.7)。
 
     以前逐份比規格和整合分支上的內容。可是每個 worktree 都帶著所有卡的規格,
-    開得早的 worktree 裡別張卡是舊版,對不上就被當成在飛(mindey-mobile 實測列出 205 個,實際十來個)。
+    開得早的 worktree 裡別張卡是舊版,對不上就被當成在飛(一個專案實測列出 205 個,實際十來個)。
     現在只看本卡自己的改動:整合分支的 merge-base → 工作樹動到的規格,含還沒 commit、還沒 add 的。
       · HEAD 已經在 origin/<整合分支> 裡 → merge-base 就是 HEAD,只剩還沒 commit 的改動
       · 剛開的 worktree 還沒 commit,HEAD 就是整合分支的尖端;只比祖先會把寫到一半的規格當成已落地

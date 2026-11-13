@@ -216,13 +216,13 @@ class Tree:
         else:
             rev = (git(repo, "rev-parse", rev, check=True) or "").strip()
         self.rev = rev
-        # 不能放在 /var 或 /tmp:macOS 的 Foundation 會把 /private/var 正規化成 /var,mindey-mobile 的
+        # 不能放在 /var 或 /tmp:macOS 的 Foundation 會把 /private/var 正規化成 /var,一個 iOS 專案的
         # 靜態規格測試用路徑長度切相對路徑,差 8 個字(/private)就整套紅 —— 實測 7 題全被誤判「修正後的樹不綠」,
         # 先解析 symlink 也沒用。真的 pipeline 在 <repo>/.worktrees/ 跑所以沒事;這裡預設放家目錄底下。
         TMP_ROOT.mkdir(parents=True, exist_ok=True)
         self.path = pathlib.Path(tempfile.mkdtemp(prefix="recall-", dir=TMP_ROOT)).resolve()
         git(repo, "worktree", "add", "--detach", "--force", str(self.path), rev, check=True)
-        if setup:   # 依賴沒裝好,之後每條 repro 都會因為環境非零 —— 實測 soundroots 5 條 4 條是「沒有 node_modules」
+        if setup:   # 依賴沒裝好,之後每條 repro 都會因為環境非零 —— 實測一個網站專案 5 條 4 條是「沒有 node_modules」
             proc = subprocess.run(setup, shell=True, cwd=self.path, capture_output=True, text=True, errors="replace")
             if proc.returncode != 0:
                 self.close()
