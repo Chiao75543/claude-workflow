@@ -6,7 +6,7 @@ description: >
   只要任務牽涉到依照規格文件生成測試、驗證業務邏輯、確認 Scenario 覆蓋，一律觸發此技能包。
 compatibility: "需要 bash / 檔案系統（讀取 production code 與寫入測試，必要）"
 ---
-> **套用注意**：本 template 以首個專案（MindEY）的具體規則與範例為示範；套用到新專案時，請將 MindEY 專屬細節（鐵則清單、web 對照路徑、端點與範例）替換為該專案 CLAUDE.md／架構文件的對應內容。
+> **套用注意**：本 template 以首個專案的具體規則與範例為示範；套用到新專案時，請將這些專屬細節（鐵則清單、web 對照路徑、端點與範例）替換為該專案 CLAUDE.md／架構文件的對應內容。
 
 # Test Writer — iOS 單元測試 Agent
 
@@ -76,12 +76,12 @@ func serverErrorShowsMessage() async { ... }
 
 ```
 {PROJECT_ROOT}/
-├── Packages/MindEYDomain/Tests/MindEYDomainTests/
+├── Packages/AppDomain/Tests/AppDomainTests/
 │   └── XxxUseCaseTests.swift            # UseCase + Domain 純函式（鐵則回歸包）
-├── Packages/MindEYData/Tests/MindEYDataTests/
+├── Packages/AppData/Tests/AppDataTests/
 │   ├── XxxRepositoryImplTests.swift     # URLProtocol stub
 │   └── Fixtures/                        # 真實 API 回應樣本 *.json（Package.swift 標 resources）
-└── MindEYTests/
+└── AppTests/
     └── XxxViewModelTests.swift          # ViewModel（真 UseCase + 假 Repository）
 ```
 
@@ -174,8 +174,8 @@ specs/{name}/
 
 ```bash
 # 依功能名稱推斷路徑，例如：
-cat Packages/MindEYDomain/Sources/MindEYDomain/UseCases/auth/SignInUseCase.swift
-cat Packages/MindEYData/Sources/MindEYData/Repositories/AuthRepositoryImpl.swift
+cat Packages/AppDomain/Sources/AppDomain/UseCases/auth/SignInUseCase.swift
+cat Packages/AppData/Sources/AppData/Repositories/AuthRepositoryImpl.swift
 cat App/Features/SignIn/SignInViewModel.swift
 ```
 
@@ -187,7 +187,7 @@ cat App/Features/SignIn/SignInViewModel.swift
 
 **TDD 模式（workflow 的 test-writer／RED 階段）**：production code 可能尚未存在。Swift 與 Kotlin 現實不同：protocol conformance 不完整時**整個 target 編不過**，測試連跑都跑不起來，所以「stub-first 讓測試可編譯」不是選項而是必要步驟：
 
-1. 依 spec 的 Domain Model 先在 `MindEYDomain` 定好 Entity 與 Repository protocol
+1. 依 spec 的 Domain Model 先在 `AppDomain` 定好 Entity 與 Repository protocol
 2. 建最小空殼實作，讓 RED 測試可編譯：
 ```swift
 public struct SignInUseCase {
@@ -215,17 +215,17 @@ public struct SignInUseCase {
 📄 規格來源：specs/{name}/
 🧪 型態：6a unit（含 6b/6c Scenario 時另列）
 
-UseCaseTests（MindEYDomainTests/SignInUseCaseTests.swift）
+UseCaseTests（AppDomainTests/SignInUseCaseTests.swift）
   ✅ Scenario: 正常流程成功
   ✅ Scenario: Repository 拋出 server 錯誤
   ✅ Scenario: 斷網錯誤原樣上拋
 
-RepositoryImplTests（MindEYDataTests/ProfileRepositoryImplTests.swift）
+RepositoryImplTests（AppDataTests/ProfileRepositoryImplTests.swift）
   ✅ Scenario: API 成功轉換 DTO → Entity
   ✅ Scenario: 契約鎖 — 真實回應樣本 decode
   ✅ Scenario: API 回傳 {error} 轉 DomainError.server
 
-ViewModelTests（MindEYTests/SignInViewModelTests.swift）
+ViewModelTests（AppTests/SignInViewModelTests.swift）
   ✅ Scenario: 初始狀態驗證
   ✅ Scenario: Loading 狀態管理
   ✅ Scenario: 成功後導航事件
@@ -247,9 +247,9 @@ Scenario 覆蓋率預估：10/10 (100%)
 mock 縫只開在 Repository：手刻 stub 預設回傳結果、記錄呼叫。
 
 ```swift
-// Packages/MindEYDomain/Tests/MindEYDomainTests/SignInUseCaseTests.swift
+// Packages/AppDomain/Tests/AppDomainTests/SignInUseCaseTests.swift
 import Testing
-@testable import MindEYDomain
+@testable import AppDomain
 
 // 手刻假 Repository：可預設結果、記錄呼叫（spy + stub 合一）
 final class AuthRepositoryStub: AuthRepository {
@@ -270,10 +270,10 @@ struct SignInUseCaseTests {
         let repo = AuthRepositoryStub()
         let useCase = SignInUseCase(auth: repo)
 
-        try await useCase(email: "iostest+1@example.com", password: "secret")
+        try await useCase(email: "test+1@example.com", password: "secret")
 
         #expect(repo.signInCalls.count == 1)
-        #expect(repo.signInCalls.first?.email == "iostest+1@example.com")
+        #expect(repo.signInCalls.first?.email == "test+1@example.com")
     }
 
     // Scenario: 錯誤情境
@@ -284,7 +284,7 @@ struct SignInUseCaseTests {
         let useCase = SignInUseCase(auth: repo)
 
         await #expect(throws: DomainError.self) {
-            try await useCase(email: "iostest+1@example.com", password: "wrong")
+            try await useCase(email: "test+1@example.com", password: "wrong")
         }
     }
 }
@@ -292,7 +292,7 @@ struct SignInUseCaseTests {
 
 #### 4b. RepositoryImplTests（Data 層）
 
-網路層用 URLProtocol stub（APIClient 需可注入 `URLSession`）；API 回應形狀用 `Fixtures/*.json` decode 測試鎖契約。`Fixtures.load` 從 `Bundle.module` 讀 `Tests/MindEYDataTests/Fixtures/*.json`；`URLProtocolStub` 為測試 target 內手刻的 `URLProtocol` 子類。
+網路層用 URLProtocol stub（APIClient 需可注入 `URLSession`）；API 回應形狀用 `Fixtures/*.json` decode 測試鎖契約。`Fixtures.load` 從 `Bundle.module` 讀 `Tests/AppDataTests/Fixtures/*.json`；`URLProtocolStub` 為測試 target 內手刻的 `URLProtocol` 子類。
 
 **Fixture 抓取的衛生硬約束**（若專案直打 production，違反任一條立即停止；權威出處 = 專案 CLAUDE.md 的測試資料衛生規則）：
 - 只用專案指定的測試帳號範圍；互動只准發生在測試帳號之間
@@ -301,11 +301,11 @@ struct SignInUseCaseTests {
 - fixture 存檔前檢查：樣本內不得含真實使用者的個資——有就換測試帳號資料重抓
 
 ```swift
-// Packages/MindEYData/Tests/MindEYDataTests/ProfileRepositoryImplTests.swift
+// Packages/AppData/Tests/AppDataTests/ProfileRepositoryImplTests.swift
 import Testing
 import Foundation
-import MindEYDomain
-@testable import MindEYData
+import AppDomain
+@testable import AppData
 
 struct ProfileRepositoryImplTests {
 
@@ -352,10 +352,10 @@ struct ProfileRepositoryImplTests {
 **真 UseCase + 假 Repository**：只替換 Repository，UseCase 用真的，測真實協作。
 
 ```swift
-// {PROJECT_ROOT}/MindEYTests/SignInViewModelTests.swift
+// {PROJECT_ROOT}/AppTests/SignInViewModelTests.swift
 import Testing
-import MindEYDomain
-@testable import MindEY
+import AppDomain
+@testable import App
 
 @MainActor
 struct SignInViewModelTests {
@@ -377,7 +377,7 @@ struct SignInViewModelTests {
     func signInSuccess() async {
         let vm = makeVM()
 
-        await vm.submit(email: "iostest+1@example.com", password: "secret")
+        await vm.submit(email: "test+1@example.com", password: "secret")
 
         #expect(vm.isLoading == false)
         #expect(vm.errorMessage == nil)
@@ -390,7 +390,7 @@ struct SignInViewModelTests {
         repo.signInResult = .failure(.server(status: 401, message: "帳號或密碼錯誤"))
         let vm = makeVM(repo: repo)
 
-        await vm.submit(email: "iostest+1@example.com", password: "wrong")
+        await vm.submit(email: "test+1@example.com", password: "wrong")
 
         #expect(vm.errorMessage == "帳號或密碼錯誤")   // 禁止吞錯改寫（如把斷網顯示成「帳密錯誤」）
     }
@@ -457,13 +457,13 @@ cd {PROJECT_ROOT}
 
 單獨跑測試（迭代時較快）：
 ```bash
-xcodebuild -project MindEY.xcodeproj -scheme MindEY -destination 'platform=iOS Simulator,name=iPhone 17 Pro' test
-# 只跑單一 suite 可加 -only-testing:MindEYDomainTests/SignInUseCaseTests
+xcodebuild -project App.xcodeproj -scheme App -destination 'platform=iOS Simulator,name=iPhone 17 Pro' test
+# 只跑單一 suite 可加 -only-testing:AppDomainTests/SignInUseCaseTests
 ```
 
 2. 覆蓋率從 xcresult 以 xccov 擷取：
 ```bash
-xcodebuild -project MindEY.xcodeproj -scheme MindEY \
+xcodebuild -project App.xcodeproj -scheme App \
   -destination 'platform=iOS Simulator,name=iPhone 17 Pro' \
   -enableCodeCoverage YES -resultBundlePath build/tests.xcresult test
 xcrun xccov view --report build/tests.xcresult
@@ -495,9 +495,9 @@ xcrun xccov view --report build/tests.xcresult
 🎯 覆蓋率達標：✅ / ❌
 
 📁 產出檔案：
-- MindEYDomainTests/SignInUseCaseTests.swift（3 個測試）
-- MindEYDataTests/ProfileRepositoryImplTests.swift（3 個測試）
-- MindEYTests/SignInViewModelTests.swift（4 個測試）
+- AppDomainTests/SignInUseCaseTests.swift（3 個測試）
+- AppDataTests/ProfileRepositoryImplTests.swift（3 個測試）
+- AppTests/SignInViewModelTests.swift（4 個測試）
 - tests/static_validation.sh（6b，如適用）
 - 6c smoke driver／結果格式（如適用；S9b 實跑後才算通過）
 - manual-checklist.md（6d，如適用）

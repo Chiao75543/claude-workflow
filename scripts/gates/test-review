@@ -40,7 +40,7 @@ SKIP_TOKENS = {"true", "false", "null", "none", "nil", "yes", "no"}
 # `#` 開頭只在後面接空白時當註解(Python / shell),否則會把 Swift 的 #expect 剝掉。
 # `//` 前面是 `:` 的不算註解,那是 URL 的 scheme —— 沒有這條 lookbehind,
 # 任何 example 的 out 值是網址的規格都必然被判「沒人引用」,而且無解:
-# anchor 本身就含 `//`,測試怎麼寫都救不了(2026-09-18 event-share 實證)。
+# anchor 本身就含 `//`,測試怎麼寫都救不了(2026-09-18 實證)。
 COMMENT = re.compile(r"/\*.*?\*/|(?<!:)//[^\n]*|^\s*#\s[^\n]*", re.S | re.M)
 
 

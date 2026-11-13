@@ -67,7 +67,7 @@ smoke 沒過就連審都不審。
 ```yaml
 runner: swift-testing            # red-capture 的輸出解析器
 tests:
-  globs: ["Packages/*/Tests/**/*.swift", "MindEYTests/**/*.swift"]
+  globs: ["Packages/*/Tests/**/*.swift", "AppTests/**/*.swift"]
   scenario_pattern: '@Test\(\s*"(SC-\d+[a-z]?)'
 reachability:
   globs: ["App/**/*.swift"]      # G7 在哪裡找建構點
@@ -473,7 +473,7 @@ PR 可合併、輪到你按時 `runs --set specs/{name}/spec.yaml S13 "等你按
 
 ## 兩條車道
 
-實測 mindey-mobile 九天:84 條 findings 有 43 條(51%)集中在兩張碰敏感東西的卡(錄音同意、即時通話);
+實測一個 iOS 專案九天:84 條 findings 有 43 條(51%)集中在兩張碰敏感東西的卡(錄音同意、即時通話);
 其餘每張 1–9 條,卻和它們走一樣的十關。只有兩個 Scenario 的分享功能,跑了 6 次證據表。
 
 `meta.risk_flags` 六個全 false 才是 **lite**;任一 true、沒填、型別不對都是 **full**(忘了填不能變成少過關)。
@@ -647,7 +647,7 @@ Fable 額度只留給兩個地方:**S3 `spec-grill`**(一行程式沒寫就抓�
 - **不准退到 sonnet**;也不准為了省額度先用 sonnet 派。
 - 其他 agent 本來就不該碰 fable,撞到上限代表派遣時傳了 `model`,那是 bug。
 
-實測(mindey-mobile 九天):24 次派遣空跑,20 次是 Fable limit;red-writer 設定 opus 卻有 19 次跑在 fable。
+實測(同一個專案九天):24 次派遣空跑,20 次是 Fable limit;red-writer 設定 opus 卻有 19 次跑在 fable。
 額度是被不該用它的地方吃掉的。
 
 實測的派遣開機費(單次、零工作量):`general-purpose` 31,554 · `spec-grill`(3 工具)5,587 ·
@@ -661,7 +661,7 @@ Fable 額度只留給兩個地方:**S3 `spec-grill`**(一行程式沒寫就抓�
 
 ## context 紀律:錢花在重讀,不是思考
 
-實測 mindey-mobile 九天(51 個 session):**64% 的費用是 cache 讀**,真正的輸出只佔 11%。
+實測同一個專案九天(51 個 session):**64% 的費用是 cache 讀**,真正的輸出只佔 11%。
 單一 session 的 context 從 4 萬 token 一路長到 99 萬撞上限才壓縮,平均每回合重讀 51 萬。
 而那疊裡 **98% 的 tool_result 字元是 base64 截圖**:orchestrator 自己 `Read` 了 310 次 png
 (主 session 256 次),每張 4,216 token,放進去之後每一回合都重讀一次。
@@ -716,7 +716,7 @@ scripts/bench/recall run q.json --model fable --effort xhigh --setup "npm ci" --
 ```
 
 - `--setup` 在每棵新建的樹先跑一次。要裝依賴的專案(npm、pip…)一定要給:沒給的話 repro 只會因為缺依賴非零,
-  整輪判定是假的(soundroots 實測 5 條有 4 條是「沒有 node_modules」)。setup 失敗就直接停;結果的 config 會記下用了什麼
+  整輪判定是假的(一個網站專案實測 5 條有 4 條是「沒有 node_modules」)。setup 失敗就直接停;結果的 config 會記下用了什麼
 
 - 題目 = 歷史上 fixed 的 G10 must_fix,輸入是「修正前的樹 + 規格」;負樣本 = 派過 G10、零 must_fix 的乾淨卡
 - 判定全機械:審查者每條 must_fix 交一條 repro,問題存在時非零。在全新的修正前樹上非零、
