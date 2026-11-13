@@ -1,0 +1,142 @@
+#!/usr/bin/env python3
+"""cleanup — S13 merge 之後清掉卡的 worktree(改造方案 1.7)。
+
+  cleanup <spec.yaml>         清掉這張卡的 worktree 與本機分支
+  cleanup --landed            列出所有已落地、可以清的 worktree(只列,不刪)
+  cleanup --landed --yes      真的刪掉上面列出的
+
+可以清 = HEAD 已經在 origin/<整合分支> 裡(判定前先 git fetch)而且沒有沒存的改動。
+  · 有改過沒 commit 的、沒 add 的檔 → 不動,列出來讓人決定:刪了就找不回來
+  · 主 checkout 永遠不動
+  · 只刪本機的 worktree 與分支。分支的 commit 都已經在 origin/<整合分支> 裡才刪
+    (自己先驗過,所以用 -D;本機的整合分支常落後,-d 會誤以為沒合併)。遠端分支不碰
+
+退出碼: 0 清掉了 / 列完了 · 1 不能清(沒落地、有沒存的改動、是主 checkout)· 2 用法錯
+"""
+
+from __future__ import annotations
+
+import pathlib
+import subprocess
+import sys
+
+sys.path.insert(0, str(pathlib.Path(__file__).parent))
+from _common import fetch_integration, landing_ref, repo_root  # noqa: E402
+
+
+def git(cwd: pathlib.Path, *args: str) -> subprocess.CompletedProcess:
+    return subprocess.run(["git", "-c", "core.quotePath=false", *args], cwd=cwd, capture_output=True, text=True)
+
+
+def worktrees(root: pathlib.Path) -> list[dict]:
+    """git worktree list:第一個是主 checkout。目錄已經不在的(prunable)跳過。"""
+    found, entry = [], None
+    for line in git(root, "worktree", "list", "--porcelain").stdout.splitlines() + [""]:
+        if line.startswith("worktree "):
+            entry = {"path": pathlib.Path(line[9:]), "head": None, "branch": None, "main": not found}
+        elif entry is not None and line.startswith("HEAD "):
+            entry["head"] = line[5:]
+        elif entry is not None and line.startswith("branch refs/heads/"):
+            entry["branch"] = line[len("branch refs/heads/"):]
+        elif not line and entry is not None:
+            found.append(entry)
+            entry = None
+    return [w for w in found if w["path"].is_dir()]
+
+
+def verdict(wt: dict, ref: str | None) -> tuple[bool, str]:
+    """(可以清, 為什麼)。"""
+    if wt["main"]:
+        return False, "這是主 checkout,不清"
+    if ref is None:
+        return False, "找不到整合分支,判斷不了有沒有落地"
+    if not wt["head"] or git(wt["path"], "merge-base", "--is-ancestor", wt["head"], ref).returncode != 0:
+        return False, f"還沒落地(HEAD 不在 {ref} 裡)"
+    dirty = git(wt["path"], "status", "--porcelain")
+    if dirty.returncode != 0:
+        return False, "git status 失敗,不動"
+    if lines := dirty.stdout.splitlines():
+        more = f" …共 {len(lines)} 個" if len(lines) > 3 else ""
+        return False, "有沒存的改動:" + " · ".join(ln.strip() for ln in lines[:3]) + more
+    return True, f"已落地({ref})、沒有沒存的改動"
+
+
+def remove(main: pathlib.Path, wt: dict, ref: str) -> str:
+    """刪 worktree;分支的 commit 都在 ref 裡才刪分支。回傳結果的一句話。"""
+    gone = git(main, "worktree", "remove", str(wt["path"]))
+    if gone.returncode != 0:
+        return f"✘ {wt['path']} 沒刪掉:{gone.stderr.strip()[:160]}"
+    if not wt["branch"]:
+        return f"✓ 清掉 {wt['path']}(detached,沒有分支)"
+    tip = git(main, "rev-parse", "--verify", "-q", f"refs/heads/{wt['branch']}").stdout.strip()
+    if not tip or git(main, "merge-base", "--is-ancestor", tip, ref).returncode != 0:
+        return f"✓ 清掉 {wt['path']} · 本機分支 {wt['branch']} 留著(有 {ref} 沒有的 commit)"
+    deleted = git(main, "branch", "-D", wt["branch"])
+    if deleted.returncode != 0:
+        return f"✓ 清掉 {wt['path']} · 本機分支 {wt['branch']} 沒刪掉:{deleted.stderr.strip()[:120]}"
+    return f"✓ 清掉 {wt['path']} 與本機分支 {wt['branch']}"
+
+
+def main(argv: list[str]) -> int:
+    if not argv or (argv[0] != "--landed" and argv[0].startswith("-")):
+        print(__doc__)
+        return 2
+    if argv[0] == "--landed":
+        root = repo_root()
+    else:
+        # repo_root 找不到就退回目前目錄 —— 在這裡會刪錯 worktree,所以自己問 git,問不到就停
+        spec = pathlib.Path(argv[0]).resolve()
+        top = git(spec.parent, "rev-parse", "--show-toplevel") if spec.is_file() else None
+        if top is None or top.returncode != 0:
+            print(f"✘ {argv[0]} 不是 git worktree 裡的規格檔 —— 不猜是哪個 worktree")
+            return 2
+        root = pathlib.Path(top.stdout.strip())
+    if warn := fetch_integration(root):
+        print(warn)
+    ref = landing_ref(root)
+    trees = worktrees(root)
+    if not trees:
+        print("✘ 讀不到 git worktree list")
+        return 1
+    main_path = trees[0]["path"]
+
+    if argv[0] != "--landed":
+        mine = next((w for w in trees if w["path"].resolve() == root.resolve()), None)
+        if mine is None:
+            print(f"✘ {argv[0]} 不在任何 worktree 裡")
+            return 1
+        ok, why = verdict(mine, ref)
+        if not ok:
+            print(f"✘ 不清 {mine['path']}:{why}")
+            return 1
+        line = remove(main_path, mine, ref)
+        print(line)
+        return 0 if line.startswith("✓") else 1
+
+    judged = [(w, *verdict(w, ref)) for w in trees if not w["main"]]
+    ready = [(w, why) for w, ok, why in judged if ok]
+    dirty = [(w, why) for w, ok, why in judged if not ok and why.startswith("有沒存的改動")]
+    rest = len(judged) - len(ready) - len(dirty)
+    print(f"▸ 已落地、可以清:{len(ready)} 個")
+    for w, _ in ready:
+        print(f"    {w['path']}  {w['branch'] or '(detached)'}")
+    if dirty:
+        print(f"▸ 已落地但有沒存的改動,不動:{len(dirty)} 個")
+        for w, why in dirty:
+            print(f"    {w['path']}  {why}")
+    print(f"▸ 其他(還沒落地等):{rest} 個,不列")
+    if "--yes" not in argv[1:]:
+        if ready:
+            print("\n只列不刪。確認過清單再加 --yes。")
+            print("被 .gitignore 的檔案(建置產物、Secrets 之類的本機設定)會跟著 worktree 一起刪;只放在 worktree 裡的先搬走。")
+        return 0
+    failed = 0
+    for w, _ in ready:
+        line = remove(main_path, w, ref)
+        print(line)
+        failed += not line.startswith("✓")
+    return 1 if failed else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

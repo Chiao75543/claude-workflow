@@ -51,7 +51,7 @@ S10½ delivery 證據表   批准快照已 commit 且乾淨才可推
 S10¾ 同步 main        merge 不 rebase;本卡的改動沒變就不重審,smoke 一律重跑
 S11 自動推 + 開 PR    證據表貼成留言;有「需要你決定」才叫你
 S12 CI 獨立重跑       ci: none 就跳過
-S13 ⏸ 你按 merge
+S13 ⏸ 你按 merge      merge 後 cleanup 清掉這張卡的 worktree(先確認已落地、沒有沒存的改動)
 ```
 
 **沒有一次需要你讀程式碼。** 你判斷的是**意圖**(S5)和 PR 上的**選擇題**(有的話)。
@@ -171,7 +171,7 @@ claude-workflow/
 │   ├── red-writer.md               opus  · S7 寫測試並擷取 RED 證據
 │   └── green-writer.md             opus  · S8 實作;「衝突就停」寫死在定義裡
 ├── scripts/
-│   ├── gates/                       關卡的實作(+ smoke / test-review / findings / loop / pr-comment)
+│   ├── gates/                       關卡的實作(+ smoke / test-review / findings / loop / pr-comment / cleanup)
 │   ├── setup.sh
 │   └── init-project.sh
 ├── commands/                        slash commands
