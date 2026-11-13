@@ -23,6 +23,13 @@ AGENTS.md 是寫給 AI 讀的散文;腳本需要真正的設定檔。
     rules_files: [AGENTS.md]           # 資安基準與架構鐵則在哪;派給 code-adversary
     spec_lint:
       allow_vague: [works]             # 選填;領域名詞撞上 spec-lint 空話黑名單才列(只收黑名單裡有的字)
+    risk_paths:                        # 必填。impact.files 命中任一類 → 強制 full 車道(改造方案 1.3)
+      permissions: ["App/Info.plist", "App/*.entitlements"]
+      privacy: ["src/recording/*"]     # fnmatch:* 會跨過 /,底下所有層都算
+      payments: []                     # 六類都要寫,沒有就寫 []
+      irreversible_data: ["src/migrations/*"]
+      critical_security: ["src/auth/*", ".github/workflows/*"]
+      core_entrypoint: ["src/main.ts"]
 
 以上每個鍵都可以用 /workflow:init 問卷一次填好。
 """
@@ -54,6 +61,8 @@ DEFAULTS = {
     "auto_push": True,
     "ci": "none",
     "rules_files": ["AGENTS.md"],
+    # 沒設 = 每張卡都 full(路徑複核做不了,不能當成「沒命中」)。config-check 也會 FAIL。
+    "risk_paths": None,
     # 測試裡「這一行是斷言」長什麼樣。test-review 用它抓空測試(零斷言)。
     "assert_pattern": r"#expect\(|#require\(|XCTAssert|assert(?:Equals|True|False|That|Throws)?\(|expect\(",
 }

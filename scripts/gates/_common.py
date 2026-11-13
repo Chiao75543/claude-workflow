@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import datetime
+import fnmatch
 import hashlib
 import json
 import os
@@ -37,6 +38,8 @@ MANUAL_MODES = {"6d"}
 # 兩條車道。實測 84 條 findings 有一半集中在兩張碰敏感東西的卡;其餘每張 1–9 條,
 # 卻走一樣的十關。旗標沿用 profiles/codex-lean.yaml 的六個,任一為 true → full。
 # 沒寫 risk_flags 的規格 **算 full**(fail closed):忘了填不能變成少過關。
+# 旗標 S1 由 orchestrator 依描述推定(不問人),S3 再拿 impact.files 對 pipeline.yaml 的 risk_paths 複核,
+# 兩者取較嚴的(改造方案 1.3)。路徑命中不能逐卡推翻:誤中就改 risk_paths,跟豁免一樣是修規則。
 RISK_FLAGS = ["permissions", "privacy", "payments", "irreversible_data", "critical_security", "core_entrypoint"]
 # lite 車道不要求的關:證明測試曾紅過(G5)、測試的語意審查(G2b 的 agent 半段)、
 # 可達性(G7)、獨立第二讀者(G9)。G10 對抗審查兩條車道都要。
@@ -57,14 +60,47 @@ WAIVE_CATEGORIES = {
 }
 
 
-def lane(spec: dict) -> str:
-    """"lite" 或 "full"。只看 meta.risk_flags;缺、型別不對、任一旗標非 False 都是 full。"""
-    flags = (spec.get("meta") or {}).get("risk_flags")
-    if not isinstance(flags, dict):
+def lane(spec: dict, config: dict) -> str:
+    """"lite" 或 "full"。旗標與路徑複核取較嚴的(改造方案 1.3):
+    meta.risk_flags 缺、型別不對、任一非 False → full;risk_paths 沒設或格式不對 → full;
+    impact.files 命中任一類 risk_paths → full。"""
+    meta = spec.get("meta")
+    flags = meta.get("risk_flags") if isinstance(meta, dict) else None
+    if not isinstance(flags, dict) or any(flags.get(k) is not False for k in RISK_FLAGS):
         return "full"
-    if any(flags.get(k) is not False for k in RISK_FLAGS):
-        return "full"
-    return "lite"
+    return "lite" if risk_hits(spec, config) == {} else "full"
+
+
+def risk_paths_problem(config: dict) -> str | None:
+    """specs/pipeline.yaml 的 risk_paths 哪裡不對;沒問題回 None。
+    六類都要寫(沒有就寫 []),跟 risk_flags 一樣:寫一半會讓人以為已經評估過。"""
+    rules = config.get("risk_paths")
+    if rules is None:
+        return "沒設"
+    if not isinstance(rules, dict):
+        return "必須是 mapping(六類各一個路徑樣式 list)"
+    problems = []
+    if missing := [k for k in RISK_FLAGS if k not in rules]:
+        problems.append(f"缺 {', '.join(missing)}(沒有就寫 [])")
+    if unknown := [k for k in rules if k not in RISK_FLAGS]:
+        problems.append(f"不認得 {', '.join(map(str, unknown))}")
+    if bad := [k for k in RISK_FLAGS if k in rules and not (
+            isinstance(rules[k], list) and all(isinstance(g, str) and g.strip() for g in rules[k]))]:
+        problems.append(f"{', '.join(bad)} 要是路徑樣式的 list")
+    return "; ".join(problems) or None
+
+
+def risk_hits(spec: dict, config: dict) -> dict[str, list[str]] | None:
+    """impact.files 命中 risk_paths 的檔,依類別分;沒命中的類別不列。risk_paths 有問題 → None。
+    樣式是 fnmatch:* 會跨過 /,所以 src/auth/* 涵蓋底下所有層。"""
+    if risk_paths_problem(config):
+        return None
+    files = sorted(impact_files(spec))
+    # impact.files 有人寫成「A + B」「路徑(說明)」:整條和空白切開的每一段都比,寧可多中
+    hits = {flag: [p for p in files
+                   if any(fnmatch.fnmatchcase(t, g) for t in {p, *p.split()} for g in config["risk_paths"][flag])]
+            for flag in RISK_FLAGS}
+    return {flag: paths for flag, paths in hits.items() if paths}
 
 
 class Findings:

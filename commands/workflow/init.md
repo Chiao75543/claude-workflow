@@ -30,12 +30,14 @@ tags: [workflow, init, config]
 | | 有 CI 嗎?(github / gitlab / 沒有 → `none`,那就沒有 S12)| `ci` |
 | 邊界 | 新型別的建構點該去哪些目錄找?(G7 可達性)| `reachability.globs` |
 | | 資安基準與架構鐵則寫在哪個檔?| `rules_files` |
+| 風險路徑 | 六類風險各是哪些路徑?(權限、個資、金流、不可逆資料、資安、核心入口;fnmatch 樣式,`*` 跨 `/`;沒有就 `[]`)。`impact.files` 命中任一類就強制 full 車道。先從專案結構推一份草稿帶著問 | `risk_paths` |
 
 寫檔 → 跑 `scripts/gates/config-check` → PASS 才回報完成。
 
 **注意**
 
-- **沒填的鍵會讓對應關卡失敗,不是跳過。** 所以問卷不能跳過 `test` / `lint` / `smoke`。
+- **沒填的鍵會讓對應關卡失敗,不是跳過。** 所以問卷不能跳過 `test` / `lint` / `smoke` / `risk_paths`
+  (`risk_paths` 沒設 = 每張卡都 full)。
 - `ci: none` 是合法答案。`ci: github|gitlab` 時要**另外問**要不要把 `templates/ci/` 的範本裝進專案 ——
   改 CI 是人確認的事,不隨問卷自動做。
 - 答錯了之後任何時候改 `specs/pipeline.yaml` 就好,不用重跑問卷。
