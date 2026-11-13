@@ -7,6 +7,8 @@ B 模式(一個功能一個 session)沒有塔台,所以共享狀態放在檔案�
 不帶參數     列出所有 worktree 在飛的能力
 帶 <spec.yaml>  另外比對 impact.files,把會撞的檔案講出來
 
+在飛 = 每個 worktree 自己改過、還沒落地的規格(_common.in_flight_specs);判定前先 git fetch 整合分支。
+
 退出碼: 0(碰撞是警告,不擋 —— 它需要的是人決定順序,不是自動失敗)
 """
 
@@ -16,7 +18,9 @@ import pathlib
 import sys
 
 sys.path.insert(0, str(pathlib.Path(__file__).parent))
-from _common import impact_files, in_flight_specs, load_spec, repo_root, sibling_worktrees  # noqa: E402
+from _common import (  # noqa: E402
+    fetch_integration, impact_files, in_flight_specs, load_spec, repo_root, sibling_worktrees,
+)
 
 
 def collect(root: pathlib.Path) -> list[dict]:
@@ -45,6 +49,8 @@ def collect(root: pathlib.Path) -> list[dict]:
 
 def main(argv: list[str]) -> int:
     root = repo_root()
+    if warn := fetch_integration(root):
+        print(warn)
     everything = collect(root)
 
     print(f"▸ 在飛的規格({len(everything)} 份,跨 {len({e['worktree'] for e in everything})} 個 worktree)")

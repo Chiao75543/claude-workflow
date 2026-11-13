@@ -705,28 +705,138 @@ def test_spec_diff(tmp: pathlib.Path) -> None:
 
 # ---------------------------------------------------------------- landed
 
-def test_landed_compares_content(tmp: pathlib.Path) -> None:
-    """W3:MODIFIED 的規格在整合分支上本來就有同一路徑。只比存在會把它誤當已落地。要比 blob hash。"""
-    root = make_repo(tmp / "landed")
-    subprocess.run(["git", "add", "-A"], cwd=root, check=True)
-    subprocess.run(["git", "commit", "-qm", "on main"], cwd=root, check=True)
-    subprocess.run(["git", "branch", "-M", "main"], cwd=root, check=True)
-    subprocess.run(["git", "checkout", "-qb", "feat/x"], cwd=root, check=True)
-    spec = root / "specs" / "demo" / "spec.yaml"
-    spec.write_text(spec.read_text().replace("why: 測試用的規格", "why: 在分支上改過"))
-    subprocess.run(["git", "add", "-A"], cwd=root, check=True)
-    subprocess.run(["git", "commit", "-qm", "modified on branch"], cwd=root, check=True)
-
+def test_in_flight_and_cleanup(tmp: pathlib.Path) -> None:
+    """改造方案 1.7。mindey-mobile 實測 runs 列出 205 個在飛,57 個 worktree 卻有 51 個早就 merge 了:
+    每個 worktree 都帶著所有卡的規格,開得早的那幾份是舊版,和整合分支對不上就被當成在飛。
+    現在只算每個 worktree 自己的改動;merge 之後清 worktree;yield 讀 origin 上合併好的那份。"""
     import importlib
     if str(GATES) not in sys.path:
         sys.path.insert(0, str(GATES))
     common = importlib.import_module("_common")
-    check("同路徑但內容改過的規格 → 判為在飛(不是已落地)",
-          not common.landed(root, "specs/demo/spec.yaml", "main"))
-    spec.write_text(subprocess.run(["git", "show", "main:specs/demo/spec.yaml"], cwd=root,
-                                   capture_output=True, text=True, check=True).stdout)
-    check("內容與整合分支一模一樣 → 判為已落地",
-          common.landed(root, "specs/demo/spec.yaml", "main"))
+    base = tmp / "inflight"
+
+    def g(cwd: pathlib.Path, *args: str) -> subprocess.CompletedProcess:
+        return subprocess.run(["git", *args], cwd=cwd, capture_output=True, text=True)
+
+    def spec(root: pathlib.Path, name: str, why: str = "原本") -> None:
+        path = root / "specs" / name / "spec.yaml"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(VALID_SPEC.lstrip().replace("name: demo", f"name: {name}")
+                        .replace("why: 測試用的規格", f"why: {why}"))
+
+    def commit(root: pathlib.Path, msg: str) -> None:
+        g(root, "add", "-A")
+        g(root, "commit", "-qm", msg)
+
+    def names(root: pathlib.Path) -> list[str]:
+        return sorted(p.parent.name for p in common.in_flight_specs(root))
+
+    def worktree(name: str, *args: str) -> pathlib.Path:
+        g(root, "worktree", "add", "-q", *args[:-1], str(base / name), args[-1])
+        return base / name
+
+    remote = base / "origin.git"
+    remote.mkdir(parents=True)
+    g(remote, "init", "-q", "--bare", "-b", "main")
+    root = make_repo(base)
+    spec(root, "alpha")
+    spec(root, "beta")
+    (root / "specs/demo/evidence/status.json").write_text(json.dumps(   # demo 早就 merge 了,狀態停在當年的「等你」
+        {"stage": "S9", "label": "1 條等你決定", "blocked_on": "human", "updated_at": "2026-09-30T10:53:00+08:00"}))
+    commit_base(root)
+    g(root, "remote", "add", "origin", str(remote))
+    g(root, "push", "-q", "origin", "main")
+
+    old = worktree("wt-old", "-b", "feat/gamma", "main")       # 開得早:之後 main 改了 alpha
+    spec(old, "gamma")
+    spec(old, "demo", why="本卡改了既有規格")                     # MODIFIED:整合分支上本來就有同一路徑
+    commit(old, "gamma")
+    spec(root, "alpha", why="main 上改過")
+    commit(root, "alpha on main")
+    g(root, "push", "-q", "origin", "main")
+    check("開得早的 worktree:別張卡的舊版規格不算,只算本卡新增與改過的(含 MODIFIED)",
+          names(old) == ["demo", "gamma"], str(names(old)))
+
+    new = worktree("wt-new", "-b", "feat/delta", "origin/main")  # 剛開、還沒 commit:HEAD 就是整合分支的尖端
+    spec(new, "delta")
+    spec(new, "beta", why="還沒 commit 的修改")
+    check("剛開、還沒 commit 的 worktree → 寫到一半的規格照算在飛(只比祖先會把它當成已落地)",
+          names(new) == ["beta", "delta"], str(names(new)))
+    check("沒有 commit、算不出 merge-base → 全部當在飛(寧可多列,不要藏起來)",
+          names(make_repo(base / "nocommit")) == ["demo"])
+
+    merged = worktree("wt-merged", "-b", "feat/eps", "main")
+    spec(merged, "eps")
+    commit(merged, "eps")
+    g(merged, "push", "-q", "origin", "feat/eps")
+    clone = base / "clone"
+    g(base, "clone", "-q", str(remote), str(clone))
+    g(clone, "config", "user.email", "t@t")
+    g(clone, "config", "user.name", "t")
+    g(clone, "merge", "-q", "--no-ff", "-m", "merge eps", "origin/feat/eps")
+    g(clone, "push", "-q", "origin", "main")                    # 在別處 merge:本機的 main 和 origin/main 都還沒更新
+    check("(前提)還沒 fetch:本機看到的 origin/main 沒有這次 merge,eps 還算在飛",
+          names(merged) == ["eps"], str(names(merged)))
+    code, out = run_gate("runs", cwd=root)
+    check("runs 先 fetch:在別處 merge 掉的卡不再算在飛;舊 worktree 裡的舊版規格也不算",
+          code == 0 and "▸ 3 個在飛" in out and "eps" not in out and "alpha" not in out
+          and all(n in out for n in ("gamma", "delta", "beta")), out[:500])
+    check("連帶改到的母卡(狀態還是整合分支上那份)另外列,不算在飛,它當年的「等你」也不算",
+          "[wt-old] demo" in out and "等你" not in out, out[:500])
+    run_gate("runs", "--set", str(old / "specs/demo/spec.yaml"), "S9", "本卡在改它", cwd=old)
+    code, out = run_gate("runs", cwd=root)
+    check("這條分支更新過它的狀態 → 算在飛的卡,不是母卡",
+          "▸ 4 個在飛" in out and "[wt-old] demo" not in out and "本卡在改它" in out, out[:500])
+    check("本機 main 落後 origin/main 時,落地看 origin/main",
+          names(merged) == [] and g(root, "merge-base", "--is-ancestor", "origin/main", "main").returncode != 0,
+          str(names(merged)))
+
+    rows = [{"at": "2026-11-01T10:00:00+08:00", "name": n, "gates": {"G0": True}} for n in ("x", "y")]
+    (clone / "specs" / "_yield.jsonl").write_text("".join(json.dumps(r) + "\n" for r in rows))
+    commit(clone, "yield")
+    g(clone, "push", "-q", "origin", "main")
+    (root / "specs" / "_yield.jsonl").write_text(json.dumps(rows[0]) + "\n")
+    code, out = run_gate("runs", "--yield", cwd=root)
+    check("runs --yield 讀 origin/main 上合併好的那份(先 fetch),不讀本機那份",
+          code == 0 and "▸ 2 次證據表" in out and "讀 origin/main" in out, out[:300])
+
+    bad = make_repo(base / "badremote")
+    commit_base(bad)
+    g(bad, "remote", "add", "origin", str(base / "no-such-remote.git"))
+    code, out = run_gate("runs", cwd=bad)
+    check("fetch 失敗 → runs 講出來(用的是可能過期的 ref),照樣列", code == 0 and "⚠ git fetch origin main 失敗" in out,
+          out[:300])
+    code, out = run_gate("scan-siblings", cwd=bad)
+    check("fetch 失敗 → scan-siblings 也講出來", "⚠ git fetch origin main 失敗" in out, out[:300])
+
+    dirty = worktree("wt-dirty", "-b", "feat/dirty", "origin/main")
+    (dirty / "notes.txt").write_text("還沒存的東西\n")
+    spare = worktree("wt-spare", "--detach", "origin/main")
+    code, out = run_gate("cleanup", "--landed", cwd=root)
+    ready = out.split("▸ 已落地但有沒存的改動")[0]
+    check("cleanup --landed:只列已落地又乾淨的,不刪",
+          code == 0 and str(merged) in ready and str(spare) in ready and "--yes" in out
+          and all(p.is_dir() for p in (merged, spare, dirty, new, old)), out[:600])
+    check("cleanup --landed:有沒存的改動(含剛開、還沒 commit 的)不列進可以清,另外列出來",
+          str(dirty) not in ready and str(new) not in ready and "notes.txt" in out and str(new) in out, out[:600])
+    check("cleanup --landed:還沒落地的不列進可以清", str(old) not in ready, out[:600])
+
+    code, out = run_gate("cleanup", str(base / "no-such-card/spec.yaml"), cwd=spare)
+    check("cleanup 給的路徑不存在 → 停下來,不退回目前所在的 worktree(站在已落地又乾淨的 worktree 裡也不刪它)",
+          code == 2 and spare.is_dir(), out[:300])
+    code, out = run_gate("cleanup", str(old / "specs/gamma/spec.yaml"), cwd=root)
+    check("cleanup 沒落地的卡 → 拒絕,worktree 還在", code == 1 and "還沒落地" in out and old.is_dir(), out[:300])
+    code, out = run_gate("cleanup", str(dirty / "specs/demo/spec.yaml"), cwd=root)
+    check("cleanup 有沒存改動的卡 → 拒絕,worktree 還在", code == 1 and "notes.txt" in out and dirty.is_dir(), out[:300])
+    code, out = run_gate("cleanup", str(root / "specs/demo/spec.yaml"), cwd=root)
+    check("cleanup 主 checkout → 拒絕", code == 1 and "主 checkout" in out and root.is_dir(), out[:300])
+    code, out = run_gate("cleanup", str(merged / "specs/eps/spec.yaml"), cwd=root)
+    check("cleanup 已落地又乾淨的卡 → 刪 worktree 與本機分支(本機 main 落後也照刪,commit 都在 origin/main 裡)",
+          code == 0 and not merged.exists()
+          and g(root, "rev-parse", "--verify", "-q", "refs/heads/feat/eps").returncode != 0, out[:300])
+    code, out = run_gate("cleanup", "--landed", "--yes", cwd=root)
+    check("cleanup --landed --yes:只刪列出來的那些",
+          code == 0 and not spare.exists() and all(p.is_dir() for p in (dirty, new, old)), out[:600])
 
 
 # ---------------------------------------------------------------- dashboard
@@ -2920,7 +3030,7 @@ def main() -> int:
         for fn in (test_spec_lint, test_spec_size_warning, test_spec_lint_allow_vague,
                    test_freeze_check, test_red_capture,
                    test_traceability, test_spec_diff,
-                   test_dashboard_requires_verification, test_landed_compares_content,
+                   test_dashboard_requires_verification, test_in_flight_and_cleanup,
                    test_reachability, test_reachability_hardening,
                    test_test_review, test_loop, test_findings, test_smoke,
                    test_dashboard_gating_order, test_dashboard_approval_anchor_phases,

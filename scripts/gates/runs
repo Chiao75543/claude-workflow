@@ -4,11 +4,12 @@
   runs                                    列出所有在飛的功能卡在哪
   runs --set <spec.yaml> S9 "驗證關"        更新狀態
   runs --set <spec.yaml> S5 "等你批說明頁" --blocked-on human
-  runs --yield                            哪道關擋過東西、擋了幾次(specs/_yield.jsonl);
-                                          同一關 30 天內被豁免 ≥3 次會點名
+  runs --yield                            哪道關擋過東西、擋了幾次(origin/<整合分支> 上的 specs/_yield.jsonl,
+                                          沒有 remote 才讀本機的);同一關 30 天內被豁免 ≥3 次會點名
   runs --cost                             每張卡、每一站用了多少 token,以及花了多久、等人多久
 
 狀態寫在 <spec 目錄>/evidence/status.json(含追加式 history)。
+在飛 = 這個 worktree 自己改過、還沒落地的規格(_common.in_flight_specs);判定前先 git fetch 整合分支。
 --cost 讀 Claude Code 自己留的 session 紀錄(~/.claude/projects/<專案>/,或 $CLAUDE_CONFIG_DIR),
 不另外記帳;紀錄會被 cleanupPeriodDays 清掉,所以那個設定要調高。
 """
@@ -26,7 +27,8 @@ import sys
 
 sys.path.insert(0, str(pathlib.Path(__file__).parent))
 from _common import (  # noqa: E402
-    evidence_dir, find_specs, in_flight_specs, read_json, repo_root, sibling_worktrees, write_status,
+    evidence_dir, fetch_integration, find_specs, in_flight_specs, integration_branch, own_changes, read_json, repo_root,
+    sibling_worktrees, write_status,
 )
 
 # 派遣 subagent 時的 description 格式:「<站> <agent> <卡名>」,例如 `S7 red-writer remove-leaderboard-xp`。
@@ -54,11 +56,21 @@ def set_status(argv: list[str]) -> int:
 def show_yield(root: pathlib.Path) -> int:
     """哪道關真的有用。沒有數據就只能靠感覺留著所有關卡。"""
     import json
+    # 每張卡的證據表寫在自己的 worktree,merge 之後才匯到整合分支;本機那份只有這條分支看得到的
+    if warn := fetch_integration(root):
+        print(warn)
+    branch = integration_branch(root)
+    shown = subprocess.run(["git", "show", f"origin/{branch}:specs/_yield.jsonl"], cwd=root,
+                           capture_output=True, text=True)
     path = root / "specs" / "_yield.jsonl"
-    if not path.exists():
+    if shown.returncode == 0:
+        text, source = shown.stdout, f"origin/{branch}"
+    elif path.exists():
+        text, source = path.read_text(), f"本機(origin/{branch} 上沒有)"
+    else:
         print("還沒有任何一次紀錄(dashboard 每跑一次會追加一筆到 specs/_yield.jsonl)。")
         return 0
-    rows = [json.loads(ln) for ln in path.read_text().splitlines() if ln.strip()]
+    rows = [json.loads(ln) for ln in text.splitlines() if ln.strip()]
     fails: dict[str, int] = {}
     seen: dict[str, int] = {}
     tags: dict[str, int] = {}
@@ -69,7 +81,7 @@ def show_yield(root: pathlib.Path) -> int:
                 fails[gate] = fails.get(gate, 0) + 1
         for tag in row.get("attention") or []:
             tags[tag] = tags.get(tag, 0) + 1
-    print(f"▸ {len(rows)} 次證據表,跨 {len({r.get('name') for r in rows})} 個功能")
+    print(f"▸ {len(rows)} 次證據表,跨 {len({r.get('name') for r in rows})} 個功能(讀 {source} 的 specs/_yield.jsonl)")
     print("  關卡      擋下 / 跑過")
     for gate in sorted(seen, key=lambda g: (-(fails.get(g, 0)), g)):
         print(f"  {gate:<8}  {fails.get(gate, 0):>3} / {seen[gate]}")
@@ -267,19 +279,26 @@ def main(argv: list[str]) -> int:
         return set_status(argv[1:])
 
     root = repo_root()
-    rows = []
+    if warn := fetch_integration(root):
+        print(warn)
+    rows, parents = [], {}
     for tree in [root] + sibling_worktrees(root):
+        own = own_changes(tree)
         for spec_path in in_flight_specs(tree):
-            status = read_json(evidence_dir(spec_path) / "status.json") or {}
-            rows.append((tree.name, spec_path.parent.name, status))
+            status_file = evidence_dir(spec_path) / "status.json"
+            # 連帶改到的母卡:規格改了,狀態卻還是整合分支上那份 —— 那是母卡以前的紀錄(常是「等你」),不是在跑的卡
+            if own is not None and status_file.exists() and str(status_file.relative_to(tree)) not in own:
+                parents.setdefault(tree.name, []).append(spec_path.parent.name)
+                continue
+            rows.append((tree.name, spec_path.parent.name, read_json(status_file) or {}))
 
-    if not rows:
+    if not rows and not parents:
         print("沒有在飛的功能。")
         return 0
 
     waiting = [r for r in rows if (r[2] or {}).get("blocked_on")]
     print(f"▸ {len(rows)} 個在飛" + (f",{len(waiting)} 個等你" if waiting else ""))
-    width = max(len(r[1]) for r in rows)
+    width = max((len(r[1]) for r in rows), default=0)
     for tree_name, name, status in sorted(rows, key=lambda r: (not (r[2] or {}).get("blocked_on"), r[1])):
         stage = status.get("stage", "—")
         label = status.get("label", "(尚未回報狀態)")
@@ -287,6 +306,10 @@ def main(argv: list[str]) -> int:
         mark = "⏸" if blocked else "  "
         when = (status.get("updated_at") or "")[:16].replace("T", " ")
         print(f"  {mark} {name.ljust(width)}  {stage:<5} {label:<22} {when}  [{tree_name}]")
+    if parents:
+        print("\n  連帶改到的母卡(不算在飛,它們的狀態是整合分支上的舊紀錄):")
+        for tree_name, names in sorted(parents.items()):
+            print(f"    [{tree_name}] {', '.join(sorted(names))}")
     if waiting:
         print(f"\n  等你的: {', '.join(r[1] for r in waiting)}")
     return 0

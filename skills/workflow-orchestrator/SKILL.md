@@ -167,7 +167,8 @@ smoke 沒有的專案要在這裡**一起寫出來**(通常是一支 `scripts/sm
     **核心入口 / 登入 / session**(core_entrypoint)。答案寫進 `meta.risk_flags`。
     六個全 false → **lite 車道**;任一 true 或沒填 → **full**。見「兩條車道」。
 3. **跑 `scripts/gates/scan-siblings`** —— 列出所有 worktree 在飛的能力。
-   同名能力會預警。已落地(在整合分支上)的規格會被濾掉,不算在飛。
+   同名能力會預警。在飛只算**每個 worktree 自己改過、還沒落地**的規格(merge-base 之後動過,或還沒 commit);
+   判定前先 `git fetch` 整合分支。每個 worktree 都帶著別張卡的規格副本,那些不算。
 4. `specs/{name}/` 已存在 → 問要從哪一階段續跑
 
 ### S2 Worktree
@@ -462,6 +463,13 @@ PR 留言頂端是「✅ 全乾淨」→ 直接按。是「⏸ 需要你決定�
 orchestrator 處理完重新留言。**orchestrator 一律不代按 merge。**
 
 PR 可合併、輪到你按時 `runs --set specs/{name}/spec.yaml S13 "等你按 merge" --blocked-on human`。
+
+**merge 之後清掉這張卡的 worktree**(chiao 說 merge 了,或 `gh pr view` / `glab mr view` 顯示已合併):
+回主 checkout 跑 `scripts/gates/cleanup .worktrees/{name}/specs/{name}/spec.yaml`。
+- 它先 fetch,確認這張卡的 HEAD 已經在 `origin/{INTEGRATION_BRANCH}` 裡、沒有沒存的改動,才刪 worktree 與本機分支
+- 拒絕(還沒落地、有沒存的改動)就照它列的原因問 chiao。**不加 `--force`、不自己 `git worktree remove`**
+- 遠端分支不刪 —— 那是 chiao 的決定
+- 以前留下來的:`cleanup --landed` 只列不刪;清單給 chiao 看過、他同意了才加 `--yes`
 
 ## 兩條車道
 

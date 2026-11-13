@@ -183,38 +183,73 @@ def integration_branch(root: pathlib.Path) -> str:
         return "main"
 
 
-def landed(root: pathlib.Path, rel: str, branch: str | None = None) -> bool:
-    """規格是否已經**以現在的內容**落在整合分支上。
+FETCH_TIMEOUT = 30
 
-    只查路徑存在是不夠的:MODIFIED 的規格在整合分支上本來就有同一路徑,
-    只比存在會把它誤當已落地,碰撞偵測與狀態列表就都看不到它。
-    所以比 blob hash —— 內容一模一樣才算落地。"""
-    branch = branch or integration_branch(root)
+
+def _git_out(root: pathlib.Path, *args: str) -> str | None:
+    """git 的 stdout;失敗就是 None。"""
     try:
-        on_branch = subprocess.run(
-            ["git", "rev-parse", f"{branch}:{rel}"],
-            cwd=root, capture_output=True, text=True,
-        )
-        if on_branch.returncode != 0:
-            return False
-        local = subprocess.run(
-            ["git", "hash-object", rel],
-            cwd=root, capture_output=True, text=True, check=True,
-        )
-        return on_branch.stdout.strip() == local.stdout.strip()
-    except (subprocess.CalledProcessError, FileNotFoundError):
-        return False
+        proc = subprocess.run(["git", "-c", "core.quotePath=false", *args], cwd=root, capture_output=True, text=True)
+    except OSError:
+        return None
+    return proc.stdout if proc.returncode == 0 else None
+
+
+def fetch_integration(root: pathlib.Path) -> str | None:
+    """判定落地前先把 origin 上的整合分支抓下來(worktree 共用 refs,抓一次就夠)。
+    沒有 origin 就不抓;抓不到回傳警告,照用本機現有的 origin/<分支> —— 可能過期,所以要講。"""
+    branch = integration_branch(root)
+    if _git_out(root, "remote", "get-url", "origin") is None:
+        return None
+    try:
+        proc = subprocess.run(["git", "fetch", "-q", "origin", f"+refs/heads/{branch}:refs/remotes/origin/{branch}"],
+                              cwd=root, capture_output=True, text=True, timeout=FETCH_TIMEOUT,
+                              env={**os.environ, "GIT_TERMINAL_PROMPT": "0"})
+    except (subprocess.TimeoutExpired, OSError) as exc:
+        reason = f"{FETCH_TIMEOUT} 秒沒抓完" if isinstance(exc, subprocess.TimeoutExpired) else str(exc)
+        return f"⚠ git fetch origin {branch} 失敗({reason})—— 用本機現有的 origin/{branch} 判斷,可能過期"
+    if proc.returncode != 0:
+        return f"⚠ git fetch origin {branch} 失敗({proc.stderr.strip()[:120]})—— 用本機現有的 origin/{branch} 判斷,可能過期"
+    return None
+
+
+def landing_ref(root: pathlib.Path, branch: str | None = None) -> str | None:
+    """「落地」對照的 ref:merge 落在 remote 上,所以先看 origin/<整合分支>;沒有 remote 才用本機那條。
+    本機的整合分支常落後(mindey-mobile 實測落後 26 個 commit),只看它會把已經 merge 的卡當成在飛。"""
+    branch = branch or integration_branch(root)
+    return next((ref for ref in (f"origin/{branch}", branch)
+                 if _git_out(root, "rev-parse", "--verify", "-q", f"{ref}^{{commit}}") is not None), None)
 
 
 def in_flight_specs(root: pathlib.Path, branch: str | None = None) -> list[pathlib.Path]:
-    """這個 worktree 裡尚未落地的規格。"""
-    branch = branch or integration_branch(root)
-    out = []
-    for path in find_specs(root):
-        rel = str(path.relative_to(root))
-        if not landed(root, rel, branch):
-            out.append(path)
-    return out
+    """這個 worktree **自己**還沒落地的規格(改造方案 1.7)。
+
+    以前逐份比規格和整合分支上的內容。可是每個 worktree 都帶著所有卡的規格,
+    開得早的 worktree 裡別張卡是舊版,對不上就被當成在飛(mindey-mobile 實測列出 205 個,實際十來個)。
+    現在只看本卡自己的改動:整合分支的 merge-base → 工作樹動到的規格,含還沒 commit、還沒 add 的。
+      · HEAD 已經在 origin/<整合分支> 裡 → merge-base 就是 HEAD,只剩還沒 commit 的改動
+      · 剛開的 worktree 還沒 commit,HEAD 就是整合分支的尖端;只比祖先會把寫到一半的規格當成已落地
+      · MODIFIED 的規格在整合分支上本來就有同一路徑,本卡改過它就在 diff 裡
+    找不到整合分支、或算不出 merge-base(沒有 commit、歷史不相干)→ 全部當在飛:寧可多列,不要藏起來。"""
+    specs = find_specs(root)
+    own = own_changes(root, branch)
+    if own is None:
+        return specs
+    return [path for path in specs if str(path.relative_to(root)) in own]
+
+
+def own_changes(root: pathlib.Path, branch: str | None = None) -> set[str] | None:
+    """本卡自己動過的 specs/ 底下的檔(相對 worktree 根):整合分支的 merge-base → 工作樹,含還沒 commit、還沒 add 的。
+    找不到整合分支、或算不出 merge-base → None。"""
+    ref = landing_ref(root, branch)
+    mb = _git_out(root, "merge-base", "HEAD", ref) if ref else None
+    if not mb:
+        return None
+    changed = _git_out(root, "diff", "--name-only", "--no-renames", mb.strip(), "--", "specs")
+    untracked = _git_out(root, "ls-files", "--others", "--exclude-standard", "--", "specs")
+    if changed is None or untracked is None:
+        return None
+    return set(changed.splitlines()) | set(untracked.splitlines())
 
 
 def find_specs(root: pathlib.Path) -> list[pathlib.Path]:
