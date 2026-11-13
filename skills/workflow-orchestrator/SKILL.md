@@ -588,10 +588,23 @@ loop <spec> reappear F-n     解過又出現 → flipflop,立即停
 loop <spec> redispatch G10   第 2 次會被拒
 loop <spec> decided F-n ship|hold|respec   人在 PR 上決定了 —— 唯一能解除 parked / flipflop 的動詞
 loop <spec> check            有沒有任何一條停住(dashboard 也讀)
+loop <spec> waive G9/10 <類別> --note "<為什麼>" --quote "<chiao 的原話>"   chiao 明確指示的豁免
 ```
 
 人回答之後 orchestrator 做的事:`decided ship` → `findings set F-n accepted_risk`,重跑 dashboard,PR 留言變乾淨;
 `decided respec` → 退回 S5 走規格改動;`decided hold` → 分支停在這,`runs --set` 標 blocked。
+
+**豁免(`loop waive`):只有 chiao 的明確指示能下,orchestrator 不得自行豁免。** 用在 G9/10 卡住、
+沒有合規路徑的時候(審查過期但 G10 已經重派過、額度用完派不出去):
+
+- 先停下來問 chiao(PR 留言的「需要你決定」或直接在 session 問),給選擇題:重審 / 照現狀(豁免)/ 停在這
+- chiao 回答了才跑 `loop waive`;`--quote` 逐字貼他的原話。類別是固定選項:
+  `false-block` 誤擋 · `tool-failure` 工具故障 · `accepted-risk` 接受風險 · `out-of-scope` 原因在本卡之外
+- 只收 G9/10,只蓋「審查沒對到現在的樹」(過期、沒派、派遣紀錄無效)。沒處理完的 finding 走
+  `loop decided` / `findings set`;腳本關與 smoke 不收豁免 —— 誤擋就修關卡規則
+- 豁免綁在下的當下那棵樹上,之後改了程式就失效,要再問一次
+- 證據表的 G9/10 寫「chiao 豁免 W-n」,原本沒過的原因照留;另列「已豁免」(含 chiao 的原話),PR 留言看得到。不擋自動推
+- commit 訊息帶 `loop waive` 印出的 `Waived: specs/<name>/evidence/loop.json#W-n`。**不寫「代批」**
 
 - 修完之後**重跑 G0–G7**(腳本,幾乎免費)+ 那條重現測試 + **smoke(一律重跑)**:
   dashboard 要求 smoke 指紋與工作樹一致,對不上就判 S 過期、G9/10 變「未跑」
@@ -668,6 +681,10 @@ Fable 額度只留給兩個地方:**S3 `spec-grill`**(一行程式沒寫就抓�
 每筆另記 `review_state`(G9/10 為什麼沒過:`upstream_red` 腳本或 smoke 沒過所以沒派、`not_dispatched`、
 `invalid_dispatch`、`stale` 審查過期、`findings_pending`、`pass`)與 `trigger`(見 S9c)。
 舊紀錄沒有這兩欄,不回填。
+
+豁免也寫進去:`waivers` 記這次證據表套用的豁免(id、關、類別、時間),被豁免的關在 `gates` 記**沒過**(它確實擋了)。
+`runs --yield` 依關、依類別統計,同一筆豁免只算一次;**同一關 30 天內被豁免 ≥3 次會點名** ——
+那是該檢討這關規則的時候,不是繼續豁免的理由。
 
 **成本與時間:`runs --cost`。** 不另外記帳 —— 直接讀 Claude Code 自己留的 session 紀錄
 (`~/.claude/projects/<專案>/`),依「卡 × 站 × 模型」列 input / output / cache 讀 / cache 寫:
@@ -755,6 +772,7 @@ scripts/bench/recall run q.json --model fable --effort xhigh --setup "npm ci" --
 | 一張卡從 S1 跑到 S13 同一個 session | 到 S6 / S7½ / S8 / S9 斷點就換 session,從 `evidence/` 接手 |
 | 零 finding 就不記 `findings dispatched` | 「沒派」和「派了沒事」在證據上必須分得出來 |
 | parked 之後 `loop resolved` 解除 | 只有 `loop decided`(人的決定)能解除 |
+| 關卡卡住就自己「代批」照現狀 | 只有 chiao 的明確指示能 `loop waive`(附原話);commit 帶 `Waived:`,不寫「代批」 |
 | 同一條 finding 換 id 重修 | `findings add` 同 repro 拒收;`loop` 拒收幽靈 id |
 
 ## 一個反覆出現的失誤模式

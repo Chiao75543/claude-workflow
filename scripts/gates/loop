@@ -15,10 +15,14 @@
   loop <spec.yaml> redispatch <gate>        重派某道付費關卡(G10 上限 1)
   loop <spec.yaml> decided <finding-id> ship|hold|respec   人決定了(唯一能解除 parked/flipflop 的動詞)
   loop <spec.yaml> check                    有沒有任何一條停住
+  loop <spec.yaml> waive G9/10 <類別> --note "<為什麼>" --quote "<chiao 的原話>"
+                                            chiao 明確指示的豁免(只有他能下,orchestrator 不得自行豁免)
 退出碼: 0 可以繼續 / 1 停,交給人
 
 finding-id 必須存在於 evidence/findings.json —— 幽靈 id 不收,換 id 重修同一條也不行。
 parked / flipflop 之後 AI 不能自己 `resolved` 解除;只有 `decided` 能,而那是人的決定。
+豁免綁在下的當下那棵工作樹上,之後改了程式就失效;類別見 _common.WAIVE_CATEGORIES。
+commit 訊息帶它印出的 `Waived:` 那一行,不寫「代批」。
 """
 
 from __future__ import annotations
@@ -28,7 +32,10 @@ import pathlib
 import sys
 
 sys.path.insert(0, str(pathlib.Path(__file__).parent))
-from _common import evidence_dir, read_json, write_json  # noqa: E402
+from _common import (  # noqa: E402
+    HUMAN_WAIVABLE_GATES, WAIVE_CATEGORIES, evidence_dir, read_json, repo_root, write_json,
+)
+from _state import tree_fingerprint  # noqa: E402
 
 DECISIONS = {"ship", "hold", "respec"}
 
@@ -78,6 +85,36 @@ def main(argv: list[str]) -> int:
             print(f"✘ {gate} 已重派 {n} 次,上限 {limit} —— 停,交給人")
             return 1
         print(f"{gate} 第 {n} 次重派(上限 {limit})")
+        return 0
+
+    if verb == "waive":
+        gate, category = (argv[2:4] + ["", ""])[:2]
+        flag = lambda name: argv[argv.index(name) + 1].strip() if name in argv[:-1] else ""
+        note, quote = flag("--note"), flag("--quote")
+        if gate not in HUMAN_WAIVABLE_GATES:
+            print(f"✘ 只有 {', '.join(sorted(HUMAN_WAIVABLE_GATES))} 收豁免(收到 {gate!r})—— 腳本關與 smoke 誤擋就修規則")
+            return 2
+        if category not in WAIVE_CATEGORIES:
+            print("✘ 類別只能是:" + "; ".join(f"{k}({v})" for k, v in WAIVE_CATEGORIES.items()))
+            return 2
+        if not note or not quote:
+            print("✘ --note(為什麼)和 --quote(chiao 的原話)都要給 —— 沒有 chiao 的明確指示就不能豁免")
+            return 2
+        spec_path = pathlib.Path(argv[0]).resolve()
+        root = repo_root(spec_path.parent)
+        try:
+            tree = tree_fingerprint(root)
+        except RuntimeError as exc:
+            print(f"✘ {exc}")
+            return 1
+        waivers = state.setdefault("waivers", [])
+        wid = f"W-{len(waivers) + 1}"
+        waivers.append({"id": wid, "at": now(), "gate": gate, "category": category,
+                        "note": note, "quote": quote, "tree": tree})
+        write_json(ev / "loop.json", state)
+        print(f"{gate} 豁免 {wid}({category})—— 只對現在這棵樹有效,之後改了程式就失效")
+        print("commit 訊息帶這一行(不要寫「代批」):")
+        print(f"Waived: {(ev / 'loop.json').relative_to(root)}#{wid}")
         return 0
 
     if len(argv) < 3:

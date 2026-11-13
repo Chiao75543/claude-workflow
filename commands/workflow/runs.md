@@ -13,6 +13,7 @@ tags: [workflow, status]
 scripts/gates/runs                      # 列出全部
 scripts/gates/runs --set <spec> S9 "驗證關"
 scripts/gates/runs --set <spec> S5 "等你批說明頁" --blocked-on human
+scripts/gates/runs --yield              # 哪道關擋過東西;同一關 30 天內被豁免 ≥3 次會點名
 ```
 
 **注意**
