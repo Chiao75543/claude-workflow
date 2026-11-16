@@ -243,6 +243,7 @@ wt="$(git worktree list --porcelain \
 - 具體例子用**真實數值**寫 —— 那是人最容易一眼看出「這不是我要的」的形式
 
 你做的事:回答分歧、挑戰 N/A、確認意圖。**不讀規格,不讀程式碼。**
+其中「這個情境要不要防」的回答,照「常設決策」一節提議寫進 `specs/policy.yaml`。
 
 說明頁送出就 `runs --set specs/{name}/spec.yaml S5 "等你批說明頁" --blocked-on human`,
 批准後 `runs --set specs/{name}/spec.yaml S6 "定稿凍結"` —— 「等人多久」只從 status.json 的 history 算,
@@ -363,13 +364,15 @@ runner log、錄影、截圖或產物)。缺 Scenario、缺 example、`ok:false`
 `refs/pipeline/dispatch/<卡>/<關>/<時間>`(不是分支,一般的 push 不會帶上去)—— 修正前的狀態只存在那棵樹裡,
 沒留的話兩週後被 git gc 清掉,召回考題就少一題。每條 finding 用 `findings add` 收進來 ——
 沒重現的 `must_fix` / `ask_user` / `overbuilt` **收不進去**;同一個重現換 id 重 add 也**收不進去**(計數會歸零)。
+`ask_user` 照審查者給的 `files:` 加 `--files`(bug 所在的產品檔);審查者沒給就用重現失敗時堆疊裡的產品檔,
+還是確定不了就不寫 —— **沒寫 = 當成命中 risk_paths**,一律要人決定。
 實跑重現:紅 → `set confirmed`;不紅 → `set void`。**停在 proposed 的 finding 算沒處理完**,擋 G9/10。然後分流:
 
 | class | 然後 |
 |---|---|
 | `must_fix` | `loop fix F-n` → 修 → 重跑 G0–G7 + smoke + 那條重現 → 派增量審查 G10-fix(見「迴圈與收斂」)→ 不紅了且增量審查說已解 `loop resolved` + `findings set fixed` |
 | `overbuilt` | 同上,修 = 拿掉 |
-| `ask_user` | **不修。** full:留給 S11 的 PR 留言問人,分支停著等。**lite:預設接受風險、不擋推**;PR 留言獨立一段列出,人可 `findings set F-n added_example` 推翻 |
+| `ask_user` | **不修。** 先比對 `specs/policy.yaml`(見「常設決策」):對到 → `findings set F-n <決定> --policy P-n`。沒對到 → **預設接受風險、不擋推**,PR 留言頂端列為「合併即代表同意」,人可 `findings set F-n added_example` 推翻。**例外:bug 的檔命中 risk_paths(或沒記 files)** → 留給 S11 的 PR 留言問人,分支停著等。兩條車道一樣 |
 | `style` | 記下,不動 |
 
 `loop` 會在第 3 次 `fix` 拒絕(parked)、解過又出現時拒絕(flipflop)—— 那時停下來,
@@ -507,10 +510,11 @@ PR 可合併、輪到你按時 `runs --set specs/{name}/spec.yaml S13 "等你按
 | S smoke | 要 | 要 |
 | G9 spec-oracle | **不派** | 派 |
 | G10 code-adversary | **要** | 要 |
-| `ask_user` 的處置 | **預設 accepted_risk,不擋推**(PR 上列出,可推翻) | 停下來等人回答 |
+| `ask_user` 的處置 | 同 full | 常設決策 → 預設 accepted_risk、不擋推(PR 頂端列出,可推翻);bug 的檔命中 risk_paths 才停下來等人 |
 
-實測 31 條 ask_user:confirmed 13、accepted_risk 10、added_example 8 —— 三分之一最後是「不用防」,
-卻每一條都讓分支停下來等。lite 車道把這個預設翻過來:先記風險、照樣往前,人事後推翻。
+實測 183 條 ask_user:added_example 112、accepted_risk 69 —— 不到四成「不用防」,卻每一條都讓 full 的分支停下來等。
+改造方案 1.4 把預設翻過來(lite 原本就這樣):先記風險、照樣往前,人事後推翻;碰到風險路徑的才先問。
+補 example 的那六成,靠 spec-grill 的「規格常漏的情境」在 S5 前問掉,和常設決策直接套用。
 
 lite 砍的是「證明測試有牙齒」和「第二個人讀規格」;**沒砍「測試先寫、鎖住、實作碰不到」**這條規矩
 (它幾乎不花錢,卻防止 AI 為了變綠把考卷改簡單),也沒砍 G10 —— 它是砍掉 G5 之後唯一還會抓到
@@ -619,6 +623,28 @@ loop <spec> waive G9/10 <類別> --note "<為什麼>" --quote "<chiao 的原話>
 
 人回答之後 orchestrator 做的事:`decided ship` → `findings set F-n accepted_risk`,重跑 dashboard,PR 留言變乾淨;
 `decided respec` → 退回 S5 走規格改動;`decided hold` → 分支停在這,`runs --set` 標 blocked。
+
+### 常設決策(`specs/policy.yaml`)
+
+chiao 對「要不要防這個情境」的回答,下一張卡不該再問一次。
+
+```yaml
+policies:
+  - id: P-001
+    situation: 一句話講情境(不是這張卡的細節,是會再遇到的那一類)
+    decision: accepted_risk     # 或 added_example(補 example 並修)
+    source: <來源卡>
+    date: 2026-11-16
+```
+
+- **比對**:`ask_user` 證實(confirmed)後,orchestrator 讀 policy.yaml,判斷有沒有一條講的就是這個情境。
+  有 → `findings set F-n <那條的決定> --policy P-n`(腳本驗 P-n 存在、決定一致);拿不準就當沒對到
+- `accepted_risk` → 不擋推;`added_example` → 走 S7 補 example 並修。規格改了照樣「要重新批准」,G1/2 不因常設決策放寬
+- 依常設決策處理的,PR 留言頂端「依常設決策處理」逐條列出依哪條;套錯了人用 `findings set` 推翻(不帶 `--policy`)
+- policy.yaml 裡那條被刪或改了決定 → dashboard 回到「需要你決定」
+- **每次 chiao 回答 ask_user(PR 上,或 S5 的「要不要防」)**,orchestrator 都提議一條新項目(選擇題:記成常設決策 / 只這次),
+  chiao 確認才寫進本卡 worktree 的 `specs/policy.yaml`,跟著這張卡的 PR 進整合分支。不在指紋裡,寫了不會讓證據過期
+- 寫壞(YAML 錯、缺欄、id 重複)→ 一條都不套,`findings set --policy` 拒絕並講出哪裡壞
 
 **豁免(`loop waive`):只有 chiao 的明確指示能下,orchestrator 不得自行豁免。** 用在 G9/10 卡住、
 沒有合規路徑的時候(審查過期但 G10 已經重派過、額度用完派不出去):

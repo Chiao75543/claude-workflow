@@ -2514,7 +2514,7 @@ def test_risk_lanes(tmp: pathlib.Path) -> None:
     run_gate("smoke", spec, cwd=root)
     run_gate("findings", spec, "dispatched", "--gate", "G10", cwd=root)
     run_gate("findings", spec, "add", "--id", "F-1", "--gate", "G10", "--class", "ask_user", "--title", "連點兩下",
-             "--repro", "Tests/Twice.swift", "--question", "要防嗎?", cwd=root)
+             "--repro", "Tests/Twice.swift", "--question", "要防嗎?", "--files", "App/Demo.swift", cwd=root)
     run_gate("findings", spec, "set", "F-1", "confirmed", cwd=root)
     code, out = run_gate("dashboard", spec, cwd=root)
     dash = json.loads((root / "specs/demo/evidence/dashboard.json").read_text())
@@ -2526,14 +2526,23 @@ def test_risk_lanes(tmp: pathlib.Path) -> None:
     check("lite:finding 本身不被改寫(仍是 confirmed,人可推翻)",
           next(i for i in state["items"] if i["id"] == "F-1")["status"] == "confirmed")
     code, out = run_gate("pr-comment", spec, cwd=root)
-    check("lite:PR 留言標題全乾淨,但獨立一段列出預設接受的風險與推翻指令",
-          code == 0 and "全乾淨" in out and "已預設接受的風險" in out and "findings set F-1 added_example" in out, out[:600])
+    check("lite:PR 留言標題全乾淨,緊接著「合併即代表同意」一段列出預設接受的風險與推翻指令(在關卡表之前)",
+          code == 0 and "全乾淨" in out and "合併即代表同意" in out and "findings set F-1 added_example" in out
+          and out.index("合併即代表同意") < out.index("| 關卡 |"), out[:600])
     code, _ = run_gate("pr-comment", spec, "--check", cwd=root)
     check("lite:pr-comment --check 不把預設接受算成要人決定", code == 0)
     run_gate("findings", spec, "set", "F-1", "added_example", cwd=root)
     code, out = run_gate("dashboard", spec, cwd=root)
     check("lite:人推翻成 added_example 後,預設接受標籤消失",
           "預設接受" not in json.dumps(json.loads((root / "specs/demo/evidence/dashboard.json").read_text())["attention"], ensure_ascii=False))
+    # 1.4 的例外 lite 也適用:沒記 bug 在哪些檔 → 當成命中 risk_paths,不預設接受
+    run_gate("findings", spec, "add", "--id", "F-2", "--gate", "G10", "--class", "ask_user", "--title", "沒記檔",
+             "--repro", "Tests/NoFiles.swift", "--question", "要防嗎?", cwd=root)
+    run_gate("findings", spec, "set", "F-2", "confirmed", cwd=root)
+    code, out = run_gate("dashboard", spec, cwd=root)
+    dash = json.loads((root / "specs/demo/evidence/dashboard.json").read_text())
+    check("lite:ask_user 沒記 files → 需要你決定、不能自動推",
+          "不行(有待決事項)" in out and any(a["tag"] == "需要你決定" and "沒記" in a["body"] for a in dash["attention"]), out[-300:])
 
     root = repo("lane-full", with_flags(ALL_FALSE.replace("privacy: false", "privacy: true")))
     code, out = run_gate("dashboard", spec, cwd=root)
@@ -2554,6 +2563,138 @@ def test_risk_lanes(tmp: pathlib.Path) -> None:
     code, out = run_gate("dashboard", spec, cwd=root)
     check("pipeline 沒設 risk_paths → dashboard 走 full", code == 1 and json.loads(
         (root / "specs/demo/evidence/dashboard.json").read_text())["lane"] == "full", out[:400])
+
+
+def test_standing_decisions(tmp: pathlib.Path) -> None:
+    """改造方案 1.4:ask_user 先比對 specs/policy.yaml 的常設決策;沒對到 → 兩條車道都預設接受,
+    除非 bug 所在的檔命中 risk_paths(沒記檔 = 命中)。"""
+    from _common import RISK_FLAGS, finding_risk, load_policies
+    CFG = {"risk_paths": {k: [] for k in RISK_FLAGS}}
+    HIT = {"risk_paths": {**CFG["risk_paths"], "privacy": ["App/Rec/*"]}}
+    check("finding_risk:沒記 files → 當成命中", "沒記" in (finding_risk({}, CFG) or ""))
+    check("finding_risk:files 是空的、或混了非字串 → 當成命中",
+          bool(finding_risk({"files": []}, CFG)) and bool(finding_risk({"files": ["App/A.swift", 3]}, CFG)))
+    check("finding_risk:files 都沒命中 → None(可以預設接受)", finding_risk({"files": ["App/UI/A.swift"]}, HIT) is None)
+    why = finding_risk({"files": ["App/UI/A.swift", "App/Rec/Deep/B.swift"]}, HIT) or ""
+    check("finding_risk:命中 → 講出類別與命中的檔(* 跨 /),沒命中的不列",
+          "privacy" in why and "App/Rec/Deep/B.swift" in why and "App/UI/A.swift" not in why, why)
+    check("finding_risk:risk_paths 沒設 → 當成命中", "沒設" in (finding_risk({"files": ["App/A.swift"]}, {}) or ""))
+
+    pol = tmp / "pol"
+    (pol / "specs").mkdir(parents=True)
+    check("沒有 policy.yaml → 沒有常設決策,不算錯", load_policies(pol) == ({}, None))
+    write = lambda s: (pol / "specs/policy.yaml").write_text(s)
+    GOOD = "policies:\n  - {id: P-1, situation: 極寬圖片的佔位框差幾 pt, decision: accepted_risk, source: demo, date: 2026-11-16}\n"
+    write(GOOD)
+    got, problem = load_policies(pol)
+    check("合法的一條 → 讀得到(YAML 日期也收)", problem is None and got["P-1"]["decision"] == "accepted_risk", str(problem))
+    for name, text, word in [
+        ("id 重複", GOOD + "  - {id: P-1, situation: x, decision: added_example, source: d, date: '2026-11-16'}\n", "重複"),
+        ("decision 不是兩種之一", "policies:\n  - {id: P-2, situation: x, decision: fix_it, source: d, date: '2026-11-16'}\n", "decision"),
+        ("缺 situation", "policies:\n  - {id: P-3, decision: accepted_risk, source: d, date: '2026-11-16'}\n", "situation"),
+        ("缺 date", "policies:\n  - {id: P-4, situation: x, decision: accepted_risk, source: d}\n", "date"),
+        ("最外層不是 policies", "- {id: P-5}\n", "policies"),
+        ("YAML 壞掉", "policies: [\n", "YAML"),
+    ]:
+        write(text)
+        got, problem = load_policies(pol)
+        check(f"policy.yaml {name} → 一條都不套,講得出問題", got == {} and word in (problem or ""), str(problem))
+
+    # ---- 端到端:full 車道(沒寫旗標)、其他關全綠,只差 ask_user 怎麼處理 ----
+    spec = "specs/demo/spec.yaml"
+
+    def repo(name: str, policy: str | None = None) -> pathlib.Path:
+        root = make_repo(tmp / name)
+        freeze(root)
+        shutil.copy(root / "specs/demo/spec.yaml", root / "specs/demo/evidence/spec.approved.yaml")
+        (root / "Tests").mkdir()
+        (root / "Tests" / "DemoTests.swift").write_text(
+            '@Test("SC-001 a") func a() { #expect(x == .emptyList) }\n'
+            '@Test("SC-002 b") func b() { #expect(e == NetworkError.offline) }\n')
+        (root / "specs/demo/evidence/red.json").write_text(json.dumps({
+            "counts": {"assertion": 2}, "reconciliation": [{"reconciled": True}], "tests": []}))
+        (root / "specs/demo/evidence/test-review.agent.json").write_text('{"findings": []}')
+        (root / "specs" / "pipeline.yaml").write_text(
+            'runner: swift-testing\ntests:\n  globs: ["Tests/**/*.swift"]\nreachability:\n  globs: ["App/**/*.swift"]\n'
+            'lint: "true"\ntest: "true"\nsmoke: "true"\n'
+            "risk_paths: {permissions: [], privacy: ['App/Rec/*'], payments: [], irreversible_data: [],"
+            " critical_security: [], core_entrypoint: []}\n")
+        commit_base(root)
+        run_gate("test-review", spec, cwd=root)
+        freeze(root, ["Tests/DemoTests.swift"])
+        run_gate("smoke", spec, cwd=root)
+        dispatched(root)
+        return root
+
+    def ask(root: pathlib.Path, fid: str, *files: str) -> None:
+        run_gate("findings", spec, "add", "--id", fid, "--gate", "G10", "--class", "ask_user", "--title", f"{fid} 連點",
+                 "--repro", f"Tests/{fid}.swift", "--question", "要防嗎?",
+                 *(["--files", ",".join(files)] if files else []), cwd=root)
+        run_gate("findings", spec, "set", fid, "confirmed", cwd=root)
+
+    attention = lambda root: json.loads((root / "specs/demo/evidence/dashboard.json").read_text())["attention"]
+
+    root = repo("policy-default")
+    ask(root, "F-1", "App/UI/List.swift")
+    state = json.loads((root / "specs/demo/evidence/findings.json").read_text())
+    check("findings add --files 記成 list", state["items"][0].get("files") == ["App/UI/List.swift"], str(state["items"][0]))
+    code, out = run_gate("dashboard", spec, cwd=root)
+    check("full:ask_user 沒對到常設決策、檔沒命中 risk_paths → 預設接受,照樣自動推",
+          code == 0 and "自動推:可以" in out and any(a["tag"] == "預設接受" for a in attention(root))
+          and not any(a["tag"] == "需要你決定" for a in attention(root)), out[-300:])
+    code, out = run_gate("pr-comment", spec, cwd=root)
+    check("full:預設接受的列在 PR 留言頂端「合併即代表同意」", "合併即代表同意" in out
+          and out.index("合併即代表同意") < out.index("| 關卡 |") and "F-1" in out, out[:500])
+    ask(root, "F-2", "App/UI/List.swift", "App/Rec/Recorder.swift")
+    code, out = run_gate("dashboard", spec, cwd=root)
+    block = next((a for a in attention(root) if a["tag"] == "需要你決定"), {})
+    check("full:bug 的檔命中 risk_paths → 需要你決定、不能自動推,講出命中哪類哪個檔",
+          "不行(有待決事項)" in out and "F-2" in block.get("title", "") and "privacy" in block.get("body", "")
+          and "App/Rec/Recorder.swift" in block.get("body", ""), str(block))
+    check("full:沒命中的那條照樣預設接受", any(a["tag"] == "預設接受" and "F-1" in a["title"] for a in attention(root)))
+
+    # 常設決策
+    policy = ("policies:\n  - {id: P-1, situation: 連點送出兩次, decision: accepted_risk, source: demo, date: 2026-11-16}\n"
+              "  - {id: P-2, situation: 上傳中切到背景, decision: added_example, source: demo, date: 2026-11-16}\n")
+    root = repo("policy-applied")
+    ask(root, "F-1", "App/Rec/Recorder.swift")   # 命中 risk_paths,沒有常設決策就要人決定
+    code, out = run_gate("findings", spec, "set", "F-1", "accepted_risk", "--policy", "P-1", cwd=root)
+    check("set --policy:沒有 policy.yaml → 拒", code == 1 and "沒有 P-1" in out, out[:200])
+    (root / "specs/policy.yaml").write_text(policy)
+    code, out = run_gate("findings", spec, "set", "F-1", "accepted_risk", "--policy", "P-2", cwd=root)
+    check("set --policy:決定和狀態對不上 → 拒", code == 1 and "added_example" in out, out[:200])
+    code, out = run_gate("findings", spec, "set", "F-1", "accepted_risk", "--policy", "P-9", cwd=root)
+    check("set --policy:policy.yaml 沒有這條 → 拒", code == 1 and "沒有 P-9" in out, out[:200])
+    run_gate("findings", spec, "add", "--id", "F-3", "--gate", "G10", "--class", "must_fix", "--title", "x",
+             "--repro", "Tests/F3.swift", cwd=root)
+    code, out = run_gate("findings", spec, "set", "F-3", "accepted_risk", "--policy", "P-1", cwd=root)
+    check("set --policy:不是 ask_user → 拒", code == 1 and "只處理 ask_user" in out, out[:200])
+    run_gate("findings", spec, "set", "F-3", "fixed", cwd=root)
+    code, out = run_gate("findings", spec, "set", "F-1", "accepted_risk", "--policy", "P-1", cwd=root)
+    state = json.loads((root / "specs/demo/evidence/findings.json").read_text())
+    check("set --policy 合法 → 記下 policy", code == 0 and next(i for i in state["items"] if i["id"] == "F-1").get("policy") == "P-1", out)
+    code, out = run_gate("dashboard", spec, cwd=root)
+    rule = next((a for a in attention(root) if a["tag"] == "常設決策"), {})
+    check("依常設決策處理 → 不擋推(寫 policy.yaml 不讓 smoke、審查過期),列出依哪條、情境",
+          code == 0 and "自動推:可以" in out and "P-1" in rule.get("body", "") and "連點送出兩次" in rule.get("body", ""),
+          f"{rule} | {out[-300:]}")
+    code, out = run_gate("pr-comment", spec, cwd=root)
+    check("PR 留言頂端有「依常設決策處理」", "依常設決策處理" in out and out.index("依常設決策處理") < out.index("| 關卡 |"), out[:500])
+    (root / "specs/policy.yaml").write_text(policy.replace("P-1,", "P-7,"))
+    code, out = run_gate("dashboard", spec, cwd=root)
+    check("policy.yaml 裡那條不見了 → 根據沒了,回到需要你決定",
+          "不行(有待決事項)" in out and any(a["tag"] == "需要你決定" and "P-1" in a["body"] for a in attention(root)), out[-300:])
+    (root / "specs/policy.yaml").write_text(policy.replace("decision: accepted_risk", "decision: added_example"))
+    code, out = run_gate("dashboard", spec, cwd=root)
+    check("policy.yaml 那條的決定改了、和 finding 對不上 → 需要你決定",
+          "不行(有待決事項)" in out and any(a["tag"] == "需要你決定" and "P-1" in a["body"] for a in attention(root)), out[-300:])
+    (root / "specs/policy.yaml").write_text(policy)
+    run_gate("findings", spec, "set", "F-1", "accepted_risk", cwd=root)
+    state = json.loads((root / "specs/demo/evidence/findings.json").read_text())
+    check("不帶 --policy 再 set(人親自決定)→ 清掉之前記的 policy",
+          "policy" not in next(i for i in state["items"] if i["id"] == "F-1"))
+    code, out = run_gate("dashboard", spec, cwd=root)
+    check("人親自決定的 → 不列成常設決策", not any(a["tag"] == "常設決策" for a in attention(root)), out[-200:])
 
 
 def test_config_check(tmp: pathlib.Path) -> None:
@@ -3108,7 +3249,7 @@ def main() -> int:
                    test_reachability, test_reachability_hardening,
                    test_test_review, test_loop, test_findings, test_smoke,
                    test_dashboard_gating_order, test_dashboard_approval_anchor_phases,
-                   test_config_check, test_adversary_s7plus, test_risk_lanes, test_cost_ledger,
+                   test_config_check, test_adversary_s7plus, test_risk_lanes, test_standing_decisions, test_cost_ledger,
                    test_recall_bench, test_escape):
             try:
                 fn(tmp)

@@ -39,8 +39,8 @@ import sys
 sys.path.insert(0, str(pathlib.Path(__file__).parent))
 import _config  # noqa: E402
 from _common import (  # noqa: E402
-    LITE_WAIVED_GATES, WAIVABLE_GATES, WAIVE_CATEGORIES, evidence_dir, impact_files, integration_branch, lane, load_spec, read_json,
-    scenario_ids, triage_findings, write_json, write_status,
+    LITE_WAIVED_GATES, POLICY_DECISIONS, WAIVABLE_GATES, WAIVE_CATEGORIES, evidence_dir, finding_risk, impact_files,
+    integration_branch, lane, load_policies, load_spec, read_json, scenario_ids, triage_findings, write_json, write_status,
 )
 from _state import branch_fingerprint, index_fingerprint, sync_merges, tree_fingerprint  # noqa: E402
 
@@ -679,19 +679,42 @@ def main(argv: list[str]) -> int:
             "body": "這是決策,不是 code review:照樣出貨 / 分支停在這 / 回頭改規格。",
         })
     for i in asking:
-        if spec_lane == "lite":
-            # lite 車道:example 之外的 edge case 預設「先記風險、照樣往前」,不停下來等人。
-            # 實測 31 條 ask_user 有三分之一最後是 accepted_risk。finding 本身不改(仍是 confirmed),
-            # 人隨時可以 `findings set F-n added_example` 推翻;PR 留言會列出來。
+        risk = finding_risk(i, config)
+        if risk is None:
+            # 改造方案 1.4:example 之外的 edge case,兩條車道都預設「先記風險、照樣往前」,不停下來等人
+            # (lite 原本就這樣)。實測 183 條 ask_user 有 69 條最後是 accepted_risk。finding 本身不改
+            # (仍是 confirmed),人隨時可以 `findings set F-n added_example` 推翻;PR 留言頂端列為「合併即代表同意」。
             attention.append({
                 "tag": "預設接受", "title": f"{i['id']}:{i.get('title')}",
-                "body": f"{i.get('question')} 重現:{i.get('repro')}。lite 車道預設接受風險、不擋推;"
+                "body": f"{i.get('question')} 重現:{i.get('repro')}。預設接受風險、不擋推;"
                         f"要防 → `findings set {i['id']} added_example` 走 S7 加 example。",
             })
             continue
         attention.append({
             "tag": "需要你決定", "title": f"{i['id']}:{i.get('title')}",
-            "body": f"{i.get('question')} 重現:{i.get('repro')}。要防 → 加一組 example;不用 → 記成已接受風險。",
+            "body": f"{i.get('question')} 重現:{i.get('repro')}。{risk},不預設接受。"
+                    "要防 → 加一組 example;不用 → 記成已接受風險。",
+        })
+    # 依常設決策處理掉的 ask_user:不擋推,但 PR 上逐條列出,套錯了人推翻得到。
+    # policy.yaml 裡已經沒有那條(被刪、寫壞)→ 處理的根據不見了,回到要人決定。
+    policies, policy_problem = load_policies(root)
+    for i in items:
+        if not (isinstance(i, dict) and i.get("class") == "ask_user" and i.get("policy")
+                and i.get("status") in POLICY_DECISIONS):
+            continue
+        rule = policies.get(i["policy"])
+        if rule is None or rule.get("decision") != i["status"]:
+            attention.append({
+                "tag": "需要你決定", "title": f"{i['id']}:{i.get('title')}",
+                "body": f"記成依常設決策 {i['policy']} 處理,但 specs/policy.yaml "
+                        + (policy_problem or ("沒有這條" if rule is None else f"這條的決定是 {rule.get('decision')}"))
+                        + f"。{i.get('question')} 要防 → 加一組 example;不用 → 記成已接受風險。",
+            })
+            continue
+        attention.append({
+            "tag": "常設決策", "title": f"{i['id']}:{i.get('title')}",
+            "body": f"依 {i['policy']}「{rule['situation']}」→ {POLICY_DECISIONS[i['status']]}。"
+                    f"套錯了 → `findings set {i['id']} <另一個決定>`(不帶 --policy)。",
         })
 
     degraded = [gate for gate in ("G9", "G10")

@@ -19,7 +19,9 @@ import pathlib
 import subprocess
 import tempfile
 
-EXCLUDED = ["specs/*/evidence/**", "specs/_yield.jsonl"]
+# policy.yaml(改造方案 1.4):chiao 回答 ask_user 後才寫進常設決策,它不是產品的一部分;
+# 算進指紋的話,每寫一條 smoke 與審查就全部過期。dashboard 每次都即時讀它,不靠證據。
+EXCLUDED = ["specs/*/evidence/**", "specs/_yield.jsonl", "specs/policy.yaml"]
 
 
 def tree_fingerprint(root: pathlib.Path) -> str:

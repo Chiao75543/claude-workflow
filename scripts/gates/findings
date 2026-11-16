@@ -11,8 +11,11 @@
 
 用法:
   findings <spec.yaml> add --id F-001 --gate G10 --class must_fix --title "…" --repro "指令或測試路徑"
-                           [--sc SC-003] [--question "要不要防這個?"]
-  findings <spec.yaml> set F-001 confirmed|void|fixed|accepted_risk|added_example
+                           [--sc SC-003] [--question "要不要防這個?"] [--files "App/A.swift,App/B.swift"]
+                           --files:bug 所在的產品檔。ask_user 拿它比 risk_paths —— 沒寫就當成命中,不能預設接受
+  findings <spec.yaml> set F-001 confirmed|void|fixed|accepted_risk|added_example [--policy P-003]
+                           --policy:ask_user 依 specs/policy.yaml 的常設決策處理(決定要和狀態一致);
+                           不給 = 人這次親自決定,會清掉之前記的 policy
   findings <spec.yaml> dispatched --gate G9|G10 [--model opus] [--degraded]
                            記「派過了」—— 零 finding 的乾淨審查也要留下派過的紀錄。
                            --degraded:該用的模型額度用完,退到次一級才派得出去(證據表會標出來)
@@ -40,7 +43,8 @@ import sys
 
 sys.path.insert(0, str(pathlib.Path(__file__).parent))
 from _common import (  # noqa: E402
-    evidence_dir, impact_files, integration_branch, load_spec, read_json, repo_root, triage_findings, write_json,
+    POLICY_DECISIONS, evidence_dir, impact_files, integration_branch, load_policies, load_spec, read_json, repo_root,
+    triage_findings, write_json,
 )
 from _state import EXCLUDED, branch_fingerprint, sync_merges, tree_fingerprint  # noqa: E402
 
@@ -160,9 +164,11 @@ def main(argv: list[str]) -> int:
         if cls == "ask_user" and not (question or "").strip():
             print("✘ ask_user 必須附問句(--question)—— 人要回答的是一個問題,不是一段描述")
             return 1
+        files = [f.strip() for f in (flag(argv, "--files") or "").split(",") if f.strip()]
         items.append({
             "id": fid, "gate": gate, "class": cls, "title": title, "sc": flag(argv, "--sc"),
             "repro": repro, "question": question, "status": "proposed",
+            **({"files": files} if files else {}),
             # 是哪個模型審出來的:沒有這欄就永遠回答不了「換模型之後審得有沒有比較差」
             **{k: v for k, v in ((state.get("increments") or [{}])[-1] if gate == "G10-fix"
                                  else (state.get("dispatched") or {}).get(gate, {})).items()
@@ -299,10 +305,28 @@ def main(argv: list[str]) -> int:
         if item["class"] == "ask_user" and status == "fixed":
             print("✘ ask_user 不能直接 fixed —— 人說要防就 added_example,不要就 accepted_risk")
             return 1
+        pid = flag(argv, "--policy")
+        if pid:
+            policies, problem = load_policies(root)
+            if item["class"] != "ask_user":
+                print("✘ 常設決策只處理 ask_user")
+                return 1
+            if problem:
+                print(f"✘ specs/policy.yaml {problem} —— 修好之前一條都不能套")
+                return 1
+            if pid not in policies:
+                print(f"✘ specs/policy.yaml 沒有 {pid}")
+                return 1
+            if policies[pid]["decision"] != status:
+                print(f"✘ {pid} 的決定是 {policies[pid]['decision']}({POLICY_DECISIONS[policies[pid]['decision']]}),不是 {status}")
+                return 1
+            item["policy"] = pid
+        else:
+            item.pop("policy", None)
         item["status"] = status
         state["summary"] = summary(state)
         write_json(ev / "findings.json", state)
-        print(f"{fid} → {status}")
+        print(f"{fid} → {status}" + (f"(依常設決策 {pid})" if pid else ""))
         return 0
 
     if verb in ("list", "check"):

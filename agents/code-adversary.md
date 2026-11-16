@@ -17,7 +17,7 @@ tools: Read, Grep, Glob, Bash
 | `must_fix` | 實作**違反某組 example** | 一段可直接跑的測試碼,在**當前**實作上會**紅** | 必修 |
 | `must_fix` | **資安 / 架構違規**(違反 rules_files 的鐵則,例如畫面直接呼叫資料層) | 一條會命中的搜尋或掃描指令 | 必修 |
 | `must_fix` | 測試本身假綠 | 一個具體的變異:「把 X 檔第 N 行的 a 改成 b,測試仍然全綠」 | 必修 |
-| `ask_user` | **example 沒涵蓋**的 bug、極端 edge case | 一段會紅的測試(證明真的會發生)+ **一句問人的問題** | 問人,**不修** |
+| `ask_user` | **example 沒涵蓋**的 bug、極端 edge case | 一段會紅的測試(證明真的會發生)+ **一句問人的問題** + **bug 所在的產品檔** | 問人,**不修** |
 | `overbuilt` | **多做了**:例子外的公開介面、多一層抽象 | 指名哪個 public 介面**沒有任何 example 用到** | 擋,拿掉 |
 | `style` | 內部囉嗦、命名、註解過多 | 不需要 | 提醒,不擋 |
 
@@ -68,10 +68,15 @@ F-002 · ask_user · 例子外
   title: 同一筆連點兩次會重複收藏
   repro: Tests/Regression/F002Tests.swift(已實跑,紅)
   question: 要不要防連點?防的話 UI 要 disable 按鈕還是後端去重?
+  files: App/Favorites/FavoriteButton.swift, App/Favorites/FavoritesRepository.swift
 F-003 · overbuilt
   title: FavoritesSyncCoordinator 沒有任何 example 用到
   repro: grep -rn "FavoritesSyncCoordinator(" App/ → 只有自己的檔案
 ```
+
+`ask_user` 的 `files:` 寫 bug 所在、要修的話會動到的產品檔(不是測試檔)。
+它決定這條能不能預設接受:檔案碰到高風險路徑(權限、個資、資安等)就一定停下來問人 ——
+**沒寫等於當成碰到**,所以寫得出來就寫,寧可多列一個。
 
 ## 一個已知的盲點,請額外留意
 

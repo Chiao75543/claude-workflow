@@ -93,9 +93,14 @@ def risk_paths_problem(config: dict) -> str | None:
 def risk_hits(spec: dict, config: dict) -> dict[str, list[str]] | None:
     """impact.files 命中 risk_paths 的檔,依類別分;沒命中的類別不列。risk_paths 有問題 → None。
     樣式是 fnmatch:* 會跨過 /,所以 src/auth/* 涵蓋底下所有層。"""
+    return path_risk_hits(impact_files(spec), config)
+
+
+def path_risk_hits(candidates, config: dict) -> dict[str, list[str]] | None:
+    """一組路徑命中 risk_paths 的,依類別分。卡的 impact.files 與 ask_user 的 files 共用。"""
     if risk_paths_problem(config):
         return None
-    files = sorted(impact_files(spec))
+    files = sorted(candidates)
     # impact.files 有人寫成「A + B」「路徑(說明)」:整條和空白切開的每一段都比,寧可多中
     hits = {flag: [p for p in files
                    if any(fnmatch.fnmatchcase(t, g) for t in {p, *p.split()} for g in config["risk_paths"][flag])]
@@ -312,6 +317,56 @@ def triage_findings(items: list) -> tuple[list, list]:
         elif i.get("class") in ("must_fix", "overbuilt") and i.get("status") not in FINDING_DONE:
             pending.append(i)
     return pending, asking
+
+
+def finding_risk(item: dict, config: dict) -> str | None:
+    """ask_user 為什麼不能預設接受(改造方案 1.4);None = 沒命中 risk_paths,可以預設接受。
+    沒記 files(含 1.4 之前收的)、或 risk_paths 有問題 —— 判不了就當成命中,維持「需要你決定」。"""
+    files = item.get("files")
+    if not isinstance(files, list) or not files or not all(isinstance(f, str) and f.strip() for f in files):
+        return "沒記 bug 在哪些檔(files),當成命中 risk_paths"
+    hits = path_risk_hits(files, config)
+    if hits is None:
+        return f"risk_paths {risk_paths_problem(config)},當成命中"
+    if hits:
+        return "命中 risk_paths:" + ";".join(f"{flag} {', '.join(paths)}" for flag, paths in hits.items())
+    return None
+
+
+POLICY_DECISIONS = {"accepted_risk": "接受風險", "added_example": "補 example 並修"}
+
+
+def load_policies(root: pathlib.Path) -> tuple[dict[str, dict], str | None]:
+    """specs/policy.yaml 的常設決策 {id: 條目}(改造方案 1.4)。沒有這個檔 = 還沒有常設決策;
+    寫壞 → ({}, 問題),一條都不套,寧可回到預設規則。"""
+    import yaml
+
+    path = root / "specs" / "policy.yaml"
+    if not path.exists():
+        return {}, None
+    try:
+        data = yaml.safe_load(path.read_text())
+    except yaml.YAMLError as exc:
+        return {}, f"不是合法的 YAML:{str(exc).splitlines()[0]}"
+    entries = data.get("policies") if isinstance(data, dict) else None
+    if not isinstance(entries, list):
+        return {}, "最外層要是 policies: [ … ]"
+    policies, problems = {}, []
+    for n, e in enumerate(entries, 1):
+        e = e if isinstance(e, dict) else {}
+        pid = e.get("id")
+        bad = [k for k in ("id", "situation", "source") if not (isinstance(e.get(k), str) and e[k].strip())]
+        if e.get("decision") not in POLICY_DECISIONS:
+            bad.append("decision(accepted_risk 或 added_example)")
+        if not isinstance(e.get("date"), (str, datetime.date)) or not str(e.get("date")).strip():
+            bad.append("date")
+        if pid in policies:
+            bad.append(f"id {pid} 重複")
+        if bad:
+            problems.append(f"第 {n} 條缺或錯:{', '.join(bad)}")
+        else:
+            policies[pid] = e
+    return ({}, "; ".join(problems)) if problems else (policies, None)
 
 
 def evidence_dir(spec_path: pathlib.Path) -> pathlib.Path:
