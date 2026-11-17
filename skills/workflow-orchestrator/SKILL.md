@@ -296,7 +296,7 @@ wt="$(git worktree list --porcelain \
 | `6a` 單元測試 | 必須有 true RED、逐 example 審查並凍結 | G4 必須 GREEN |
 | `6b` 靜態 assertion | 必須有 RED 與逐 example 追溯,不可跟 6c 一起略過 | G4 的專案 test 指令必須轉綠 |
 | `6c` build artifact／可驅動 smoke | 明確列為 deferred,不准寫假的 `@Test` 充數 | S9b 必須逐 Scenario/example 交實跑檔案證據 |
-| `6d` 只能人工 | 不進自動測試證據；`manual_reason` 必填 | 證據表列為人工待驗 |
+| `6d` 只能人工 | 不進自動測試證據；`manual_reason` 必填 | S10 記進發版清單,不擋這張卡;發版前集中驗(見「發版前人工驗」) |
 
 任何未知或缺少的 mode 都 fail closed；不能因為不在某階段集合裡就靜默免驗。
 
@@ -392,6 +392,14 @@ owner 批准，也絕不允許 auto-push。這關全綠才進 S10。
 
 ### S10 Commit
 
+本卡有 6d 的話,commit 前先記進發版清單,清單跟著這個 commit 進 PR:
+
+```bash
+scripts/gates/release-checklist specs/{name}/spec.yaml   # 沒有 6d 就什麼都不做;重跑會照目前規格原地更新
+```
+
+沒記、或記的跟規格對不上 → dashboard 標「要人工驗」擋推;重跑這支就好。這個檔不算進指紋,寫它不會讓 smoke 或審查過期。
+
 ```
 {type}({scope}): {description} [{TICKET} if any]
 
@@ -435,6 +443,9 @@ scripts/gates/dashboard specs/{name}/spec.yaml --trigger merge-main   # G0–G7 
 
 `synced` 也會把「上次審過的樹」移到併完的樹,之後再修 finding,`fix-diff` 才不會混進 main 的改動。
 沒跑 `synced` 就 `fix-diff`,它會拒絕。這個 PR 之前派的審查沒有本卡改動的指紋,併 main 後只能整張重審。
+
+`specs/_release_checklist.md` 衝突:兩張卡各在檔尾加了一段,**兩段都留**(專案可在 `.gitattributes` 寫
+`specs/_release_checklist.md merge=union` 讓 git 自己留)。這個檔不算本卡的改動,不影響 `synced` 的判定。
 
 ### S11 自動推 + 開 PR + 證據表貼成留言
 
@@ -485,6 +496,22 @@ PR 可合併、輪到你按時 `runs --set specs/{name}/spec.yaml S13 "等你按
 - 拒絕(還沒落地、有沒存的改動)就照它列的原因問 chiao。**不加 `--force`、不自己 `git worktree remove`**
 - 遠端分支不刪 —— 那是 chiao 的決定
 - 以前留下來的:`cleanup --landed` 只列不刪;清單給 chiao 看過、他同意了才加 `--yes`
+
+### 發版前人工驗(版本層級)
+
+只能人工驗(6d)的 Scenario 不擋單張卡(改造方案 1.5):S10 記進 `specs/_release_checklist.md`,PR 留言列在
+「發版前要人工驗」,合併就進了清單的「待驗」段。這是 pipeline 保留給人的第三個點(另兩個是 S5 與按 merge),
+粒度是版本,不是卡。
+
+chiao 說要送 TestFlight 或正式部署:
+
+1. 印出整合分支上的「待驗」段給 chiao(`git show origin/{INTEGRATION_BRANCH}:specs/_release_checklist.md`)
+2. chiao 照每條的 given / when / then / examples 驗,過的打勾 —— 在檔案上勾,或告訴 orchestrator 哪幾條過了
+3. chiao 說「vX 驗完了」→ 開一個小 PR(功能分支,不直推):打勾的條目連同卡名標題,搬到「待驗」上面新的
+   `## 已驗 vX(YYYY-MM-DD)` 段,去掉 `<!-- card -->` 標記;沒勾的留在待驗。整段搬走的卡,待驗裡不留空標題
+4. 沒過的留在待驗,另開一張卡修(`/workflow`)。還沒上線,不是漏網,不記 `escape`
+
+舊卡(這條規則之前合併的)的 6d 當時已逐卡處理,不補進清單。
 
 ## 兩條車道
 

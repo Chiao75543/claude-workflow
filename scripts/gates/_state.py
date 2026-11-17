@@ -21,7 +21,8 @@ import tempfile
 
 # policy.yaml(改造方案 1.4):chiao 回答 ask_user 後才寫進常設決策,它不是產品的一部分;
 # 算進指紋的話,每寫一條 smoke 與審查就全部過期。dashboard 每次都即時讀它,不靠證據。
-EXCLUDED = ["specs/*/evidence/**", "specs/_yield.jsonl", "specs/policy.yaml"]
+# _release_checklist.md(改造方案 1.5):S10 才記本卡的 6d,同理;dashboard 即時比對它跟規格。
+EXCLUDED = ["specs/*/evidence/**", "specs/_yield.jsonl", "specs/policy.yaml", "specs/_release_checklist.md"]
 
 
 def tree_fingerprint(root: pathlib.Path) -> str:
