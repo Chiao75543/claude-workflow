@@ -17,7 +17,9 @@ tags: [workflow, verify, gates]
 4. `must_fix` / `overbuilt` → `scripts/gates/loop fix F-n` → 修 → 重跑 G0–G7 + smoke + 重現 →
    派增量審查 `fix-reviewer`(只給 `findings fix-diff` 和那條 finding,派完記 `findings dispatched --gate G10-fix --finding F-n`;
    不算 G10 重派)→ 已解才 `loop resolved` + `findings set fixed`。它提出的新 finding 用 `--gate G10-fix` 收,照常分流
-5. `ask_user` **不修**,留給 PR 留言問人;`style` 記下不動
+5. `ask_user` **不修**:`findings add` 帶 `--files`(bug 所在的產品檔)。先比對 `specs/policy.yaml` 的常設決策,
+   對到就 `findings set F-n <決定> --policy P-n`;沒對到就預設接受、PR 留言頂端列出,
+   檔案命中 risk_paths(或沒寫 files)才留給 PR 留言問人。`style` 記下不動
 6. `scripts/gates/findings check` 乾淨(或只剩 ask_user)後，stage 這次 commit 的完整內容（含
    `evidence/spec.approved.yaml`），再跑 `scripts/gates/dashboard specs/{name}/spec.yaml --pre-commit --trigger <first|fix|merge-main|ci-red>`
 7. pre-commit 全綠才進 S10；它只允許 commit，絕不允許 auto-push。commit 後立即重跑不帶
