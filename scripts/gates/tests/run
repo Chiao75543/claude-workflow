@@ -2785,6 +2785,23 @@ def test_release_checklist(tmp: pathlib.Path) -> None:
     code, out = run_gate("release-checklist", spec, cwd=root)
     check("沒有 6d → 什麼都不寫", code == 0 and not (root / "specs/_release_checklist.md").exists(), out)
 
+    # 整張卡都是 6d:沒有任何自動證據,照舊逐卡驗(chiao 決定)
+    from _common import manual_only
+    all_6d = VALID_SPEC.replace("mode: 6a\n", "mode: 6d\n        manual_reason: 實機\n")
+    check("manual_only:全部 6d → True;混著 → False;沒有 Scenario → False",
+          manual_only(yaml.safe_load(all_6d)) and not manual_only(yaml.safe_load(with_6d)) and not manual_only({}))
+    root = make_repo(tmp / "release-all6d", all_6d)
+    code, out = run_gate("release-checklist", spec, cwd=root)
+    check("整張卡都是 6d → 不記進清單,講要逐卡驗",
+          code == 0 and "逐卡驗" in out and not (root / "specs/_release_checklist.md").exists(), out)
+    (root / "specs/_release_checklist.md").write_text(release_block(yaml.safe_load(all_6d), "demo"))
+    commit_base(root)
+    run_gate("dashboard", spec, cwd=root)
+    tag = next((a for a in json.loads((root / "specs/demo/evidence/dashboard.json").read_text())["attention"]
+                if "SC-001" in a.get("body", "")), {})
+    check("整張卡都是 6d → 清單裡就算有也照舊要人工驗(擋推),講合併前要驗過",
+          tag.get("tag") == "要人工驗" and "整張卡" in tag.get("title", "") and "SC-002" in tag.get("body", ""), str(tag))
+
 
 def test_config_check(tmp: pathlib.Path) -> None:
     root = make_repo(tmp / "cfg")

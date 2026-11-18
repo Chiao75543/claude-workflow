@@ -2,6 +2,7 @@
 """release-checklist — 把本卡只能人工驗(6d)的 Scenario 記進 specs/_release_checklist.md(改造方案 1.5)。
 
 6d 不再擋單張卡:隨這張卡的 PR 合併進發版清單,送 TestFlight 或正式部署前由 chiao 照清單一起驗。
+例外:整張卡都是 6d(沒有任何自動證據)→ 不記,照舊合併前逐卡驗。
 S10 commit 前跑。清單裡已有本卡那段 → 換成照目前規格重產的內容(規格事後修正也跟著);
 沒有 → 加在檔尾(待驗段永遠在最後)。本卡沒有 6d 就什麼都不做。
 dashboard 會比對:這段跟規格對不上,就標「要人工驗」擋推。
@@ -15,7 +16,8 @@ import pathlib
 import sys
 
 sys.path.insert(0, str(pathlib.Path(__file__).parent))
-from _common import MANUAL_MODES, RELEASE_CHECKLIST, load_spec, release_block, scenario_ids_for_modes  # noqa: E402
+from _common import (MANUAL_MODES, RELEASE_CHECKLIST, load_spec, manual_only, release_block,  # noqa: E402
+                     scenario_ids_for_modes)
 
 HEADER = """# 發版前人工驗清單
 
@@ -34,6 +36,9 @@ def main(argv: list[str]) -> int:
     spec_path = pathlib.Path(argv[0]).resolve()
     card = spec_path.parent.name
     spec = load_spec(spec_path)
+    if manual_only(spec):
+        print(f"{card}:整張卡都只能人工驗、沒有自動證據 —— 不記進發版清單,合併前逐卡驗(PR 頂端「需要你決定」)")
+        return 0
     block = release_block(spec, card)
     if block is None:
         print(f"{card}:沒有只能人工驗的 Scenario,不用記")

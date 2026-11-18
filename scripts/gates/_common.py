@@ -392,6 +392,12 @@ def release_block(spec: dict, card: str) -> str | None:
             + "\n".join(items) + f"\n<!-- /card: {card} -->\n")
 
 
+def manual_only(spec: dict) -> bool:
+    """整張卡都是 6d:沒有任何自動證據,PR 審查只看得到 code → 照舊逐卡驗,合併前人要驗過(chiao 決定)。"""
+    modes = [sc.get("mode") for _, sc in scenarios(spec)]
+    return bool(modes) and all(isinstance(m, str) and m in MANUAL_MODES for m in modes)
+
+
 def release_problem(root: pathlib.Path, spec: dict, card: str) -> str | None:
     """本卡的 6d 有沒有照目前的規格記進發版清單;記好了(或沒有 6d)→ None。"""
     want = release_block(spec, card)

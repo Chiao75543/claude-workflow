@@ -296,7 +296,7 @@ wt="$(git worktree list --porcelain \
 | `6a` 單元測試 | 必須有 true RED、逐 example 審查並凍結 | G4 必須 GREEN |
 | `6b` 靜態 assertion | 必須有 RED 與逐 example 追溯,不可跟 6c 一起略過 | G4 的專案 test 指令必須轉綠 |
 | `6c` build artifact／可驅動 smoke | 明確列為 deferred,不准寫假的 `@Test` 充數 | S9b 必須逐 Scenario/example 交實跑檔案證據 |
-| `6d` 只能人工 | 不進自動測試證據；`manual_reason` 必填 | S10 記進發版清單,不擋這張卡;發版前集中驗(見「發版前人工驗」) |
+| `6d` 只能人工 | 不進自動測試證據；`manual_reason` 必填 | S10 記進發版清單,不擋這張卡;發版前集中驗(見「發版前人工驗」)。整張卡都是 6d → 照舊逐卡驗 |
 
 任何未知或缺少的 mode 都 fail closed；不能因為不在某階段集合裡就靜默免驗。
 
@@ -399,6 +399,7 @@ scripts/gates/release-checklist specs/{name}/spec.yaml   # 沒有 6d 就什麼�
 ```
 
 沒記、或記的跟規格對不上 → dashboard 標「要人工驗」擋推;重跑這支就好。這個檔不算進指紋,寫它不會讓 smoke 或審查過期。
+整張卡都是 6d 的例外:這支不記,dashboard 照舊標「要人工驗」(見「發版前人工驗」)。
 
 ```
 {type}({scope}): {description} [{TICKET} if any]
@@ -512,6 +513,10 @@ chiao 說要送 TestFlight 或正式部署:
 4. 沒過的留在待驗,另開一張卡修(`/workflow`)。還沒上線,不是漏網,不記 `escape`
 
 舊卡(這條規則之前合併的)的 6d 當時已逐卡處理,不補進清單。
+
+**例外:整張卡都是 6d**(沒有任何 6a/6b/6c)→ 照舊逐卡驗,不記進清單。這種卡沒有任何自動證據,
+PR 審查只看得到 code 有沒有重大問題、看不到功能對不對,先合併等於沒人驗過就進主線(chiao 決定)。
+dashboard 標「要人工驗」,PR 頂端「需要你決定」;chiao 照規格驗過才 merge。
 
 ## 兩條車道
 
