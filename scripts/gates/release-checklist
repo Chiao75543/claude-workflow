@@ -3,9 +3,9 @@
 
 6d 不再擋單張卡:隨這張卡的 PR 合併進發版清單,送 TestFlight 或正式部署前由 chiao 照清單一起驗。
 例外:整張卡都是 6d(沒有任何自動證據)→ 不記,照舊合併前逐卡驗。
-S10 commit 前跑。清單裡已有本卡那段 → 換成照目前規格重產的內容(規格事後修正也跟著);
-沒有 → 加在檔尾(待驗段永遠在最後)。本卡沒有 6d 就什麼都不做。
-dashboard 會比對:這段跟規格對不上,就標「要人工驗」擋推。
+S10 commit 前跑。照目前規格重產本卡那段、加在檔尾(待驗段永遠在最後);清單裡已有本卡那段就先拿掉,
+所以規格事後修正、或手動解衝突放錯段的,重跑都會歸位。本卡沒有 6d 就什麼都不做。
+dashboard 會比對:這段跟規格對不上、或不在待驗段底下,就標「要人工驗」擋推。
 
 用法: release-checklist <spec.yaml>
 """
@@ -55,9 +55,8 @@ def main(argv: list[str]) -> int:
         if j < 0:
             print(f"✘ {RELEASE_CHECKLIST} 裡 {card} 那段沒有結尾標記 `{end.strip()}`,先手動修好")
             return 1
-        text = text[:i] + block + text[j + len(end):]
-    else:
-        text = text.rstrip("\n") + "\n\n" + block
+        text = text[:i].rstrip("\n") + "\n\n" + text[j + len(end):].lstrip("\n")
+    text = text.rstrip("\n") + "\n\n" + block
     path.write_text(text)
     ids = sorted(scenario_ids_for_modes(spec, MANUAL_MODES))
     print(f"✓ {card}:{'、'.join(ids)} 記進 {RELEASE_CHECKLIST}(發版前一起驗,不擋這張卡)")

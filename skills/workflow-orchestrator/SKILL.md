@@ -395,10 +395,10 @@ owner 批准，也絕不允許 auto-push。這關全綠才進 S10。
 本卡有 6d 的話,commit 前先記進發版清單,清單跟著這個 commit 進 PR:
 
 ```bash
-scripts/gates/release-checklist specs/{name}/spec.yaml   # 沒有 6d 就什麼都不做;重跑會照目前規格原地更新
+scripts/gates/release-checklist specs/{name}/spec.yaml   # 沒有 6d 就什麼都不做;重跑會照目前規格重寫本卡那段、移到檔尾
 ```
 
-沒記、或記的跟規格對不上 → dashboard 標「要人工驗」擋推;重跑這支就好。這個檔不算進指紋,寫它不會讓 smoke 或審查過期。
+沒記、記的跟規格對不上、或那段不在「待驗」段底下 → dashboard 標「要人工驗」擋推;重跑這支就好。這個檔不算進指紋,寫它不會讓 smoke 或審查過期。
 整張卡都是 6d 的例外:這支不記,dashboard 照舊標「要人工驗」(見「發版前人工驗」)。
 
 ```
@@ -445,8 +445,9 @@ scripts/gates/dashboard specs/{name}/spec.yaml --trigger merge-main   # G0–G7 
 `synced` 也會把「上次審過的樹」移到併完的樹,之後再修 finding,`fix-diff` 才不會混進 main 的改動。
 沒跑 `synced` 就 `fix-diff`,它會拒絕。這個 PR 之前派的審查沒有本卡改動的指紋,併 main 後只能整張重審。
 
-`specs/_release_checklist.md` 衝突:兩張卡各在檔尾加了一段,**兩段都留**(專案可在 `.gitattributes` 寫
-`specs/_release_checklist.md merge=union` 讓 git 自己留)。這個檔不算本卡的改動,不影響 `synced` 的判定。
+`specs/_release_checklist.md` 衝突:兩張卡各在檔尾加了一段,**兩段都留,都在「待驗」底下**。
+不要設 `merge=union`:發版搬「已驗」時它會默默把別張卡併進已驗段、不報衝突;放錯段 dashboard 會擋。
+這個檔不算本卡的改動,不影響 `synced` 的判定。
 
 ### S11 自動推 + 開 PR + 證據表貼成留言
 

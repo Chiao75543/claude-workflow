@@ -2767,9 +2767,23 @@ def test_release_checklist(tmp: pathlib.Path) -> None:
           tag.get("tag") == "要人工驗" and "對不上" in tag.get("title", ""), str(tag))
     code, out = run_gate("release-checklist", spec, cwd=root)
     text = checklist.read_text()
-    check("重跑 → 原地換成新內容,別張卡那段不動",
+    check("重跑 → 換成新內容,別張卡那段不動",
           code == 0 and "when: 互撥兩次" in text and "when: 互撥\n" not in text and other in text
           and text.count("<!-- card: demo -->") == 1, text[-600:])
+    mine = release_block(yaml.safe_load((root / spec).read_text()), "demo")
+    checklist.write_text(text.replace(mine, "").replace("## 待驗\n", "## 已驗 v1(2026-01-01)\n\n" + mine + "\n## 待驗\n"))
+    code, out = run_gate("dashboard", spec, cwd=root)
+    tag = next((a for a in attention() if "SC-003" in a.get("body", "")), {})
+    check("本卡那段被放進「已驗」段(手動解衝突放錯)→ 要人工驗,講不在待驗",
+          tag.get("tag") == "要人工驗" and "不在「待驗」" in tag.get("title", ""), str(tag))
+    code, out = run_gate("release-checklist", spec, cwd=root)
+    text = checklist.read_text()
+    run_gate("dashboard", spec, cwd=root)
+    tag = next((a for a in attention() if "SC-003" in a.get("body", "")), {})
+    check("重跑 → 歸位到待驗底下,已驗段還在、別張卡不動,dashboard 回到發版時驗",
+          code == 0 and text.index("## 已驗 v1") < text.index("## 待驗") < text.index(mine)
+          and text.count("<!-- card: demo -->") == 1 and other in text and tag.get("tag") == "發版時驗",
+          f"{tag} | {text[-700:]}")
     checklist.write_text(text.replace("<!-- /card: demo -->\n", ""))
     code, out = run_gate("release-checklist", spec, cwd=root)
     check("本卡那段沒有結尾標記 → 拒寫,不猜", code == 1 and "結尾標記" in out, out)

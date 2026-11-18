@@ -399,7 +399,7 @@ def manual_only(spec: dict) -> bool:
 
 
 def release_problem(root: pathlib.Path, spec: dict, card: str) -> str | None:
-    """本卡的 6d 有沒有照目前的規格記進發版清單;記好了(或沒有 6d)→ None。"""
+    """本卡的 6d 有沒有照目前的規格記進發版清單、而且在「待驗」段底下;記好了(或沒有 6d)→ None。"""
     want = release_block(spec, card)
     if want is None:
         return None
@@ -407,8 +407,11 @@ def release_problem(root: pathlib.Path, spec: dict, card: str) -> str | None:
     if status == "error":
         return f"{RELEASE_CHECKLIST} 讀不了({detail})"
     text = (payload or b"").decode("utf-8", "replace")
-    if want in text:
-        return None
+    pos = text.find(want)
+    if pos >= 0:
+        # 手動解衝突可能把這段放進「已驗」段:發版前只看待驗,放錯段等於沒人驗就出去
+        head = text.rfind("\n## ", 0, pos)
+        return None if text.startswith("\n## 待驗\n", head) else "發版清單裡這張卡那段不在「待驗」段底下"
     return "發版清單裡這張卡的內容跟規格對不上" if f"<!-- card: {card} -->" in text else "還沒記進發版清單"
 
 
