@@ -39,8 +39,8 @@ import sys
 sys.path.insert(0, str(pathlib.Path(__file__).parent))
 import _config  # noqa: E402
 from _common import (  # noqa: E402
-    LITE_WAIVED_GATES, POLICY_DECISIONS, WAIVABLE_GATES, WAIVE_CATEGORIES, evidence_dir, finding_risk, impact_files,
-    integration_branch, lane, load_policies, load_spec, read_json, scenario_ids, triage_findings, write_json, write_status,
+    LITE_WAIVED_GATES, POLICY_DECISIONS, RELEASE_CHECKLIST, WAIVABLE_GATES, WAIVE_CATEGORIES, evidence_dir, finding_risk, impact_files,
+    integration_branch, lane, load_policies, load_spec, manual_only, read_json, release_problem, scenario_ids, triage_findings, write_json, write_status,
 )
 from _state import branch_fingerprint, index_fingerprint, sync_merges, tree_fingerprint  # noqa: E402
 
@@ -725,11 +725,24 @@ def main(argv: list[str]) -> int:
                                   + "、".join(f"{g}: {dispatched[g].get('model') or '未記錄'}" for g in degraded)
                                   + ")。不擋推 —— 但這張卡的審查強度比平常低,你該知道。"})
 
+    # 改造方案 1.5:6d 記進發版清單就不擋推,發版前集中驗;沒記、或記的跟規格對不上才擋。
+    # 例外(chiao 決定):整張卡都是 6d → 沒有任何自動證據,PR 審查只看得到 code,照舊逐卡驗、驗過才 merge。
     manual = [sc.get("id") for req in (spec.get("requirements") or []) if isinstance(req, dict)
               for sc in (req.get("scenarios") or []) if isinstance(sc, dict) and sc.get("mode") == "6d"]
-    if manual:
-        attention.append({"tag": "要人工驗", "title": f"{len(manual)} 條只能人工驗證",
-                          "body": "、".join(manual) + " —— 這些沒有自動化證據,你得自己跑一次。"})
+    if manual and manual_only(spec):
+        attention.append({"tag": "要人工驗", "title": f"整張卡 {len(manual)} 條都只能人工驗,合併前要驗過",
+                          "body": "、".join(manual) + " —— 這張卡沒有任何自動證據,PR 審查只看得到 code;"
+                                  "照規格的 given / when / then 驗過再 merge。不記進發版清單。"})
+    elif manual:
+        unlisted = release_problem(root, spec, spec_path.resolve().parent.name)
+        if unlisted:
+            attention.append({"tag": "要人工驗", "title": f"{len(manual)} 條只能人工驗,{unlisted}",
+                              "body": "、".join(manual) + f" —— 跑 `release-checklist {args[0]}` 記進 "
+                                      f"{RELEASE_CHECKLIST},就不擋推、改到發版前一起驗。"})
+        else:
+            attention.append({"tag": "發版時驗", "title": f"{len(manual)} 條只能人工驗",
+                              "body": "、".join(manual) + f" —— 已記進 `{RELEASE_CHECKLIST}`,"
+                                      "送 TestFlight 或正式部署前照清單一起驗。"})
 
     # 畫面證據只認這一輪 smoke 記下的截圖;目錄裡的舊圖不算(smoke 開跑會清,但這裡不信目錄)
     shots = sorted(smoke.get("screenshots") or []) if smoke and smoke_ok else []

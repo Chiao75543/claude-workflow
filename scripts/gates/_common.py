@@ -369,6 +369,52 @@ def load_policies(root: pathlib.Path) -> tuple[dict[str, dict], str | None]:
     return ({}, "; ".join(problems)) if problems else (policies, None)
 
 
+# 改造方案 1.5:只能人工驗(6d)的 Scenario 不擋單張卡,隨 PR 記進發版清單,發版前集中驗。
+RELEASE_CHECKLIST = "specs/_release_checklist.md"
+
+
+def release_block(spec: dict, card: str) -> str | None:
+    """本卡的 6d 在發版清單裡該長的樣子(卡名、為何人工、given/when/then/examples);沒有 6d → None。"""
+    import yaml
+
+    items = []
+    for _, sc in scenarios(spec):
+        if sc.get("mode") not in MANUAL_MODES:
+            continue
+        steps = {k: v for k, v in sc.items() if k not in ("id", "mode", "manual_reason")}
+        body = yaml.safe_dump(steps, allow_unicode=True, sort_keys=False, width=1000).rstrip("\n")
+        reason = " ".join(str(sc.get("manual_reason") or "").split())
+        items.append(f"- [ ] **{sc.get('id')}** {reason}\n  ```yaml\n"
+                     + "".join(f"  {line}\n" for line in body.split("\n")) + "  ```")
+    if not items:
+        return None
+    return (f"<!-- card: {card} -->\n### {card}\n\n規格:`specs/{card}/spec.yaml`\n\n"
+            + "\n".join(items) + f"\n<!-- /card: {card} -->\n")
+
+
+def manual_only(spec: dict) -> bool:
+    """整張卡都是 6d:沒有任何自動證據,PR 審查只看得到 code → 照舊逐卡驗,合併前人要驗過(chiao 決定)。"""
+    modes = [sc.get("mode") for _, sc in scenarios(spec)]
+    return bool(modes) and all(isinstance(m, str) and m in MANUAL_MODES for m in modes)
+
+
+def release_problem(root: pathlib.Path, spec: dict, card: str) -> str | None:
+    """本卡的 6d 有沒有照目前的規格記進發版清單、而且在「待驗」段底下;記好了(或沒有 6d)→ None。"""
+    want = release_block(spec, card)
+    if want is None:
+        return None
+    payload, status, detail = _safe_read_repo_file(root, RELEASE_CHECKLIST)
+    if status == "error":
+        return f"{RELEASE_CHECKLIST} 讀不了({detail})"
+    text = (payload or b"").decode("utf-8", "replace")
+    pos = text.find(want)
+    if pos >= 0:
+        # 手動解衝突可能把這段放進「已驗」段:發版前只看待驗,放錯段等於沒人驗就出去
+        head = text.rfind("\n## ", 0, pos)
+        return None if text.startswith("\n## 待驗\n", head) else "發版清單裡這張卡那段不在「待驗」段底下"
+    return "發版清單裡這張卡的內容跟規格對不上" if f"<!-- card: {card} -->" in text else "還沒記進發版清單"
+
+
 def evidence_dir(spec_path: pathlib.Path) -> pathlib.Path:
     return spec_path.parent / "evidence"
 

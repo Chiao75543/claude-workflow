@@ -4,8 +4,9 @@
 從 evidence/dashboard.json 產 markdown。頂端只有兩種標題:
   「✅ 全乾淨,沒有要你決定的事」
   「⏸ 需要你決定」+ 條列(parked / flipflop 的 finding、命中 risk_paths 的 edge case、
-     只能人工驗的 Scenario、規格改了要重新批准)
-緊接著是「合併即代表同意」(預設接受的 edge case)與「依常設決策處理」—— 不擋推,但 merge 前一眼看得到。
+     還沒記進發版清單的 6d Scenario、規格改了要重新批准)
+緊接著是「合併即代表同意」(預設接受的 edge case)、「依常設決策處理」與「發版前要人工驗」
+—— 不擋推,但 merge 前一眼看得到。
 
 用法: pr-comment <spec.yaml> [--check]
   --check  只回退出碼:0 全乾淨 / 1 有事要人決定(orchestrator 用它決定要不要標人)
@@ -47,7 +48,8 @@ def main(argv: list[str]) -> int:
     else:
         lines.append("## ✅ 全乾淨,沒有要你決定的事")
     for tag, heading in (("預設接受", "### 合併即代表同意(預設接受風險,可推翻)"),
-                         ("常設決策", "### 依常設決策處理(specs/policy.yaml,可推翻)")):
+                         ("常設決策", "### 依常設決策處理(specs/policy.yaml,可推翻)"),
+                         ("發版時驗", "### 發版前要人工驗(已記進 specs/_release_checklist.md)")):
         listed = [a for a in dash.get("attention") or [] if a.get("tag") == tag]
         if listed:
             lines += ["", heading] + [f"- **{a['title']}** —— {a['body']}" for a in listed]
@@ -62,7 +64,7 @@ def main(argv: list[str]) -> int:
     if s:
         lines.append("")
         lines.append(f"審查活動量:提出 {s.get('proposed', 0)} → 作廢 {s.get('void', 0)} → 證實 {s.get('confirmed', 0)}")
-    other = [a for a in dash.get("attention") or [] if not a.get("decision") and a.get("tag") not in ("預設接受", "常設決策")]
+    other = [a for a in dash.get("attention") or [] if not a.get("decision") and a.get("tag") not in ("預設接受", "常設決策", "發版時驗")]
     if other:
         lines.append("")
         lines.append("<details><summary>其他注意事項</summary>")

@@ -1,0 +1,67 @@
+#!/usr/bin/env python3
+"""release-checklist — 把本卡只能人工驗(6d)的 Scenario 記進 specs/_release_checklist.md(改造方案 1.5)。
+
+6d 不再擋單張卡:隨這張卡的 PR 合併進發版清單,送 TestFlight 或正式部署前由 chiao 照清單一起驗。
+例外:整張卡都是 6d(沒有任何自動證據)→ 不記,照舊合併前逐卡驗。
+S10 commit 前跑。照目前規格重產本卡那段、加在檔尾(待驗段永遠在最後);清單裡已有本卡那段就先拿掉,
+所以規格事後修正、或手動解衝突放錯段的,重跑都會歸位。本卡沒有 6d 就什麼都不做。
+dashboard 會比對:這段跟規格對不上、或不在待驗段底下,就標「要人工驗」擋推。
+
+用法: release-checklist <spec.yaml>
+"""
+
+from __future__ import annotations
+
+import pathlib
+import sys
+
+sys.path.insert(0, str(pathlib.Path(__file__).parent))
+from _common import (MANUAL_MODES, RELEASE_CHECKLIST, load_spec, manual_only, release_block,  # noqa: E402
+                     scenario_ids_for_modes)
+
+HEADER = """# 發版前人工驗清單
+
+只能人工驗(mode 6d)的 Scenario 不擋單張卡;合併時記在這裡,送 TestFlight 或正式部署前照清單一起驗。
+驗過的打勾 `[x]`,跟 orchestrator 說「vX 驗完了」:打勾的搬到「已驗 vX」段,沒過的留在待驗、另開卡修。
+新的卡一律由 `release-checklist` 加在檔尾,所以「待驗」永遠是最後一段。
+
+## 待驗
+"""
+
+
+def main(argv: list[str]) -> int:
+    if not argv or argv[0].startswith("-"):
+        print(__doc__)
+        return 2
+    spec_path = pathlib.Path(argv[0]).resolve()
+    card = spec_path.parent.name
+    spec = load_spec(spec_path)
+    if manual_only(spec):
+        print(f"{card}:整張卡都只能人工驗、沒有自動證據 —— 不記進發版清單,合併前逐卡驗(PR 頂端「需要你決定」)")
+        return 0
+    block = release_block(spec, card)
+    if block is None:
+        print(f"{card}:沒有只能人工驗的 Scenario,不用記")
+        return 0
+    path = spec_path.parents[2] / RELEASE_CHECKLIST
+    if path.is_symlink() or (path.exists() and not path.is_file()):
+        print(f"✘ {RELEASE_CHECKLIST} 不是一般檔案,不寫")
+        return 1
+    text = path.read_text() if path.exists() else HEADER
+    start, end = f"<!-- card: {card} -->", f"<!-- /card: {card} -->\n"
+    if start in text:
+        i = text.index(start)
+        j = text.find(end, i)
+        if j < 0:
+            print(f"✘ {RELEASE_CHECKLIST} 裡 {card} 那段沒有結尾標記 `{end.strip()}`,先手動修好")
+            return 1
+        text = text[:i].rstrip("\n") + "\n\n" + text[j + len(end):].lstrip("\n")
+    text = text.rstrip("\n") + "\n\n" + block
+    path.write_text(text)
+    ids = sorted(scenario_ids_for_modes(spec, MANUAL_MODES))
+    print(f"✓ {card}:{'、'.join(ids)} 記進 {RELEASE_CHECKLIST}(發版前一起驗,不擋這張卡)")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

@@ -2697,6 +2697,126 @@ def test_standing_decisions(tmp: pathlib.Path) -> None:
     check("人親自決定的 → 不列成常設決策", not any(a["tag"] == "常設決策" for a in attention(root)), out[-200:])
 
 
+def test_release_checklist(tmp: pathlib.Path) -> None:
+    """改造方案 1.5:6d 不擋單張卡 —— 隨 PR 記進 specs/_release_checklist.md,發版前集中驗。
+    沒記、或記的跟規格對不上,才標「要人工驗」擋推。"""
+    if str(GATES) not in sys.path:
+        sys.path.insert(0, str(GATES))
+    from _common import release_block
+    spec = "specs/demo/spec.yaml"
+    manual = ("      - id: SC-003\n        mode: 6d\n        manual_reason: |\n          要兩台實機\n          互打\n"
+              "        given: {devices: 兩台}\n        when: 互撥\n        then: {connected: true}\n"
+              "        examples:\n          - in: {case: a}\n            out: {heard: true}\n")
+    with_6d = VALID_SPEC.replace("tasks:\n", manual + "tasks:\n")
+    import yaml
+    block = release_block(yaml.safe_load(with_6d), "demo") or ""
+    check("release_block:卡名、規格路徑、id、manual_reason 收成一行、given/when/then/examples 都在、未打勾",
+          "### demo" in block and "specs/demo/spec.yaml" in block and "- [ ] **SC-003** 要兩台實機 互打" in block
+          and all(w in block for w in ("devices: 兩台", "when: 互撥", "connected: true", "heard: true"))
+          and "SC-001" not in block and "mode:" not in block, block)
+    check("release_block:沒有 6d → None", release_block(yaml.safe_load(VALID_SPEC), "demo") is None)
+
+    root = make_repo(tmp / "release", with_6d)
+    freeze(root)
+    shutil.copy(root / spec, root / "specs/demo/evidence/spec.approved.yaml")
+    (root / "Tests").mkdir()
+    (root / "Tests" / "DemoTests.swift").write_text(
+        '@Test("SC-001 a") func a() { #expect(x == .emptyList) }\n'
+        '@Test("SC-002 b") func b() { #expect(e == NetworkError.offline) }\n')
+    (root / "specs/demo/evidence/red.json").write_text(json.dumps({
+        "counts": {"assertion": 2}, "reconciliation": [{"reconciled": True}], "tests": []}))
+    (root / "specs/demo/evidence/test-review.agent.json").write_text('{"findings": []}')
+    (root / "specs" / "pipeline.yaml").write_text(
+        'runner: swift-testing\ntests:\n  globs: ["Tests/**/*.swift"]\nreachability:\n  globs: ["App/**/*.swift"]\n'
+        'lint: "true"\ntest: "true"\nsmoke: "true"\n'
+        "risk_paths: {permissions: [], privacy: [], payments: [], irreversible_data: [], critical_security: [], core_entrypoint: []}\n")
+    commit_base(root)
+    run_gate("test-review", spec, cwd=root)
+    freeze(root, ["Tests/DemoTests.swift"])
+    run_gate("smoke", spec, cwd=root)
+    dispatched(root)
+    attention = lambda: json.loads((root / "specs/demo/evidence/dashboard.json").read_text())["attention"]
+    checklist = root / "specs/_release_checklist.md"
+
+    code, out = run_gate("dashboard", spec, cwd=root)
+    tag = next((a for a in attention() if "SC-003" in a.get("body", "")), {})
+    check("6d 還沒記進發版清單 → 要人工驗、擋推,告訴你跑 release-checklist",
+          "不行(有待決事項)" in out and tag.get("tag") == "要人工驗" and "還沒記進" in tag.get("title", "")
+          and "release-checklist" in tag.get("body", ""), f"{tag} | {out[-300:]}")
+
+    code, out = run_gate("release-checklist", spec, cwd=root)
+    text = checklist.read_text() if checklist.exists() else ""
+    check("release-checklist:建檔(含待驗段)、記進本卡那段", code == 0 and "## 待驗" in text and block in text, out)
+    code, out = run_gate("dashboard", spec, cwd=root)
+    tag = next((a for a in attention() if "SC-003" in a.get("body", "")), {})
+    check("記進發版清單 → 發版時驗、不擋推(寫清單不讓 smoke、審查過期)",
+          code == 0 and "自動推:可以" in out and tag.get("tag") == "發版時驗", f"{tag} | {out[-300:]}")
+    code, out = run_gate("pr-comment", spec, cwd=root)
+    check("PR 留言頂端是全乾淨,下面列「發版前要人工驗」、不藏進其他注意事項",
+          out.startswith("## ✅") and "發版前要人工驗" in out and out.index("發版前要人工驗") < out.index("| 關卡 |")
+          and "SC-003" in out[:out.index("| 關卡 |")] and out.count("SC-003") == 1, out[:500])
+
+    run_gate("release-checklist", spec, cwd=root)
+    check("再跑一次 → 不重複記", checklist.read_text() == text)
+    other = "<!-- card: other -->\n### other\n\n- [x] **SC-009** 別張卡\n<!-- /card: other -->\n"
+    checklist.write_text(text.replace("<!-- card: demo -->", other + "\n<!-- card: demo -->"))
+    (root / spec).write_text(with_6d.lstrip().replace("when: 互撥", "when: 互撥兩次"))
+    code, out = run_gate("dashboard", spec, cwd=root)
+    tag = next((a for a in attention() if "SC-003" in a.get("body", "")), {})
+    check("規格的 6d 事後改了、清單還是舊的 → 要人工驗,講出對不上",
+          tag.get("tag") == "要人工驗" and "對不上" in tag.get("title", ""), str(tag))
+    code, out = run_gate("release-checklist", spec, cwd=root)
+    text = checklist.read_text()
+    check("重跑 → 換成新內容,別張卡那段不動",
+          code == 0 and "when: 互撥兩次" in text and "when: 互撥\n" not in text and other in text
+          and text.count("<!-- card: demo -->") == 1, text[-600:])
+    mine = release_block(yaml.safe_load((root / spec).read_text()), "demo")
+    checklist.write_text(text.replace(mine, "").replace("## 待驗\n", "## 已驗 v1(2026-01-01)\n\n" + mine + "\n## 待驗\n"))
+    code, out = run_gate("dashboard", spec, cwd=root)
+    tag = next((a for a in attention() if "SC-003" in a.get("body", "")), {})
+    check("本卡那段被放進「已驗」段(手動解衝突放錯)→ 要人工驗,講不在待驗",
+          tag.get("tag") == "要人工驗" and "不在「待驗」" in tag.get("title", ""), str(tag))
+    code, out = run_gate("release-checklist", spec, cwd=root)
+    text = checklist.read_text()
+    run_gate("dashboard", spec, cwd=root)
+    tag = next((a for a in attention() if "SC-003" in a.get("body", "")), {})
+    check("重跑 → 歸位到待驗底下,已驗段還在、別張卡不動,dashboard 回到發版時驗",
+          code == 0 and text.index("## 已驗 v1") < text.index("## 待驗") < text.index(mine)
+          and text.count("<!-- card: demo -->") == 1 and other in text and tag.get("tag") == "發版時驗",
+          f"{tag} | {text[-700:]}")
+    checklist.write_text(text.replace("<!-- /card: demo -->\n", ""))
+    code, out = run_gate("release-checklist", spec, cwd=root)
+    check("本卡那段沒有結尾標記 → 拒寫,不猜", code == 1 and "結尾標記" in out, out)
+    checklist.unlink()
+    checklist.symlink_to(root / "specs/demo/spec.yaml")
+    code, out = run_gate("release-checklist", spec, cwd=root)
+    check("清單是 symlink → 拒寫", code == 1 and "不是一般檔案" in out, out)
+    code, out = run_gate("dashboard", spec, cwd=root)
+    tag = next((a for a in attention() if "SC-003" in a.get("body", "")), {})
+    check("清單是 symlink → dashboard 不跟著讀,要人工驗", tag.get("tag") == "要人工驗" and "讀不了" in tag.get("title", ""), str(tag))
+
+    root = make_repo(tmp / "release-none")
+    code, out = run_gate("release-checklist", spec, cwd=root)
+    check("沒有 6d → 什麼都不寫", code == 0 and not (root / "specs/_release_checklist.md").exists(), out)
+
+    # 整張卡都是 6d:沒有任何自動證據,照舊逐卡驗(chiao 決定)
+    from _common import manual_only
+    all_6d = VALID_SPEC.replace("mode: 6a\n", "mode: 6d\n        manual_reason: 實機\n")
+    check("manual_only:全部 6d → True;混著 → False;沒有 Scenario → False",
+          manual_only(yaml.safe_load(all_6d)) and not manual_only(yaml.safe_load(with_6d)) and not manual_only({}))
+    root = make_repo(tmp / "release-all6d", all_6d)
+    code, out = run_gate("release-checklist", spec, cwd=root)
+    check("整張卡都是 6d → 不記進清單,講要逐卡驗",
+          code == 0 and "逐卡驗" in out and not (root / "specs/_release_checklist.md").exists(), out)
+    (root / "specs/_release_checklist.md").write_text(release_block(yaml.safe_load(all_6d), "demo"))
+    commit_base(root)
+    run_gate("dashboard", spec, cwd=root)
+    tag = next((a for a in json.loads((root / "specs/demo/evidence/dashboard.json").read_text())["attention"]
+                if "SC-001" in a.get("body", "")), {})
+    check("整張卡都是 6d → 清單裡就算有也照舊要人工驗(擋推),講合併前要驗過",
+          tag.get("tag") == "要人工驗" and "整張卡" in tag.get("title", "") and "SC-002" in tag.get("body", ""), str(tag))
+
+
 def test_config_check(tmp: pathlib.Path) -> None:
     root = make_repo(tmp / "cfg")
     code, out = run_gate("config-check", str(root), cwd=root)
@@ -3249,7 +3369,8 @@ def main() -> int:
                    test_reachability, test_reachability_hardening,
                    test_test_review, test_loop, test_findings, test_smoke,
                    test_dashboard_gating_order, test_dashboard_approval_anchor_phases,
-                   test_config_check, test_adversary_s7plus, test_risk_lanes, test_standing_decisions, test_cost_ledger,
+                   test_config_check, test_adversary_s7plus, test_risk_lanes, test_standing_decisions, test_release_checklist,
+                   test_cost_ledger,
                    test_recall_bench, test_escape):
             try:
                 fn(tmp)
