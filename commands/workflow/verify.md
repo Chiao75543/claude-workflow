@@ -11,8 +11,8 @@ tags: [workflow, verify, gates]
 
 1. `scripts/gates/` 的 G0–G7 依序跑;沒過退回 S8
 2. `scripts/gates/smoke specs/{name}/spec.yaml`;**沒過就停,不派審查**。判定只讀 `smoke.json`,不 `Read` 截圖
-3. 派 `spec-oracle` 與 `code-adversary`(不傳 `model`;**lite 車道只派 `code-adversary`**),派完立刻 `scripts/gates/findings dispatched --gate G9|G10 --model <實際模型>`;
-   Fable 額度用完 → 用 opus 重派一次並加 `--degraded`;不准退到 sonnet
+3. 派 `spec-oracle` 與 `code-adversary`(先 `scripts/gates/dispatch specs/{name}/spec.yaml G9|G10`,照它印的派;**lite 車道只派 `code-adversary`**),派完立刻 `scripts/gates/findings dispatched --gate G9|G10 --model <dispatch 印的>`;
+   Fable 額度用完 → `dispatch … --degraded`,照印的(opus)重派一次,`findings dispatched` 加 `--degraded`
    每條 finding 用 `findings add` 收,實跑重現 → `set confirmed` / `set void`(停在 proposed 算沒處理完)
 4. `must_fix` / `overbuilt` → `scripts/gates/loop fix F-n` → 修 → 重跑 G0–G7 + smoke + 重現 →
    派增量審查 `fix-reviewer`(只給 `findings fix-diff` 和那條 finding,派完記 `findings dispatched --gate G10-fix --finding F-n`;

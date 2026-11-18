@@ -30,14 +30,22 @@ def main(argv: list[str]) -> int:
         gaps.append("ci(只能是 none / github / gitlab)")
     if problem := risk_paths_problem(config):
         gaps.append(f"risk_paths({problem};沒設就每張卡都走 full)")
+    import yaml
+    raw_models = (yaml.safe_load(path.read_text()) or {}).get("models")
+    if problem := _config.models_problem(raw_models):
+        gaps.append(f"models({problem})")
     for key in ("runner", "lint", "test", "smoke", "integration_branch", "ci", "auto_push"):
         print(f"  {key:<20} {config.get(key)!r}")
     if isinstance(config.get("risk_paths"), dict):
         counts = " · ".join(f"{k} {len(v) if isinstance(v, list) else '?'}" for k, v in config["risk_paths"].items())
         print(f"  {'risk_paths':<20} {counts}")
-    if "models" in config:
-        # 舊鍵。只提示不失敗:既有專案的 pipeline.yaml 不該因為這次改版就紅。
-        print("  ℹ models 已停用 —— 模型只由 agents/*.md 決定,這個鍵沒有人讀,可以刪掉")
+    for station in _config.STATION_AGENTS:
+        cells = " · ".join(f"{ln} {'+'.join(c) if isinstance(c, list) else c if isinstance(c, str) else c.get('model')}"
+                           for ln in ("lite", "full") if (c := _config.model_cell(config, station, ln)) is not None)
+        print(f"  {'models.' + station:<20} {cells}")
+    if isinstance(raw_models, dict) and set(raw_models) & _config.OLD_MODEL_KEYS:
+        # 舊格式。只提示不失敗:既有專案的 pipeline.yaml 不該因為這次改版就紅。
+        print("  ℹ models 的 draft / review / build 是舊格式,沒有人讀,可以刪掉;新格式是「站: {lite: …, full: …}」")
     if gaps:
         print(f"\nconfig-check: FAIL  缺 {', '.join(gaps)}")
         return 1

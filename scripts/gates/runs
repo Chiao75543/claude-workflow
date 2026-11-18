@@ -6,6 +6,7 @@
   runs --set <spec.yaml> S5 "等你批說明頁" --blocked-on human
   runs --yield                            哪道關擋過東西、擋了幾次(origin/<整合分支> 上的 specs/_yield.jsonl,
                                           沒有 remote 才讀本機的);同一關 30 天內被豁免 ≥3 次會點名
+                                          每個「站 × 車道 × 起始模型」第一次就過的比例與升級率,升級率 >30% 點名
   runs --cost                             每張卡、每一站用了多少 token,以及花了多久、等人多久
 
 狀態寫在 <spec 目錄>/evidence/status.json(含追加式 history)。
@@ -113,10 +114,30 @@ def show_yield(root: pathlib.Path) -> int:
             if len(recent) >= WAIVE_FLAG_AT:
                 print(f"  ⚠ {gate} {WAIVE_WINDOW_DAYS} 天內被豁免 {len(recent)} 次({', '.join(sorted(set(recent)))})"
                       " —— 該檢討這關的規則了")
+    # 改造方案 2.3:dispatch 記的每一站。每次證據表都帶整份,取每張卡最後一筆;只算有記過不過的(寫程式的站)
+    latest = {row.get("name"): row["dispatch"] for row in rows if isinstance(row.get("dispatch"), dict)}
+    cells: dict = collections.defaultdict(lambda: [0, 0, 0])   # 張數、第一次就過、升過級
+    for disp in latest.values():
+        for station, attempts in disp.items():
+            attempts = [a for a in attempts if isinstance(a, dict)] if isinstance(attempts, list) else []
+            if not any(a.get("result") in ("pass", "fail") for a in attempts):
+                continue
+            first = attempts[0]
+            cell = cells[(station, str(first.get("lane")), str(first.get("model")))]
+            cell[0] += 1
+            cell[1] += first.get("result") == "pass"
+            cell[2] += any(a.get("escalated") for a in attempts)
+    if cells:
+        print("  站 · 車道 · 起始模型      第一次就過 · 升過級")
+        for (station, card_lane, model), (n, ok, up) in sorted(cells.items()):
+            flag = (f"  ⚠ 升級率 {up / n:.0%} 超過 {ESCALATE_FLAG_AT:.0%} —— 起始模型考慮調高一級"
+                    if up / n > ESCALATE_FLAG_AT else "")
+            print(f"  {station} · {card_lane} · {model:<8}  {ok}/{n} · {up}/{n}{flag}")
     return 0
 
 
 WAIVE_WINDOW_DAYS, WAIVE_FLAG_AT = 30, 3
+ESCALATE_FLAG_AT = 0.3
 
 
 def waived_at(waiver: dict) -> datetime.datetime | None:

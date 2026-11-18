@@ -35,13 +35,13 @@
 ```
 S1  識別              scan-siblings:誰在飛、會不會撞到
 S2  worktree
-S3  起草              全 codebase scope audit + spec-grill(fable)
-S4  歧義偵測          spec-reader ×2(opus,隔離,只看規格)
+S3  起草              全 codebase scope audit + spec-grill
+S4  歧義偵測          spec-reader ×2(隔離,只看規格)
 S5  ⏸ 你批准說明頁     白話 + 分歧選擇題 + N/A 主張 + 碰撞警告
 S6  定稿凍結          spec-lint + 反向回譯 + 指紋
 S7  測試 RED          stub-first → 格式化 → red-capture
-S7½ 審測試            test-review + test-reviewer(opus)→ 才凍結
-S8  實作 GREEN        green-writer(opus):只做 examples 涵蓋的事
+S7½ 審測試            test-review + test-reviewer → 才凍結
+S8  實作 GREEN        green-writer:只做 examples 涵蓋的事
 S9a 腳本關卡 G0–G7
 S9b smoke             真的入口跑一次;沒過不派審查
 S9c 付費審查 G9/G10   四類分流,loop 腳本數次數;卡住時只有你能豁免(loop waive)
@@ -79,7 +79,7 @@ S13 ⏸ 你按 merge      merge 後 cleanup 清掉這張卡的 worktree(先確�
   G8   變異測試        有工具才跑
   G9   spec-oracle     隔離的第二讀者,只憑規格寫驗收測試
   G10  code-adversary  每條主張附可執行的重現;must_fix / ask_user / overbuilt / style
-       fix-reviewer    審查後的修正只派增量審查:修好了沒、有沒有帶進新問題(opus)
+       fix-reviewer    審查後的修正只派增量審查:修好了沒、有沒有帶進新問題
   G11  UI 截圖         smoke 順便截
 ```
 
@@ -162,16 +162,16 @@ claude-workflow/
 │   └── references/
 │       ├── spec-template.yaml      通得過自己的 spec-lint
 │       └── dispatch-prompts.md
-├── agents/                          精簡定義(節錄)
-│   ├── spec-grill.md               fable · 挑洞,兼第一個讀者
-│   ├── spec-reader.md              opus  · 隔離,tools: []
-│   ├── spec-oracle.md              opus  · 隔離,tools: []
-│   ├── code-adversary.md           fable · 有 Bash,要真的去跑重現
-│   ├── fix-reviewer.md             opus  · 審查後的修正只看那段 diff(增量審查)
-│   ├── red-writer.md               opus  · S7 寫測試並擷取 RED 證據
-│   └── green-writer.md             opus  · S8 實作;「衝突就停」寫死在定義裡
+├── agents/                          精簡定義(節錄;模型看 scripts/gates/dispatch)
+│   ├── spec-grill.md               挑洞,兼第一個讀者
+│   ├── spec-reader.md              隔離,tools: []
+│   ├── spec-oracle.md              隔離,tools: []
+│   ├── code-adversary.md           有 Bash,要真的去跑重現
+│   ├── fix-reviewer.md             審查後的修正只看那段 diff(增量審查)
+│   ├── red-writer.md               S7 寫測試並擷取 RED 證據
+│   └── green-writer.md             S8 實作;「衝突就停」寫死在定義裡
 ├── scripts/
-│   ├── gates/                       關卡的實作(+ smoke / test-review / findings / loop / pr-comment / cleanup)
+│   ├── gates/                       關卡的實作(+ smoke / test-review / findings / loop / pr-comment / cleanup / dispatch)
 │   ├── setup.sh
 │   └── init-project.sh
 ├── commands/                        slash commands

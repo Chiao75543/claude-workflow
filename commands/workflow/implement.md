@@ -9,7 +9,7 @@ tags: [workflow, implement]
 
 **動作**
 
-派 `green-writer`(不傳 `model`);它會讀專案自備的 `rd-implementer` skill 與 `rules_files`。
+派 `green-writer`(先 `scripts/gates/dispatch specs/{name}/spec.yaml S8`,照它印的派;交回後跑 G0–G7 + smoke,用 `--result pass|fail` 記);它會讀專案自備的 `rd-implementer` skill 與 `rules_files`。
 
 **注意**
 

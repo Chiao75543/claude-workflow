@@ -7,13 +7,13 @@
 S0  第一次:問卷      技術棧 / 指令含 smoke / 主線與自動推 / CI / 邊界 / 模型 → specs/pipeline.yaml
 S1  識別              scan-siblings:誰在飛、會不會撞
 S2  worktree
-S3  起草              全 codebase scope audit + spec-grill(fable)
-S4  歧義偵測          spec-reader ×2(opus,隔離,只看規格)
+S3  起草              全 codebase scope audit + spec-grill
+S4  歧義偵測          spec-reader ×2(隔離,只看規格)
 S5  ⏸ 你批准說明頁    白話 + 分歧選擇題 + N/A 主張 + 碰撞警告
 S6  定稿凍結          spec-lint + 反向回譯 + hash
 S7  測試 RED          stub-first → 格式化 → red-capture
-S7½ 審測試            test-review + test-reviewer(opus)→ 才凍結
-S8  實作 GREEN        green-writer(opus):只做 examples 涵蓋的事
+S7½ 審測試            test-review + test-reviewer → 才凍結
+S8  實作 GREEN        green-writer:只做 examples 涵蓋的事
 S9a 腳本關卡 G0–G7
 S9b smoke             真的入口跑一次;沒過不派審查
 S9c 付費審查 G9/G10   四類分流:must_fix / ask_user / overbuilt / style;loop 腳本數次數

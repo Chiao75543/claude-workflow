@@ -3,6 +3,10 @@
 persona 已經寫在 `agents/*.md` 的定義裡,所以派遣訊息只負責**提供素材**和**指定這一次的視角**。
 不要在派遣訊息裡重複 persona —— 重複會稀釋定義,而且兩邊哪天不一致就沒人知道以哪邊為準。
 
+**派遣前一律先跑 `scripts/gates/dispatch specs/{name}/spec.yaml <站>`,照它印的 `Agent(...)` 派**:它帶了 `model`
+(站 × 車道查表,連續失敗會升級)。不要自己挑模型、不要拿掉 `model`。寫程式的站(S7、S8、S9c、S12)交回後
+跑完該站的關卡,用 `dispatch … <站> --result pass|fail` 記。下面的範例省略了 `model`,以 `dispatch` 印的為準。
+
 **`description` 一律寫成 `<站> <agent> <卡名>`**(例:`S7 red-writer remove-leaderboard-xp`)。
 `runs --cost` 靠它把 subagent 的 token 歸到哪張卡、哪一站;格式不對的那筆會算進「未歸屬」,不猜。
 同一個 agent 換站重派就換站名:修 finding 的 green-writer 寫 `S9c green-writer {name}`,
@@ -106,7 +110,7 @@ Agent(subagent_type="code-adversary", description="G10 code-adversary {name}", p
 
 ---
 
-## G10-fix · fix-reviewer(opus,增量審查)
+## G10-fix · fix-reviewer(增量審查)
 
 審查後為了修 finding 改了程式,不重派整張 G10,改派這個。**不算 G10 重派。**
 
@@ -121,7 +125,7 @@ Agent(subagent_type="fix-reviewer", description="G10-fix fix-reviewer {name}", p
 - 這段修正要解的 finding:id、標題、class、重現(一次修好幾條就全列)
 - 規格路徑、**測試指令**(它要實跑重現)
 
-派完立刻 `scripts/gates/findings specs/{name}/spec.yaml dispatched --gate G10-fix --finding F-n[,F-m] --model opus`。
+派完立刻 `scripts/gates/findings specs/{name}/spec.yaml dispatched --gate G10-fix --finding F-n[,F-m] --model <dispatch 印的>`。
 例外:它點名了「無關改動」—— 那不是修正,**這次不記**;拿掉無關改動後重新 `fix-diff` 再派,或整張重派 G10。
 它說「未解」→ 不要 `findings set fixed`,回去再修(`loop fix` 第 3 次照樣 parked)。
 它提出的新 finding 用 `findings add --gate G10-fix` 收,之後照常分流、進 loop。
@@ -130,12 +134,12 @@ Agent(subagent_type="fix-reviewer", description="G10-fix fix-reviewer {name}", p
 
 - 素材換成 `scripts/gates/findings specs/{name}/spec.yaml fix-diff --merge <sha> > specs/{name}/evidence/fix-review-merge-<sha 前 8 碼>.diff`
   (自動合併的結果 → 實際 commit 的版本),加上規格路徑、測試指令。明講「這是併 main 的衝突解決,不是修 finding」
-- 派完立刻 `findings dispatched --gate G10-fix --merge <sha> --model opus`
+- 派完立刻 `findings dispatched --gate G10-fix --merge <sha> --model <dispatch 印的>`
 - 它說衝突解決有問題,會附一條 finding → 照常收、進 loop,修完走一般的增量審查
 
 ---
 
-## S7 · red-writer(opus)
+## S7 · red-writer
 
 ```
 Agent(subagent_type="red-writer", description="S7 red-writer {name}", prompt=...)
@@ -150,7 +154,7 @@ Agent(subagent_type="red-writer", description="S7 red-writer {name}", prompt=...
 
 ---
 
-## S7½ · test-reviewer(opus)
+## S7½ · test-reviewer
 
 ```
 Agent(subagent_type="test-reviewer", description="S7½ test-reviewer {name}", prompt=...)
@@ -165,7 +169,7 @@ Agent(subagent_type="test-reviewer", description="S7½ test-reviewer {name}", pr
 
 ---
 
-## S8 · green-writer(opus)
+## S8 · green-writer
 
 ```
 Agent(subagent_type="green-writer", description="S8 green-writer {name}", prompt=...)
