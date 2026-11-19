@@ -101,13 +101,13 @@ digraph workflow {
   s0 [shape=box, label="S0 第一次:問卷 → pipeline.yaml"];
   s1 [shape=box, label="S1 識別\n(scan-siblings 看在飛的)"];
   s2 [shape=box, label="S2 worktree"];
-  s3 [shape=box, label="S3 起草\nscope audit + spec-grill(fable)"];
-  s4 [shape=box, label="S4 歧義偵測\nspec-reader ×2(opus, 隔離)"];
+  s3 [shape=box, label="S3 起草\nscope audit + spec-grill"];
+  s4 [shape=box, label="S4 歧義偵測\nspec-reader ×2(隔離)"];
   s5 [shape=diamond, label="⏸ S5 你批准說明頁"];
   s6 [shape=box, label="S6 定稿凍結\nspec-lint + hash"];
   s7 [shape=box, label="S7 測試 RED\nstub-first → red-capture"];
-  s7b [shape=box, label="S7½ 審測試\ntest-review + test-reviewer(opus) → 凍結"];
-  s8 [shape=box, label="S8 實作 GREEN\ngreen-writer(opus)"];
+  s7b [shape=box, label="S7½ 審測試\ntest-review + test-reviewer → 凍結"];
+  s8 [shape=box, label="S8 實作 GREEN\ngreen-writer"];
   s9a [shape=box, label="S9a 腳本關卡 G0–G7"];
   s9b [shape=box, label="S9b smoke\n真的入口跑一次"];
   s9c [shape=box, label="S9c 付費審查 G9/G10\n四類分流 · loop 計數"];
@@ -204,7 +204,7 @@ wt="$(git worktree list --porcelain \
    **全 codebase grep**,不是 Explore subagent 的抽樣。而且要 grep **呼叫點本身**,
    不是 import(wildcard import 與完全限定呼叫會被漏掉)。
 2. 草擬 `specs/{name}/spec.yaml`(見 `references/spec-template.yaml`)
-3. **派遣 `spec-grill`**(模型由它的定義決定,派遣時不傳 `model`) —— 完備性挑戰 + 洞 + **它自己的解讀表**
+3. **派遣 `spec-grill`**(先 `dispatch specs/{name}/spec.yaml S3`,照它印的派;見「模型與額度」) —— 完備性挑戰 + 洞 + **它自己的解讀表**
    (兼任 S4 的第一個讀者,省一次派遣)
 4. **跑 `scan-siblings specs/{name}/spec.yaml`** —— 比對 `impact.files`,
    把會跟其他在飛分支撞的檔案列出來。在寫程式之前知道,比合併時才發現便宜得多。
@@ -370,7 +370,7 @@ runner log、錄影、截圖或產物)。缺 Scenario、缺 example、`ok:false`
 
 | class | 然後 |
 |---|---|
-| `must_fix` | `loop fix F-n` → 修 → 重跑 G0–G7 + smoke + 那條重現 → 派增量審查 G10-fix(見「迴圈與收斂」)→ 不紅了且增量審查說已解 `loop resolved` + `findings set fixed` |
+| `must_fix` | `loop fix F-n` → 修(`dispatch … S9c` 派 green-writer,交回後記 `--result`)→ 重跑 G0–G7 + smoke + 那條重現 → 派增量審查 G10-fix(見「迴圈與收斂」)→ 不紅了且增量審查說已解 `loop resolved` + `findings set fixed` |
 | `overbuilt` | 同上,修 = 拿掉 |
 | `ask_user` | **不修。** 先比對 `specs/policy.yaml`(見「常設決策」):對到 → `findings set F-n <決定> --policy P-n`。沒對到 → **預設接受風險、不擋推**,PR 留言頂端列為「合併即代表同意」,人可 `findings set F-n added_example` 推翻。**例外:bug 的檔命中 risk_paths(或沒記 files)** → 留給 S11 的 PR 留言問人,分支停著等。兩條車道一樣 |
 | `style` | 記下,不動 |
@@ -482,7 +482,7 @@ gh run view <id> --log-failed                            # 拉失敗的 log
 ```
 
 分兩種:**環境差異**(CI 上缺工具、路徑不同、權限)→ 修 CI 設定或 pipeline.yaml,重推;
-**本機綠 CI 紅的關卡** → 那是本機證據不可信,退回 S8 當 `must_fix` 處理,走 `loop`。
+**本機綠 CI 紅的關卡** → 那是本機證據不可信,退回 S8 當 `must_fix` 處理,走 `loop`(修的那次派遣是 `dispatch … S12`)。
 兩輪還紅 → parked,PR 留言加一行「需要你決定」。
 
 ### S13 ⏸ 你按 merge
@@ -588,8 +588,8 @@ lite 砍的是「證明測試有牙齒」和「第二個人讀規格」;**沒砍
 ────────────────────────────────────────────
 付費判定
   G8   變異測試        有工具才跑;沒有就對關鍵斷言做定向變異
-  G9   spec-oracle     opus,隔離,只憑規格寫驗收測試。**lite 車道不派**
-  G10  code-adversary  fable,每條主張附可執行的重現,分四類;效能四項(主執行緒 / N+1 / 無上限列表 / 沒取消)也在它清單上
+  G9   spec-oracle     隔離,只憑規格寫驗收測試。**lite 車道不派**
+  G10  code-adversary  每條主張附可執行的重現,分四類;效能四項(主執行緒 / N+1 / 無上限列表 / 沒取消)也在它清單上
   G11  UI 截圖         smoke 順便截;有畫面變更才要求
 
 **「每個 example 都有測試覆蓋」沒有獨立的關卡。** 由 spec-lint(每條 Scenario 必須有 examples)
@@ -693,7 +693,7 @@ policies:
 
 - 修完之後**重跑 G0–G7**(腳本,幾乎免費)+ 那條重現測試 + **smoke(一律重跑)**:
   dashboard 要求 smoke 指紋與工作樹一致,對不上就判 S 過期、G9/10 變「未跑」
-- **修正不重派整張 G9/G10,改派增量審查 `fix-reviewer`(G10-fix,opus)**:只給它
+- **修正不重派整張 G9/G10,改派增量審查 `fix-reviewer`(G10-fix)**:只給它
   `findings fix-diff`(上次審過的樹 → 現在)和要修的 finding,問修好了沒、有沒有帶進新問題
   (派法見 `references/dispatch-prompts.md`)。派完記 `findings dispatched --gate G10-fix --finding F-n`;
   它**不算** G10 重派(G10 整張最多重派 **1 次** 不變)。它提出的新 must_fix 照常進 loop,同一條修到第 3 次照樣 parked。
@@ -710,22 +710,54 @@ policies:
 
 ## 模型與額度
 
-**模型只有一個來源:`agents/*.md` 的 frontmatter。派遣時不傳 `model`。** `pipeline.yaml` 沒有 `models` 鍵
-(舊專案有也沒人讀)。主 session(orchestrator)用 opus —— 它做的是跑腳本、讀 JSON、分流,
-拿最稀缺的模型跑這些是最差的用法。
+**每次派遣前先跑 `dispatch`,照它印的那行派 —— `model` 一定要傳,不自己挑**(改造方案 2.1):
 
-Fable 額度只留給兩個地方:**S3 `spec-grill`**(一行程式沒寫就抓到的洞最便宜)和
-**G10 `code-adversary`**(84 條 findings 裡 76 條、資安類 15 條裡 13 條是它抓的)。其他 agent 一律 opus。
+```bash
+scripts/gates/dispatch specs/{name}/spec.yaml S8                # 印出 Agent(subagent_type=…, description=…, model="sonnet", prompt=...)
+scripts/gates/dispatch specs/{name}/spec.yaml S8 --result fail  # 寫程式的站:交回後該站的關卡沒過(過了寫 pass)
+```
+
+模型查 `specs/pipeline.yaml` 的 `models`(站 × 車道),沒寫的格子用 `_config.DEFAULTS`;`config-check` 印出生效的整張表。
+一格可以寫模型名,或 `{model: opus, effort: xhigh}`(沒寫 effort 就用 agent 定義的)。
+`agents/*.md` 的 frontmatter 只是沒經過 `dispatch` 直接派時的缺省。起始值是方案 2.2 的建議分配:
+
+| 站 | lite | full |
+|---|---|---|
+| S3 spec-grill | opus | fable |
+| S4 spec-reader ×2 | 不派 | opus + sonnet(兩個讀者用不同模型,分歧才有資訊量) |
+| S7 red-writer | sonnet | opus |
+| S7½ test-reviewer | 不派 | opus |
+| S8 green-writer | sonnet | sonnet |
+| S9c 修 finding、S12 修 CI 紅(green-writer) | sonnet | sonnet |
+| G9 spec-oracle | 不派 | opus |
+| G10 code-adversary | fable | fable |
+| G10-fix fix-reviewer | opus | opus |
+
+主 session(orchestrator)的模型是人開 session 時選的,這張表管不到。
+
+**連續失敗就升級**(方案 2.3)。寫程式的站交回後跑該站的關卡,用 `--result` 記過了沒:
+S7 → `red-capture`(lite 是 `test-review --mechanical-only`);S8 → G0–G7 + smoke;S9c → 那條重現不再紅、G0–G7 + smoke 綠;S12 → CI 綠。
+同一張卡同一站最近 2 次是同一個模型、都 `fail` → 下一次 `dispatch` 自動升一級(haiku → sonnet → opus),記 `escalated`。
+- **最高到 opus**(chiao 決定):Fable 額度只留給表上本來就用它的站(S3 full、G10)
+- 只影響這張卡這一站,不改 `pipeline.yaml`;升過級就留在那一級
+- 不多給修的次數:`loop` 的「同一條 finding 修 2 次 → parked」照舊
+- 審查類的站(S3、S4、S7½、G9、G10、G10-fix)不記 `--result`,不升級
+
+`runs --yield` 算每個「站 × 車道 × 起始模型」第一次就過的比例與升級率;升級率超過 30% 會點名,提示把那格調高一級。
+
+**這張表是一次換掉 7 格的**(chiao 決定;方案原本建議一次一站)。每一站自己的過關率與升級率分得開,
+但整張卡的指標 —— 每張卡成本、證據表次數、G10 must_fix 條數、漏網 —— 變差時分不出是哪一站。
+那時從最可疑的一格開始,在專案的 `pipeline.yaml` 寫回舊值,每退一格跑幾張卡再看,不要一次全退。
+舊值:S3 lite fable、S4 第二個讀者 opus、S7 lite opus、S8 / S9c / S12 兩條車道都 opus。
 
 **撞到 Fable 額度上限時**(派遣回來是 `You've reached your Fable limit`):
-- `spec-grill` / `code-adversary` 用 `model: opus` **重派一次**,派完記
+- `dispatch … <站> --degraded`,照它印的(退一級:opus)**重派一次**;G10 另外記
   `findings dispatched --gate G10 --model opus --degraded`。證據表會出「降級審查」標籤,不擋推,
   但你會看到這張卡的審查強度比平常低。
-- **不准退到 sonnet**;也不准為了省額度先用 sonnet 派。
-- 其他 agent 本來就不該碰 fable,撞到上限代表派遣時傳了 `model`,那是 bug。
+- 不准為了省額度先用便宜的派 —— 用哪個模型只看 `dispatch` 印的。
 
 實測(同一個專案九天):24 次派遣空跑,20 次是 Fable limit;red-writer 設定 opus 卻有 19 次跑在 fable。
-額度是被不該用它的地方吃掉的。
+額度是被不該用它的地方吃掉的 —— 所以每次派遣都明確傳 `dispatch` 印的 model,紀錄跟實際對得上。
 
 實測的派遣開機費(單次、零工作量):`general-purpose` 31,554 · `spec-grill`(3 工具)5,587 ·
 `spec-reader`(零工具)3,137。**tool schema 佔了 general-purpose 開機費的九成** ——
@@ -887,7 +919,7 @@ scripts/bench/recall run q.json --model fable --effort xhigh --setup "npm ci" --
 ## Related
 
 - `scripts/gates/*` —— 關卡的實作;S7 以後新增 `test-review` `smoke` `findings` `loop` `pr-comment` `config-check`
-- `agents/*` —— spec-grill / code-adversary(fable)+ spec-reader / spec-oracle / red-writer / test-reviewer / green-writer / fix-reviewer(opus);模型只在這裡設
+- `agents/*` —— 各站的 agent 定義。模型看 `dispatch`(專案 `pipeline.yaml` 的 `models`,預設在 `_config.DEFAULTS`);frontmatter 只是缺省
 - `templates/ci/*` —— S12 的 CI 範本(要裝進專案是人的決定)
 - `commands/workflow/init.md` —— S0 問卷
 - `scripts/gates/runs --yield` —— 哪道關擋過東西、擋了幾次;跑過 ≥5 次從沒擋過的會被點名

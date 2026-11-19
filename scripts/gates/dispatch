@@ -1,0 +1,122 @@
+#!/usr/bin/env python3
+"""dispatch — 派遣 subagent 之前問它:這張卡的這一站用哪個模型(改造方案 2.1、2.3)。
+
+  dispatch <spec.yaml> <站>                     印出這次的 Agent(...)(含 model),記一筆派遣
+  dispatch <spec.yaml> <站> --result pass|fail   剛才那次交回後,這一站對應的關卡過了沒(寫程式的站才記)
+  dispatch <spec.yaml> <站> --degraded           剛才那次撞到額度上限、派不出去:改記退一級的模型,照印的重派
+
+模型查 specs/pipeline.yaml 的 models(站 × 車道),沒寫的格子用 _config.DEFAULTS。派遣一律照印的傳 model。
+升級:這一站最近 2 次是同一個模型、都記 fail → 這次升一級(haiku → sonnet → opus,最高到 opus),記 escalated。
+只影響這張卡的這一站,不改 pipeline.yaml。紀錄在 evidence/dispatch.json,dashboard 每次把它帶進 _yield.jsonl,
+runs --yield 拿它算每個「站 × 車道 × 模型」第一次就過的比例和升級率。
+
+站:S3 S4 S7 S7½ S8 S9c S12 G9 G10 G10-fix
+"""
+
+from __future__ import annotations
+
+import datetime
+import pathlib
+import sys
+
+sys.path.insert(0, str(pathlib.Path(__file__).parent))
+import _config  # noqa: E402
+from _common import evidence_dir, lane, load_spec, read_json, write_json  # noqa: E402
+
+LADDER = _config.MODEL_LADDER
+
+
+def agent_line(station: str, card: str, model: str, effort: str | None) -> str:
+    extra = f', effort="{effort}"' if effort else ""
+    return (f'Agent(subagent_type="{_config.STATION_AGENTS[station]}", description="{station} '
+            f'{_config.STATION_AGENTS[station]} {card}", model="{model}"{extra}, prompt=...)')
+
+
+def main(argv: list[str]) -> int:
+    if len(argv) < 2 or argv[0].startswith("-"):
+        print(__doc__)
+        return 2
+    spec_path, station = pathlib.Path(argv[0]).resolve(), argv[1]
+    if station not in _config.STATION_AGENTS:
+        print(f"✘ 不認得的站 {station}(認得:{' '.join(_config.STATION_AGENTS)})")
+        return 2
+    card = spec_path.parent.name
+    path = evidence_dir(spec_path) / "dispatch.json"
+    state = read_json(path) or {}
+    attempts = state.setdefault(station, [])
+
+    if "--result" in argv:
+        i = argv.index("--result") + 1
+        value = argv[i] if i < len(argv) else None
+        if value not in ("pass", "fail"):
+            print("✘ --result 只能是 pass 或 fail")
+            return 2
+        if not attempts or "result" in attempts[-1]:
+            print(f"✘ {card} {station} 沒有還沒記結果的派遣 —— 先 dispatch 再記")
+            return 1
+        attempts[-1]["result"] = value
+        write_json(path, state)
+        print(f"{card} {station}:第 {len(attempts)} 次({attempts[-1]['model']}){'過了' if value == 'pass' else '沒過'}")
+        return 0
+
+    if "--degraded" in argv:
+        last = attempts[-1] if attempts else None
+        if last is None or "result" in last or not isinstance(last.get("model"), str) or last["model"] not in LADDER:
+            print(f"✘ {card} {station} 沒有剛派、還沒記結果的單一模型派遣,沒得退")
+            return 1
+        if last["model"] == LADDER[0]:
+            print(f"✘ {last['model']} 已經是最便宜的模型,沒得退")
+            return 1
+        last.update(model=LADDER[LADDER.index(last["model"]) - 1], degraded=True)
+        write_json(path, state)
+        print(f"{card} {station}:額度用完,退一級改用 {last['model']}(證據表照現行規則標降級)")
+        print(agent_line(station, card, last["model"], last.get("effort")))
+        return 0
+
+    spec = load_spec(spec_path)
+    config = _config.load(spec_path.parents[2])
+    card_lane = lane(spec, config)
+    cell = _config.model_cell(config, station, card_lane)
+    if cell is None:
+        print(f"✘ {station} 在 {card_lane} 車道不派")
+        return 1
+    if problem := _config.cell_problem(station, cell):
+        print(f"✘ specs/pipeline.yaml 的 models.{station}.{card_lane} {problem} —— 先跑 config-check")
+        return 1
+    effort = cell.get("effort") if isinstance(cell, dict) else None
+    record = {"at": datetime.datetime.now().astimezone().isoformat(timespec="seconds"), "lane": card_lane}
+    if effort:
+        record["effort"] = effort
+
+    if isinstance(cell, list):   # S4 兩個讀者各一個模型;審查類的站不升級
+        record["model"] = cell
+        attempts.append(record)
+        write_json(path, state)
+        print(f"{card} {station}({card_lane}):{' + '.join(cell)} —— 一則訊息同時派")
+        for model in cell:
+            print(agent_line(station, card, model, effort))
+        return 0
+
+    base = cell if isinstance(cell, str) else cell["model"]
+    # 升過級就留在那一級;沒升過就照表(表改了也跟著)
+    current = max([base] + [a["model"] for a in attempts if a.get("escalated") and a.get("model") in LADDER],
+                  key=LADDER.index)
+    model, note = current, ""
+    last_two = attempts[-2:]
+    if len(last_two) == 2 and all(a.get("result") == "fail" and a.get("model") == current for a in last_two):
+        if LADDER.index(current) < LADDER.index(_config.ESCALATION_CAP):
+            model = LADDER[LADDER.index(current) + 1]
+            record.update(escalated=True, **{"from": current})
+            note = f" ↑ 升級:最近 2 次 {current} 都沒過(只這張卡這一站)"
+        else:
+            note = f" —— 最近 2 次 {current} 都沒過;{current} 是升級上限,照用"
+    record["model"] = model
+    attempts.append(record)
+    write_json(path, state)
+    print(f"{card} {station}({card_lane}):{model}{note}")
+    print(agent_line(station, card, model, effort))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

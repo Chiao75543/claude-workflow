@@ -2843,10 +2843,133 @@ def test_config_check(tmp: pathlib.Path) -> None:
     (root / "specs" / "pipeline.yaml").write_text(no_risk + "risk_paths: {privacy: [], gdpr: []}\n")
     code, out = run_gate("config-check", str(root), cwd=root)
     check("risk_paths 寫一半、有不認得的類別 → FAIL,兩件都講", code == 1 and "缺 permissions" in out and "不認得 gdpr" in out, out[-300:])
-    # models 鍵已停用(模型只由 agents/*.md 決定,沒有腳本讀它):既有專案留著它不能因此變紅
+    # 2.1 之前的 models 格式(draft/review/build)從沒有腳本讀過:既有專案留著它不能因此變紅
     (root / "specs" / "pipeline.yaml").write_text(full + "models: {draft: fable, review: fable, build: opus}\n")
     code, out = run_gate("config-check", str(root), cwd=root)
-    check("舊的 models 鍵 → 只提示已停用,仍 PASS", code == 0 and "models 已停用" in out, out[-200:])
+    check("舊格式的 models → 只提示是舊格式,仍 PASS", code == 0 and "舊格式" in out, out[-200:])
+    check("PASS 時印出生效的模型表(站 × 車道)",
+          "models.S8" in out and "lite sonnet · full sonnet" in out and "models.S4" in out and "full opus+sonnet" in out, out[-900:])
+    (root / "specs" / "pipeline.yaml").write_text(full + "models: {S8: {lite: gpt-9}}\n")
+    code, out = run_gate("config-check", str(root), cwd=root)
+    check("models 寫錯(不認得的模型)→ FAIL,講出哪一格", code == 1 and "models(S8.lite 不認得的模型 gpt-9" in out, out[-300:])
+
+
+def test_dispatch(tmp: pathlib.Path) -> None:
+    """改造方案 2.1/2.3:派遣前查「站 × 車道」的模型表,照印的派;寫程式的站連續 2 次沒過就升一級(最高 opus),
+    只影響那張卡那一站;紀錄跟著證據表進 _yield.jsonl,runs --yield 算過關率與升級率。"""
+    if str(GATES) not in sys.path:
+        sys.path.insert(0, str(GATES))
+    import _config
+    check("預設的模型表本身通過檢查", _config.models_problem(_config.DEFAULTS["models"]) is None)
+    msg = _config.models_problem({"S99": {"full": "opus"}, "S8": {"lite": "gpt-9", "mid": "opus"},
+                                  "S3": {"full": {"model": "opus", "effort": "huge"}},
+                                  "S4": {"full": ["opus"]}, "draft": "fable"}) or ""
+    check("models 檢查:不認得的站、模型、車道、effort、S4 讀者數都講出來;舊格式的鍵略過",
+          all(w in msg for w in ("不認得的站 S99", "S8.lite 不認得的模型 gpt-9", "S8.mid 不認得的車道",
+                                 "S3.full 不認得的 effort huge", "S4.full 要剛好兩個讀者")) and "draft" not in msg, msg)
+
+    spec = "specs/demo/spec.yaml"
+    rp = "risk_paths: {permissions: [], privacy: [], payments: [], irreversible_data: [], critical_security: [], core_entrypoint: []}\n"
+    root = make_repo(tmp / "dispatch")
+    (root / "specs" / "pipeline.yaml").write_text(rp)
+    disp = lambda *a: run_gate("dispatch", spec, *a, cwd=root)
+    state = lambda: json.loads((root / "specs/demo/evidence/dispatch.json").read_text())
+
+    code, out = disp("S8")
+    check("full 卡 S8 → 表上的 sonnet,印出照抄就能派的 Agent(...)(description 是 runs 認得的格式)",
+          code == 0 and 'Agent(subagent_type="green-writer", description="S8 green-writer demo", model="sonnet", prompt=...)' in out, out)
+    disp("S8", "--result", "fail")
+    code, out = disp("S8", "--result", "fail")
+    check("沒有還沒記結果的派遣 → 拒記(同一次不能記兩個結果)", code == 1 and "先 dispatch" in out, out)
+    code, out = disp("S8")
+    check("只沒過 1 次 → 不升級", 'model="sonnet"' in out and "升級" not in out, out)
+    disp("S8", "--result", "fail")
+    code, out = disp("S8")
+    a = state()["S8"]
+    check("同一站最近 2 次 sonnet 都沒過 → 這次升一級 opus,記 escalated / from",
+          code == 0 and 'model="opus"' in out and "升級" in out and a[-1].get("escalated") is True
+          and a[-1].get("from") == "sonnet" and [x["model"] for x in a] == ["sonnet", "sonnet", "opus"], f"{out} {a}")
+    disp("S8", "--result", "fail")
+    code, out = disp("S8")
+    check("升過級就留在那一級:opus 只沒過 1 次 → 還是 opus、不升、不退回 sonnet",
+          'model="opus"' in out and "升級" not in out and not state()["S8"][-1].get("escalated"), out)
+    disp("S8", "--result", "fail")
+    code, out = disp("S8")
+    check("opus 也連 2 次沒過 → 不升到 fable(上限 opus),講出是上限",
+          'model="opus"' in out and "上限" in out and not state()["S8"][-1].get("escalated"), out)
+    code, out = disp("S9c")
+    check("升級只影響那一站:同一張卡的 S9c 照表 sonnet", 'model="sonnet"' in out and "升級" not in out, out)
+    for _ in range(2):
+        disp("S12")
+    code, out = disp("S12")
+    check("沒記結果的不算沒過:派 3 次都沒記 → 不升級", 'model="sonnet"' in out and "升級" not in out, out)
+
+    code, out = disp("G10")
+    check("G10 → fable(審查類的站,照表)", 'model="fable"' in out, out)
+    code, out = disp("G10", "--degraded")
+    g10 = state()["G10"][-1]
+    check("撞到額度 → --degraded 改記退一級的 opus、標 degraded,印出重派用的那行",
+          code == 0 and 'description="G10 code-adversary demo", model="opus"' in out
+          and g10["model"] == "opus" and g10.get("degraded") is True, f"{out} {g10}")
+    code, out = disp("G10")
+    check("降級只算那一次:下一次 G10 照表 fable", 'model="fable"' in out, out)
+    code, out = disp("S4")
+    check("S4 → 兩個讀者兩行,各自的模型(opus + sonnet),記成一筆",
+          code == 0 and out.count('Agent(subagent_type="spec-reader", description="S4 spec-reader demo"') == 2
+          and 'model="opus"' in out and 'model="sonnet"' in out and state()["S4"][-1]["model"] == ["opus", "sonnet"], out)
+    code, out = disp("S5")
+    check("不認得的站 → 拒絕", code == 2 and "不認得的站" in out, out)
+
+    # 專案在 pipeline.yaml 逐格覆寫;沒寫的格子照預設
+    (root / "specs" / "pipeline.yaml").write_text(
+        rp + "models:\n  S7: {full: {model: sonnet, effort: xhigh}}\n  S9c: {full: haiku}\n  S12: {full: gpt-9}\n")
+    code, out = disp("S7")
+    check("專案覆寫一格(含 effort)→ 照它,印出 effort", 'model="sonnet", effort="xhigh"' in out, out)
+    disp("S9c", "--result", "pass")
+    code, out = disp("S9c")
+    code, out = disp("S9c", "--degraded")
+    check("haiku 已經最便宜 → --degraded 拒絕,不會繞回 fable", code == 1 and "沒得退" in out, out)
+    code, out = disp("S12")
+    check("專案那一格寫錯 → 拒派,叫你跑 config-check", code == 1 and "config-check" in out, out)
+
+    # lite 卡
+    lite = VALID_SPEC.replace("meta: {name: demo, ticket: null, capability: demo, change_type: ADDED}\n",
+                              "meta:\n  name: demo\n  ticket: null\n  capability: demo\n  change_type: ADDED\n"
+                              "  risk_flags: {permissions: false, privacy: false, payments: false, irreversible_data: false,"
+                              " critical_security: false, core_entrypoint: false}\n")
+    lroot = make_repo(tmp / "dispatch-lite", lite)
+    (lroot / "specs" / "pipeline.yaml").write_text(rp + "models:\n  S8: {full: opus}\n")
+    code, out = run_gate("dispatch", spec, "S4", cwd=lroot)
+    check("lite 卡 S4 → 不派", code == 1 and "lite 車道不派" in out, out)
+    code, out = run_gate("dispatch", spec, "S3", cwd=lroot)
+    check("lite 卡 S3 → opus(full 才 fable)", 'model="opus"' in out, out)
+    code, out = run_gate("dispatch", spec, "S8", cwd=lroot)
+    check("專案只覆寫 S8 的 full → lite 那格照預設 sonnet", 'model="sonnet"' in out, out)
+
+    # 紀錄跟著證據表進 _yield.jsonl
+    run_gate("dashboard", spec, cwd=root)
+    rows = [json.loads(ln) for ln in (root / "specs/_yield.jsonl").read_text().splitlines() if ln.strip()]
+    check("dashboard 把 dispatch.json 整份帶進 _yield.jsonl", rows and rows[-1].get("dispatch") == state(), str(rows[-1:])[:300])
+
+    # runs --yield:每張卡取最後一筆;只算有記過不過的站;升級率 >30% 點名
+    yroot = make_repo(tmp / "dispatch-yield")
+    up = [{"lane": "full", "model": "sonnet", "result": "fail"}, {"lane": "full", "model": "sonnet", "result": "fail"},
+          {"lane": "full", "model": "opus", "result": "pass", "escalated": True, "from": "sonnet"}]
+    ok = lambda ln: [{"lane": ln, "model": "sonnet", "result": "pass"}]
+    yrows = [{"name": "f1", "dispatch": {"S8": ok("full")}},           # 同一張卡較早的那筆,不算
+             {"name": "f1", "dispatch": {"S8": up, "G10": [{"lane": "full", "model": "fable"}]}},
+             {"name": "f2", "dispatch": {"S8": up}}]
+    yrows += [{"name": f"f{i}", "dispatch": {"S8": ok("full")}} for i in range(3, 6)]
+    yrows += [{"name": "l1", "dispatch": {"S8": [dict(x, lane="lite") for x in up]}}]
+    yrows += [{"name": f"l{i}", "dispatch": {"S8": ok("lite")}} for i in range(2, 5)]
+    (yroot / "specs/_yield.jsonl").write_text("".join(json.dumps(r, ensure_ascii=False) + "\n" for r in yrows))
+    code, out = run_gate("runs", "--yield", cwd=yroot)
+    full_line = next((ln for ln in out.splitlines() if "S8 · full · sonnet" in ln), "")
+    lite_line = next((ln for ln in out.splitlines() if "S8 · lite · sonnet" in ln), "")
+    check("runs --yield:站 × 車道 × 起始模型的第一次就過、升過級;每張卡只算最後一筆",
+          "3/5 · 2/5" in full_line and "3/4 · 1/4" in lite_line, out[-600:])
+    check("runs --yield:升級率 40% → 點名;25% → 不點名;沒記過不過的站(G10)不列",
+          "⚠ 升級率 40%" in full_line and "⚠" not in lite_line and "G10 ·" not in out, out[-600:])
 
 
 # ---------------------------------------------------------------- 對抗審查(S7 以後改版)的回歸
@@ -3369,7 +3492,7 @@ def main() -> int:
                    test_reachability, test_reachability_hardening,
                    test_test_review, test_loop, test_findings, test_smoke,
                    test_dashboard_gating_order, test_dashboard_approval_anchor_phases,
-                   test_config_check, test_adversary_s7plus, test_risk_lanes, test_standing_decisions, test_release_checklist,
+                   test_config_check, test_adversary_s7plus, test_risk_lanes, test_standing_decisions, test_release_checklist, test_dispatch,
                    test_cost_ledger,
                    test_recall_bench, test_escape):
             try:

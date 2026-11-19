@@ -818,6 +818,8 @@ def main(argv: list[str]) -> int:
         "review_state": review_state,
         "attention": [a["tag"] for a in attention],
         "review": findings.get("summary") or {},
+        # 改造方案 2.3:每一站實際派了哪個模型、交回後過了沒、有沒有升級(scripts/gates/dispatch 記的)
+        "dispatch": read_json(ev / "dispatch.json") or {},
     }
     with (root / "specs" / "_yield.jsonl").open("a") as fh:
         fh.write(json.dumps(yield_line, ensure_ascii=False) + "\n")
