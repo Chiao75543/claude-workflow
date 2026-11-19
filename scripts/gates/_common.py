@@ -96,6 +96,32 @@ def risk_hits(spec: dict, config: dict) -> dict[str, list[str]] | None:
     return path_risk_hits(impact_files(spec), config)
 
 
+# full 卡的 G9 只在這三類風險、或 S4 讀者讀出分歧時才派(改造方案 2.4)。其他 full 卡證據表標「G9 未派(條件不符)」。
+G9_FLAGS = ["payments", "permissions", "irreversible_data"]
+
+
+def g9_reasons(spec: dict, config: dict, dispatch_state) -> list[str]:
+    """full 卡為什麼要派 G9;空 list = 條件不符、不派。lite 本來就不派,不走這裡。
+    跟車道一樣從嚴:旗標沒填或不是 false 算 true;risk_paths 有問題算命中;
+    S4 每一輪都要記 `dispatch … S4 --result pass`(沒分歧)才算沒分歧,沒記算有。"""
+    meta = spec.get("meta")
+    flags = meta.get("risk_flags") if isinstance(meta, dict) else None
+    flags = flags if isinstance(flags, dict) else {}
+    reasons = [f"旗標 {k}" for k in G9_FLAGS if flags.get(k) is not False]
+    hits = risk_hits(spec, config)
+    if hits is None:
+        reasons.append("risk_paths 沒設或格式不對")
+    else:
+        reasons += [f"路徑命中 {k}" for k in G9_FLAGS if k in hits]
+    s4 = dispatch_state.get("S4") if isinstance(dispatch_state, dict) else None
+    results = [a.get("result") if isinstance(a, dict) else None for a in s4] if isinstance(s4, list) else []
+    if "fail" in results:
+        reasons.append("S4 讀出分歧")
+    elif not results or any(r != "pass" for r in results):
+        reasons.append("S4 沒記比對結果")
+    return reasons
+
+
 def path_risk_hits(candidates, config: dict) -> dict[str, list[str]] | None:
     """一組路徑命中 risk_paths 的,依類別分。卡的 impact.files 與 ask_user 的 files 共用。"""
     if risk_paths_problem(config):

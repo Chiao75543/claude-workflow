@@ -1,6 +1,6 @@
 ---
 name: workflow-orchestrator
-description: 從一句需求到開好的 PR —— 規格撰寫(挑洞 + 隔離讀者偵測歧義 + 說明頁批准)、TDD 測試(審過才凍結)、實作、腳本關卡、smoke、付費審查(四類分流)、自動推 + PR 留言、CI。人類批准說明頁、按 merge;中間只在 PR 上有「需要你決定」時才出現,而且沒有一次需要讀程式碼。Triggers on "/workflow", "跑 pipeline", "全流程", "從頭開始", "自動化流程".
+description: 從一句需求到開好的 PR —— 規格撰寫(挑洞 + 隔離讀者偵測歧義 + 說明頁批准)、TDD 測試(審過才凍結)、實作、腳本關卡、smoke、付費審查(三類分流)、自動推 + PR 留言、CI。人類批准說明頁、按 merge;中間只在 PR 上有「需要你決定」時才出現,而且沒有一次需要讀程式碼。Triggers on "/workflow", "跑 pipeline", "全流程", "從頭開始", "自動化流程".
 ---
 
 # workflow
@@ -48,7 +48,7 @@ smoke 沒過就連審都不審。
 東西不存在時寫不出失敗測試。所以可達性(G7)是獨立的機械關卡,和嚴重度分開排。
 
 **6. 夠了規則。** 做到哪算夠 = **你批准的那些 examples,一個字不多。**
-例子外的實作叫多做:多出來的公開介面 / 抽象層會被擋(`overbuilt`),內部囉嗦只提醒(`style`)。
+例子外的實作叫多做:多出來的公開介面 / 抽象層會被擋(`overbuilt`);內部寫法、命名不算 finding(審查不再提 `style`)。
 例子外的**問題**不是 fix,是**問題** —— 審查者發現例子沒涵蓋的 bug 或極端 edge case,
 不准自己修,變成 PR 上一則「要不要防?」問你(`ask_user`)。你說要 → 加一組 example
 (收緊,不用重新批准);你說不用 → 記成已接受風險。
@@ -110,7 +110,7 @@ digraph workflow {
   s8 [shape=box, label="S8 實作 GREEN\ngreen-writer"];
   s9a [shape=box, label="S9a 腳本關卡 G0–G7"];
   s9b [shape=box, label="S9b smoke\n真的入口跑一次"];
-  s9c [shape=box, label="S9c 付費審查 G9/G10\n四類分流 · loop 計數"];
+  s9c [shape=box, label="S9c 付費審查 G9/G10\n三類分流 · loop 計數"];
   precommit [shape=box, label="S9d pre-commit dashboard\n候選樹可提交，不可推送"];
   s10 [shape=box, label="S10 commit"];
   delivery [shape=box, label="S10½ delivery dashboard\n批准快照已 commit 且乾淨"];
@@ -226,6 +226,9 @@ wt="$(git worktree list --porcelain \
 | 一邊有這個 input,另一邊沒有 | 覆蓋落差 → 列出來,較弱的訊號 |
 | 完全一致 | 兩個獨立讀者理解相同 → 直接寫進規格的 `examples` |
 
+**每一輪比對完記 `dispatch specs/{name}/spec.yaml S4 --result pass`(沒有分歧)或 `fail`(有分歧)。**
+G9 要不要派看這筆(見 S9c):任一輪有分歧就派;沒記等於有分歧,照派。覆蓋落差不算分歧。
+
 **`examples` 就是契約** —— 它同時是可測性的定義、也是測試本身。
 敵意讀者要額外質疑**範例資料本身**:那組資料分得出正確與錯誤的實作嗎?
 
@@ -320,6 +323,11 @@ wt="$(git worktree list --porcelain \
 **派遣 `green-writer`**。派遣訊息給它:凍結測試的路徑、專案 `rd-implementer` skill 的路徑、
 測試指令。「衝突就停」寫死在它的定義裡,不靠派遣訊息記得。
 
+**交回前它自己跑 `scripts/gates/dashboard specs/{name}/spec.yaml --self-check`**(改造方案 2.4):
+先 `git add` 自己改的檔,G3 lint、G4 測試、G7 可達性都過才交回;回報要附這支的輸出。
+這三關歷史上共擋 75 次,每次都多一輪完整證據表。`--self-check` 什麼都不寫,不算一次證據表。
+交回後你照樣跑 G0–G7 + smoke —— 自檢是讓它少交回幾次,不是取代關卡。
+
 **為什麼現在敢外派:** 凍結規則把它圍住了。它最壞能做的是動規格或規格測試(G1/G2 擋)、
 卡住(它回報)、寫出醜的 code(lint + 對抗審查咬)—— 失敗模式有界而且偵測得到。
 沒有凍結的話,把契約交給 subagent 才危險。
@@ -358,7 +366,9 @@ UI 專案開 app 導航到目標畫面截圖(放進 `$SMOKE_SCREENSHOTS`)、API 
 runner log、錄影、截圖或產物)。缺 Scenario、缺 example、`ok:false`、舊檔、不存在／空檔、
 或只有 checklist 都讓 smoke FAIL。這是 6c 在 S7 被延後而不是被豁免的後半條防線。
 
-**S9c 付費審查 G9/G10**:派 `spec-oracle` 與 `code-adversary`,**派完立刻
+**S9c 付費審查 G9/G10**:派 `spec-oracle` 與 `code-adversary`。**G9 只在有理由時派**(改造方案 2.4):
+金流、權限、不可逆資料任一旗標為 true 或路徑命中,或 S4 讀出過分歧(沒記算有)。`dispatch … G9` 會判斷,
+條件不符就拒絕,證據表標「G9 未派(條件不符)」,不算失敗;符合就印出要派的原因。**派完立刻
 `scripts/gates/findings dispatched --gate G9 --model <實際用的模型>`(G10 同;退過級就加 `--degraded`)** —— 零 finding 的乾淨審查也要留下派過的紀錄,
 否則「沒派」和「派了沒事」在證據上分不出來。它同時把被審的那棵樹留成本機 ref
 `refs/pipeline/dispatch/<卡>/<關>/<時間>`(不是分支,一般的 push 不會帶上去)—— 修正前的狀態只存在那棵樹裡,
@@ -373,7 +383,6 @@ runner log、錄影、截圖或產物)。缺 Scenario、缺 example、`ok:false`
 | `must_fix` | `loop fix F-n` → 修(`dispatch … S9c` 派 green-writer,交回後記 `--result`)→ 重跑 G0–G7 + smoke + 那條重現 → 派增量審查 G10-fix(見「迴圈與收斂」)→ 不紅了且增量審查說已解 `loop resolved` + `findings set fixed` |
 | `overbuilt` | 同上,修 = 拿掉 |
 | `ask_user` | **不修。** 先比對 `specs/policy.yaml`(見「常設決策」):對到 → `findings set F-n <決定> --policy P-n`。沒對到 → **預設接受風險、不擋推**,PR 留言頂端列為「合併即代表同意」,人可 `findings set F-n added_example` 推翻。**例外:bug 的檔命中 risk_paths(或沒記 files)** → 留給 S11 的 PR 留言問人,分支停著等。兩條車道一樣 |
-| `style` | 記下,不動 |
 
 `loop` 會在第 3 次 `fix` 拒絕(parked)、解過又出現時拒絕(flipflop)—— 那時停下來,
 不是換個方式再修。`findings check` 乾淨(或只剩 `ask_user`)後，將這次 commit 的內容（含
@@ -541,7 +550,7 @@ dashboard 標「要人工驗」,PR 頂端「需要你決定」;chiao 照規格�
 | S7½ 審測試 | `test-review --mechanical-only`;**不派 test-reviewer** | 機械 + test-reviewer |
 | G7 可達性 | 豁免 | 要 |
 | S smoke | 要 | 要 |
-| G9 spec-oracle | **不派** | 派 |
+| G9 spec-oracle | **不派** | 金流 / 權限 / 不可逆資料(旗標或路徑),或 S4 有分歧才派 |
 | G10 code-adversary | **要** | 要 |
 | `ask_user` 的處置 | 同 full | 常設決策 → 預設 accepted_risk、不擋推(PR 頂端列出,可推翻);bug 的檔命中 risk_paths 才停下來等人 |
 
@@ -588,8 +597,9 @@ lite 砍的是「證明測試有牙齒」和「第二個人讀規格」;**沒砍
 ────────────────────────────────────────────
 付費判定
   G8   變異測試        有工具才跑;沒有就對關鍵斷言做定向變異
-  G9   spec-oracle     隔離,只憑規格寫驗收測試。**lite 車道不派**
-  G10  code-adversary  每條主張附可執行的重現,分四類;效能四項(主執行緒 / N+1 / 無上限列表 / 沒取消)也在它清單上
+  G9   spec-oracle     隔離,只憑規格寫驗收測試。**lite 車道不派**;full 只在金流 / 權限 / 不可逆資料
+                       或 S4 有分歧時派,其他標「G9 未派(條件不符)」
+  G10  code-adversary  每條主張附可執行的重現,分三類;效能四項(主執行緒 / N+1 / 無上限列表 / 沒取消)也在它清單上
   G11  UI 截圖         smoke 順便截;有畫面變更才要求
 
 **「每個 example 都有測試覆蓋」沒有獨立的關卡。** 由 spec-lint(每條 Scenario 必須有 examples)
@@ -628,7 +638,7 @@ lite 砍的是「證明測試有牙齒」和「第二個人讀規格」;**沒砍
 迴圈永遠不收斂。代價是真有可能出貨一個 bug,所以它必須以問題的形式在 PR 上具名出現,
 而你的答案(要防 / 不用)會被記下來。
 
-### G10 的四類與重現形式
+### G10 的三類與重現形式
 
 | class | 主張 | 重現 | 判定 |
 |---|---|---|---|
@@ -637,7 +647,6 @@ lite 砍的是「證明測試有牙齒」和「第二個人讀規格」;**沒砍
 | `must_fix` | 測試假綠 | 一個存活的變異 | 實際注入跑一次 |
 | `ask_user` | example 沒涵蓋的 bug、極端 edge case | 一條會紅的測試 + 問句 | 紅 → 問人;綠 → 作廢 |
 | `overbuilt` | 例子外的公開介面 / 抽象層 | 指名哪個介面沒有任何 example 用到 | 擋,拿掉 |
-| `style` | 內部囉嗦、命名 | 不需要 | 提醒 |
 
 成立的 `must_fix`,**那條重現測試直接進 `regression/` 命名空間** —— 白賺一條回歸測試。
 `ask_user` 人說要防的,那條測試變成新 example 的規格測試(走 S7 重新擷取 RED)。
@@ -741,7 +750,7 @@ S7 → `red-capture`(lite 是 `test-review --mechanical-only`);S8 → G0–G7 + 
 - **最高到 opus**(chiao 決定):Fable 額度只留給表上本來就用它的站(S3 full、G10)
 - 只影響這張卡這一站,不改 `pipeline.yaml`;升過級就留在那一級
 - 不多給修的次數:`loop` 的「同一條 finding 修 2 次 → parked」照舊
-- 審查類的站(S3、S4、S7½、G9、G10、G10-fix)不記 `--result`,不升級
+- 審查類的站(S3、S7½、G9、G10、G10-fix)不記 `--result`,不升級。S4 例外:`--result` 記有沒有分歧(給 G9 看),一樣不升級
 
 `runs --yield` 算每個「站 × 車道 × 起始模型」第一次就過的比例與升級率;升級率超過 30% 會點名,提示把那格調高一級。
 

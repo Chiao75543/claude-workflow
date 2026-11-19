@@ -16,6 +16,7 @@
 
 用法: dashboard <spec.yaml> [--base main] [--pre-commit] [--trigger first|fix|merge-main|ci-red]
                  [-o evidence/dashboard.html]
+      dashboard <spec.yaml> --self-check     green-writer 交回前自己跑:只印 G3/G4/G7,什麼都不寫(改造方案 2.4)
 
 `--trigger` 記這次為什麼又跑證據表(寫進 _yield.jsonl),沒傳記 unknown。
 呼叫的人本來就知道原因,不從紀錄猜;「修 finding」和「CI 紅」分開記,才看得出重工從哪來。
@@ -39,7 +40,7 @@ import sys
 sys.path.insert(0, str(pathlib.Path(__file__).parent))
 import _config  # noqa: E402
 from _common import (  # noqa: E402
-    LITE_WAIVED_GATES, POLICY_DECISIONS, RELEASE_CHECKLIST, WAIVABLE_GATES, WAIVE_CATEGORIES, evidence_dir, finding_risk, impact_files,
+    LITE_WAIVED_GATES, POLICY_DECISIONS, RELEASE_CHECKLIST, WAIVABLE_GATES, WAIVE_CATEGORIES, evidence_dir, finding_risk, g9_reasons, impact_files,
     integration_branch, lane, load_policies, load_spec, manual_only, read_json, release_problem, scenario_ids, triage_findings, write_json, write_status,
 )
 from _state import branch_fingerprint, index_fingerprint, sync_merges, tree_fingerprint  # noqa: E402
@@ -525,6 +526,21 @@ def main(argv: list[str]) -> int:
                     "合併之後使用者體感會是零 —— 這類問題寫不出失敗測試,所以只有這道關擋得住。",
         })
 
+    # green-writer 交回前自跑(改造方案 2.4):這三關歷史上擋最多次,每次都多一輪完整證據表。
+    # 到這裡為止沒寫任何檔;不進 _yield,不算一次證據表。G3/G7 只看 commit 過或 stage 過的檔。
+    if "--self-check" in argv:
+        lite = lane(spec, config) == "lite"
+        passed = True
+        for g in (g for g in gates if g["id"] in ("G3", "G4", "G7")):
+            waived = not g["ok"] and lite and g["id"] in LITE_WAIVED_GATES and g["id"] in WAIVABLE_GATES
+            passed = passed and (g["ok"] or waived)
+            print(f"  {'✔' if g['ok'] else '–' if waived else '✘'} {g['id']} {g['what']}:"
+                  + (f"lite 車道不要求({g['note']})" if waived else g["note"]))
+        for item in [] if lite else unreachable:
+            print(f"      {item['symbol']}({item['file']})沒有任何建構點")
+        print("自檢:G3、G4、G7 都過 —— 可以交回" if passed else "自檢:沒過 —— 修好再交回(這支沒寫任何證據)")
+        return 0 if passed else 1
+
     # smoke —— 功能不對其他免談。證據要新鮮:工作樹指紋對不上就是過期。
     current_tree = tree_fingerprint(root)
     candidate_index_tree = None
@@ -575,7 +591,9 @@ def main(argv: list[str]) -> int:
               if it.get("status") in ("parked", "flipflop")}
     # 「派過了」要有紀錄:零 finding 的乾淨審查和「根本沒派」在證據上必須分得出來
     dispatched = findings.get("dispatched") or {}
-    required_reviews = ("G10",) if spec_lane == "lite" else ("G9", "G10")
+    # full 卡的 G9 看條件(改造方案 2.4);條件不符就不要求派遣紀錄,不算失敗
+    g9_why = g9_reasons(spec, config, read_json(ev / "dispatch.json") or {}) if spec_lane == "full" else []
+    required_reviews = ("G9", "G10") if g9_why else ("G10",)
     missing_dispatch = [gate for gate in required_reviews if gate not in dispatched]
     invalid_dispatch = [
         gate for gate in required_reviews
@@ -649,7 +667,8 @@ def main(argv: list[str]) -> int:
         gates.append({"id": "G9/10", "what": "獨立讀者 + 對抗審查", "ok": not pending and not halted,
                       "note": f"提出 {s.get('proposed', 0)} → 作廢 {s.get('void', 0)} → 證實 {s.get('confirmed', 0)}"
                               + (f" · {len(pending)} 條沒處理完" if pending else "")
-                              + (" · lite:只要求 G10" if spec_lane == "lite" else "")
+                              + (" · lite:只要求 G10" if spec_lane == "lite"
+                                 else "" if g9_why else " · G9 未派(條件不符)")
                               + "".join(f" · {gate} 之後的修正走增量審查 {len(used)} 段"
                                         f"({'、'.join(f for inc in used for f in inc.get('findings') or ['併 main ' + inc['merge'][:10]])})"
                                         if used else f" · {gate} 之後併過 main,本卡的改動沒變"
