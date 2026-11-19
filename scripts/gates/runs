@@ -32,7 +32,7 @@ from _common import (  # noqa: E402
     sibling_worktrees, write_status,
 )
 
-# 派遣 subagent 時的 description 格式:「<站> <agent> <卡名>」,例如 `S7 red-writer remove-leaderboard-xp`。
+# 派遣 subagent 時的 description 格式:「<站> <agent> <卡名>」,例如 `S7 red-writer demo-card`。
 # 規定在 references/dispatch-prompts.md;對不上的用量歸「未歸屬」,不猜。
 DISPATCH_DESCRIPTION = re.compile(r"^(?P<station>[SG]\d+\S*) (?P<agent>[a-z][a-z-]*) (?P<card>[a-z0-9][a-z0-9-]*)$")
 TOKEN_KEYS = {"input_tokens": "input", "output_tokens": "output",

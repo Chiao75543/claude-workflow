@@ -7,7 +7,7 @@ persona 已經寫在 `agents/*.md` 的定義裡,所以派遣訊息只負責**提
 (站 × 車道查表,連續失敗會升級)。不要自己挑模型、不要拿掉 `model`。寫程式的站(S7、S8、S9c、S12)交回後
 跑完該站的關卡,用 `dispatch … <站> --result pass|fail` 記。下面的範例省略了 `model`,以 `dispatch` 印的為準。
 
-**`description` 一律寫成 `<站> <agent> <卡名>`**(例:`S7 red-writer remove-leaderboard-xp`)。
+**`description` 一律寫成 `<站> <agent> <卡名>`**(例:`S7 red-writer demo-card`)。
 `runs --cost` 靠它把 subagent 的 token 歸到哪張卡、哪一站;格式不對的那筆會算進「未歸屬」,不猜。
 同一個 agent 換站重派就換站名:修 finding 的 green-writer 寫 `S9c green-writer {name}`,
 修 CI 紅的寫 `S12 green-writer {name}`。下面每個範例都照這個格式,`tests/run` 會檢查。

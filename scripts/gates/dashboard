@@ -465,7 +465,7 @@ def main(argv: list[str]) -> int:
     else:
         ok, out = run(lint_cmd.split() + changed, root)
         gates.append({"id": "G3", "what": "lint(變更的檔案)", "ok": ok,
-                      "note": f"{len(changed)} 個檔案" if ok else out.strip().splitlines()[-1][:60]})
+                      "note": f"{len(changed)} 個檔案" if ok else (out.strip().splitlines() or ["失敗,沒有輸出"])[-1][:60]})
 
     # G4 測試 —— 沒設定指令就是失敗。證據表不能宣稱「綠」而沒有人跑過。
     test_cmd = config.get("test")
@@ -480,7 +480,7 @@ def main(argv: list[str]) -> int:
     else:
         ok, out = run(test_cmd.split(), root)
         gates.append({"id": "G4", "what": "測試實作後是綠的", "ok": ok,
-                      "note": "全綠" if ok else out.strip().splitlines()[-1][:60]})
+                      "note": "全綠" if ok else (out.strip().splitlines() or ["失敗,沒有輸出"])[-1][:60]})
 
     red = read_json(ev / "red.json")
     if red:
