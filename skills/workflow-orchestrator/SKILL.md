@@ -8,11 +8,10 @@ description: 從一句需求到開好的 PR —— 規格撰寫(挑洞 + 隔離�
 端到端 pipeline。**你固定出現兩次:批准說明頁、按 merge。中間只在 PR 上有「需要你決定」時才叫你。
 沒有一次需要讀程式碼。**
 
-## 五條核心規則
+## 六條核心規則
 
 **1. 證據規則。** 每一句「這是對的」都必須跑得出來。AI 提出的問題必須附**可執行的重現**
 (會紅的測試 / 存活的變異 / 會命中的指令);跑不出來就自動作廢,不需要任何人裁決。
-這條取代了舊版整套 severity rubric 與人工裁決 gate。
 
 **2. 凍結規則。** 規格在人類批准後凍結,規格測試在 RED 後凍結。要改是**明確事件** ——
 退回重跑、重新擷取證據、留紀錄。不是偷偷改測試讓它變綠。
@@ -48,7 +47,7 @@ smoke 沒過就連審都不審。
 東西不存在時寫不出失敗測試。所以可達性(G7)是獨立的機械關卡,和嚴重度分開排。
 
 **6. 夠了規則。** 做到哪算夠 = **你批准的那些 examples,一個字不多。**
-例子外的實作叫多做:多出來的公開介面 / 抽象層會被擋(`overbuilt`);內部寫法、命名不算 finding(審查不再提 `style`)。
+例子外的實作叫多做:多出來的公開介面 / 抽象層會被擋(`overbuilt`);內部寫法、命名不算 finding。
 例子外的**問題**不是 fix,是**問題** —— 審查者發現例子沒涵蓋的 bug 或極端 edge case,
 不准自己修,變成 PR 上一則「要不要防?」問你(`ask_user`)。你說要 → 加一組 example
 (收緊,不用重新批准);你說不用 → 記成已接受風險。
@@ -78,6 +77,13 @@ integration_branch: main
 auto_push: true                  # 全綠零待決 → 自動推功能分支 + 開 PR
 ci: github                       # none | github | gitlab;none 就沒有 S12
 rules_files: [AGENTS.md]         # 資安基準與架構鐵則;派給 green-writer / code-adversary
+risk_paths:                      # 必填,六類都要寫,沒有就寫 [];沒設 = 每張卡都走 full
+  permissions: ["App/Info.plist", "App/*.entitlements"]
+  privacy: []
+  payments: []
+  irreversible_data: []
+  critical_security: []
+  core_entrypoint: []
 # spec_lint: {allow_vague: [works]}  # 選填:領域名詞撞上空話黑名單(欄目 WORKS、路徑 /works)才列;只收黑名單裡有的字
 ```
 
@@ -86,7 +92,7 @@ rules_files: [AGENTS.md]         # 資安基準與架構鐵則;派給 green-writ
 **`<repo>/AGENTS.md`** —— 給 AI 讀的散文:`{TEST_COMMAND}`、`{BUILD_COMMAND}`、
 `{LAYERING_CONVENTION}`、`{INTEGRATION_BRANCH}`、`{TICKET_PREFIX}`、Security Baseline、專案鐵則。
 
-**專案自備的 skill 只剩兩個**(舊版六個,其餘已被腳本與內建 agent 取代)。
+**專案自備的 skill 有兩個。**
 內建的 `red-writer` / `green-writer` 會在派遣時讀它們,拿到 stack 的慣例:
 
 | 慣例名 | 用在 | 專案要提供 |
@@ -163,7 +169,7 @@ smoke 沒有的專案要在這裡**一起寫出來**(通常是一支 `scripts/sm
 
 1. 問 ticket id(可跳過)、一句功能描述
 2. 記錄 `{name}`(kebab-case)與分支名 `feat/[{TICKET}-]{name}`
-2b. **推定六個風險旗標 —— 不問人**(改造方案 1.3)。依功能描述各判 true/false,寫進 `meta.risk_flags`:
+2b. **推定六個風險旗標 —— 不問人**。依功能描述各判 true/false,寫進 `meta.risk_flags`:
     - **permissions** 系統 / 平台權限(相機、麥克風、通知、定位;Info.plist 權限字串、entitlements)
     - **privacy** 個資、錄音、位置、通訊內容(通話、聊天、錄音、逐字稿被讀、存、傳或給別人看)
     - **payments** 金流
@@ -183,7 +189,7 @@ smoke 沒有的專案要在這裡**一起寫出來**(通常是一支 `scripts/sm
 新規格一律開新的 linked worktree,除非人明說跳過。
 
 ```bash
-base="{INTEGRATION_BRANCH}"   # AGENTS.md;沒綁定就停下來問,絕不猜
+base="{INTEGRATION_BRANCH}"   # specs/pipeline.yaml 的 integration_branch;沒設就停下來問,絕不猜
 git show-ref --verify --quiet "refs/heads/${base}" || base="origin/${base}"
 git worktree add .worktrees/{name} -b "feat/${branch_name}" "$base" && cd .worktrees/{name} || exit 1
 ```
@@ -312,7 +318,7 @@ G9 要不要派看這筆(見 S9c):任一輪有分歧就派;沒記等於有分歧
 1. `scripts/gates/test-review specs/{name}/spec.yaml --mechanical-only` —— 對 6a/6b 檢查零斷言、
    沒引用 example 具體值、example 沒人測,三種都擋
 2. **派遣 `test-reviewer`**(只有 Read/Grep/Glob)—— 看機械抓不到的:斷在對不對的地方、
-   一條測試一件事、case 名稱讀得出 given/when/then。它寫 `evidence/test-review.agent.json`
+   一條測試一件事、case 名稱讀得出 given/when/then。它沒有寫檔工具:回傳的 JSON 由你原樣存成 `evidence/test-review.agent.json`
 3. 再跑一次 `test-review`(不帶 `--mechanical-only`)→ PASS 才 hash 凍結測試檔
 4. 有問題 → 退回 S7 改測試,**重新擷取 RED**(改過的測試沒有 RED 證據)
 
@@ -323,12 +329,12 @@ G9 要不要派看這筆(見 S9c):任一輪有分歧就派;沒記等於有分歧
 **派遣 `green-writer`**。派遣訊息給它:凍結測試的路徑、專案 `rd-implementer` skill 的路徑、
 測試指令。「衝突就停」寫死在它的定義裡,不靠派遣訊息記得。
 
-**交回前它自己跑 `scripts/gates/dashboard specs/{name}/spec.yaml --self-check`**(改造方案 2.4):
+**交回前它自己跑 `scripts/gates/dashboard specs/{name}/spec.yaml --self-check`**:
 先 `git add` 自己改的檔,G3 lint、G4 測試、G7 可達性都過才交回;回報要附這支的輸出。
 這三關歷史上共擋 75 次,每次都多一輪完整證據表。`--self-check` 什麼都不寫,不算一次證據表。
 交回後你照樣跑 G0–G7 + smoke —— 自檢是讓它少交回幾次,不是取代關卡。
 
-**為什麼現在敢外派:** 凍結規則把它圍住了。它最壞能做的是動規格或規格測試(G1/G2 擋)、
+**為什麼敢外派:** 凍結規則把它圍住了。它最壞能做的是動規格或規格測試(G1/G2 擋)、
 卡住(它回報)、寫出醜的 code(lint + 對抗審查咬)—— 失敗模式有界而且偵測得到。
 沒有凍結的話,把契約交給 subagent 才危險。
 
@@ -347,7 +353,7 @@ G9 要不要派看這筆(見 S9c):任一輪有分歧就派;沒記等於有分歧
 2. ❌ 自己改規格 —— 那是人批准過的契約,不是實作者能動的
 3. ❌ 偷偷放寬測試讓它變綠 —— 凍結規則存在的全部理由
 
-**外派給 subagent 時這條要寫進派遣訊息。** 第 2、3 條會在 subagent 內部發生,
+這條寫死在 `green-writer` 的定義裡(不靠派遣訊息)。少了它,第 2、3 條會在 subagent 內部發生,
 然後被回報成「已完成」—— 因為 hash 是它改完之後才算的。
 
 ### S9 關卡:腳本 → smoke → 付費
@@ -366,7 +372,7 @@ UI 專案開 app 導航到目標畫面截圖(放進 `$SMOKE_SCREENSHOTS`)、API 
 runner log、錄影、截圖或產物)。缺 Scenario、缺 example、`ok:false`、舊檔、不存在／空檔、
 或只有 checklist 都讓 smoke FAIL。這是 6c 在 S7 被延後而不是被豁免的後半條防線。
 
-**S9c 付費審查 G9/G10**:派 `spec-oracle` 與 `code-adversary`。**G9 只在有理由時派**(改造方案 2.4):
+**S9c 付費審查 G9/G10**:派 `spec-oracle` 與 `code-adversary`。**G9 只在有理由時派**:
 金流、權限、不可逆資料任一旗標為 true 或路徑命中,或 S4 讀出過分歧(沒記算有)。`dispatch … G9` 會判斷,
 條件不符就拒絕,證據表標「G9 未派(條件不符)」,不算失敗;符合就印出要派的原因。**派完立刻
 `scripts/gates/findings dispatched --gate G9 --model <實際用的模型>`(G10 同;退過級就加 `--degraded`)** —— 零 finding 的乾淨審查也要留下派過的紀錄,
@@ -452,7 +458,7 @@ scripts/gates/dashboard specs/{name}/spec.yaml --trigger merge-main   # G0–G7 
 - **本卡的改動變了、卻沒有衝突解決可以審**(例如審查後還有沒審的修正)→ 整張重審
 
 `synced` 也會把「上次審過的樹」移到併完的樹,之後再修 finding,`fix-diff` 才不會混進 main 的改動。
-沒跑 `synced` 就 `fix-diff`,它會拒絕。這個 PR 之前派的審查沒有本卡改動的指紋,併 main 後只能整張重審。
+沒跑 `synced` 就 `fix-diff`,它會拒絕。派遣紀錄裡沒有本卡改動指紋的審查(舊紀錄),併 main 後只能整張重審。
 
 `specs/_release_checklist.md` 衝突:兩張卡各在檔尾加了一段,**兩段都留,都在「待驗」底下**。
 不要設 `merge=union`:發版搬「已驗」時它會默默把別張卡併進已驗段、不報衝突;放錯段 dashboard 會擋。
@@ -510,7 +516,7 @@ PR 可合併、輪到你按時 `runs --set specs/{name}/spec.yaml S13 "等你按
 
 ### 發版前人工驗(版本層級)
 
-只能人工驗(6d)的 Scenario 不擋單張卡(改造方案 1.5):S10 記進 `specs/_release_checklist.md`,PR 留言列在
+只能人工驗(6d)的 Scenario 不擋單張卡:S10 記進 `specs/_release_checklist.md`,PR 留言列在
 「發版前要人工驗」,合併就進了清單的「待驗」段。這是 pipeline 保留給人的第三個點(另兩個是 S5 與按 merge),
 粒度是版本,不是卡。
 
@@ -522,7 +528,7 @@ chiao 說要送 TestFlight 或正式部署:
    `## 已驗 vX(YYYY-MM-DD)` 段,去掉 `<!-- card -->` 標記;沒勾的留在待驗。整段搬走的卡,待驗裡不留空標題
 4. 沒過的留在待驗,另開一張卡修(`/workflow`)。還沒上線,不是漏網,不記 `escape`
 
-舊卡(這條規則之前合併的)的 6d 當時已逐卡處理,不補進清單。
+合併時沒記進清單的卡,它的 6d 已逐卡處理過,不補進清單。
 
 **例外:整張卡都是 6d**(沒有任何 6a/6b/6c)→ 照舊逐卡驗,不記進清單。這種卡沒有任何自動證據,
 PR 審查只看得到 code 有沒有重大問題、看不到功能對不對,先合併等於沒人驗過就進主線(chiao 決定)。
@@ -533,7 +539,7 @@ dashboard 標「要人工驗」,PR 頂端「需要你決定」;chiao 照規格�
 實測一個 iOS 專案九天:84 條 findings 有 43 條(51%)集中在兩張碰敏感東西的卡(錄音同意、即時通話);
 其餘每張 1–9 條,卻和它們走一樣的十關。只有兩個 Scenario 的分享功能,跑了 6 次證據表。
 
-**lite** 要兩件事都成立,否則 **full**(改造方案 1.3:兩者不一致取較嚴的):
+**lite** 要兩件事都成立,否則 **full**(兩者不一致取較嚴的):
 - `meta.risk_flags` 六個全 false —— S1 依描述推定,S5 你確認或推翻。任一 true、沒填、型別不對都是 full
   (忘了填不能變成少過關)
 - `impact.files` 沒有一個檔命中 `specs/pipeline.yaml` 的 `risk_paths`。`risk_paths` 沒設或格式不對 → full
@@ -555,7 +561,7 @@ dashboard 標「要人工驗」,PR 頂端「需要你決定」;chiao 照規格�
 | `ask_user` 的處置 | 同 full | 常設決策 → 預設 accepted_risk、不擋推(PR 頂端列出,可推翻);bug 的檔命中 risk_paths 才停下來等人 |
 
 實測 183 條 ask_user:added_example 112、accepted_risk 69 —— 不到四成「不用防」,卻每一條都讓 full 的分支停下來等。
-改造方案 1.4 把預設翻過來(lite 原本就這樣):先記風險、照樣往前,人事後推翻;碰到風險路徑的才先問。
+所以兩條車道的預設都是:先記風險、照樣往前,人事後推翻;碰到風險路徑的才先問。
 補 example 的那六成,靠 spec-grill 的「規格常漏的情境」在 S5 前問掉,和常設決策直接套用。
 
 lite 砍的是「證明測試有牙齒」和「第二個人讀規格」;**沒砍「測試先寫、鎖住、實作碰不到」**這條規矩
@@ -596,11 +602,9 @@ lite 砍的是「證明測試有牙齒」和「第二個人讀規格」;**沒砍
                        **沒過,下面全部不跑**
 ────────────────────────────────────────────
 付費判定
-  G8   變異測試        有工具才跑;沒有就對關鍵斷言做定向變異
   G9   spec-oracle     隔離,只憑規格寫驗收測試。**lite 車道不派**;full 只在金流 / 權限 / 不可逆資料
                        或 S4 有分歧時派,其他標「G9 未派(條件不符)」
   G10  code-adversary  每條主張附可執行的重現,分三類;效能四項(主執行緒 / N+1 / 無上限列表 / 沒取消)也在它清單上
-  G11  UI 截圖         smoke 順便截;有畫面變更才要求
 
 **「每個 example 都有測試覆蓋」沒有獨立的關卡。** 由 spec-lint(每條 Scenario 必須有 examples)
 + traceability(每條 Scenario 必須有測試)+ test-review(每組 example 至少被一條測試引用值)
@@ -708,7 +712,7 @@ policies:
   它**不算** G10 重派(G10 整張最多重派 **1 次** 不變)。它提出的新 must_fix 照常進 loop,同一條修到第 3 次照樣 parked。
 - dashboard 從派遣時開始,用增量審查一段一段往後接:每一段的起點是上一段審完的狀態,
   點名的 finding 在上一段審完之後有 `loop fix`。接得到現在才不判「審查過期」。
-  **沒有 `loop fix` 紀錄的審查後變更(臨時加功能)接不上 → 照舊整張重審。** 舊的「≤ 1 檔、40 行免審」已拿掉,小改也要增量審查
+  **沒有 `loop fix` 紀錄的審查後變更(臨時加功能)接不上 → 照舊整張重審。** 小改也要增量審查,沒有免審門檻
 - 接的是**本卡自己改動的指紋**(整合分支的 merge-base → 工作樹,只比 +/- 行),所以併 main 不會打斷這條鏈。
   併 main 的規則見 S10¾
 - 停下來不是叫你看程式碼,是 PR 留言上多一行「需要你決定」:
@@ -719,7 +723,7 @@ policies:
 
 ## 模型與額度
 
-**每次派遣前先跑 `dispatch`,照它印的那行派 —— `model` 一定要傳,不自己挑**(改造方案 2.1):
+**每次派遣前先跑 `dispatch`,照它印的那行派 —— `model` 一定要傳,不自己挑**:
 
 ```bash
 scripts/gates/dispatch specs/{name}/spec.yaml S8                # 印出 Agent(subagent_type=…, description=…, model="sonnet", prompt=...)
@@ -728,7 +732,7 @@ scripts/gates/dispatch specs/{name}/spec.yaml S8 --result fail  # 寫程式的�
 
 模型查 `specs/pipeline.yaml` 的 `models`(站 × 車道),沒寫的格子用 `_config.DEFAULTS`;`config-check` 印出生效的整張表。
 一格可以寫模型名,或 `{model: opus, effort: xhigh}`(沒寫 effort 就用 agent 定義的)。
-`agents/*.md` 的 frontmatter 只是沒經過 `dispatch` 直接派時的缺省。起始值是方案 2.2 的建議分配:
+`agents/*.md` 的 frontmatter 只是沒經過 `dispatch` 直接派時的缺省。起始值:
 
 | 站 | lite | full |
 |---|---|---|
@@ -744,7 +748,7 @@ scripts/gates/dispatch specs/{name}/spec.yaml S8 --result fail  # 寫程式的�
 
 主 session(orchestrator)的模型是人開 session 時選的,這張表管不到。
 
-**連續失敗就升級**(方案 2.3)。寫程式的站交回後跑該站的關卡,用 `--result` 記過了沒:
+**連續失敗就升級**。寫程式的站交回後跑該站的關卡,用 `--result` 記過了沒:
 S7 → `red-capture`(lite 是 `test-review --mechanical-only`);S8 → G0–G7 + smoke;S9c → 那條重現不再紅、G0–G7 + smoke 綠;S12 → CI 綠。
 同一張卡同一站最近 2 次是同一個模型、都 `fail` → 下一次 `dispatch` 自動升一級(haiku → sonnet → opus),記 `escalated`。
 - **最高到 opus**(chiao 決定):Fable 額度只留給表上本來就用它的站(S3 full、G10)
@@ -771,11 +775,6 @@ S7 → `red-capture`(lite 是 `test-review --mechanical-only`);S8 → G0–G7 + 
 實測的派遣開機費(單次、零工作量):`general-purpose` 31,554 · `spec-grill`(3 工具)5,587 ·
 `spec-reader`(零工具)3,137。**tool schema 佔了 general-purpose 開機費的九成** ——
 所以派遣用的 agent 一律走 `agents/` 底下的精簡定義,不要用 `general-purpose`。
-- 同一條 finding **修過又出現** → 立即停
-- 同一條 finding **修 2 次還沒解** → 停,標 `parked`
-
-停下來不是叫你看程式碼,是在證據表上列一行:「SC-003 有一條已證實的失敗,2 次修復未果」。
-你的決定是:照樣出貨 / 分支停在這 / 回頭改規格。**這是決策,不是 code review。**
 
 ## context 紀律:錢花在重讀,不是思考
 
@@ -801,8 +800,7 @@ S7 → `red-capture`(lite 是 `test-review --mechanical-only`);S8 → G0–G7 + 
 每道關過或擋、需要注意的標籤、審查提出/證實幾條。`runs --yield` 彙整成
 「每道關擋下 / 跑過」,**跑過 ≥5 次從沒擋過東西的會被點名** —— 那是問「它還該不該留」的時候。
 
-沒有這個數據,「這道關要不要留」的討論只能靠直覺。舊版的 `disposition:` 標記做同一件事,
-重寫時被誤刪,這裡補回。
+沒有這個數據,「這道關要不要留」的討論只能靠直覺。
 
 每筆另記 `review_state`(G9/10 為什麼沒過:`upstream_red` 腳本或 smoke 沒過所以沒派、`not_dispatched`、
 `invalid_dispatch`、`stale` 審查過期、`findings_pending`、`pass`)與 `trigger`(見 S9c)。
@@ -864,7 +862,7 @@ scripts/bench/recall run q.json --model fable --effort xhigh --setup "npm ci" --
 - `scan-siblings` —— 跨 worktree 掃規格,得到能力清單與碰撞警告
 - `runs` —— 跨 worktree 狀態列表,一眼看完誰卡在哪、誰在等你
 - 兄弟分支 merge 進整合分支後,其他 worktree 的基準線失效 →
-  rebase 後**重跑 G0–G7**(呼叫點清單與 lint 基準都要重算)
+  把最新的整合分支 merge 進來(只 merge、不 rebase,理由見 S10¾)後**重跑 G0–G7**(呼叫點清單與 lint 基準都要重算)
 
 ## Common Mistakes
 
@@ -878,8 +876,8 @@ scripts/bench/recall run q.json --model fable --effort xhigh --setup "npm ci" --
 | 對帳錨在最終結果行 | 參數化測試不發單一最終結果行;錨在 `started` |
 | 給獨立讀者看程式碼 | 那是它存在的全部理由,給了等於廢掉 |
 | 實作階段自己改規格「因為那只是事實修正」 | 自我認證等於把裁量權還回去。用 `spec-diff` 機械判定 |
-| 外派實作但沒交代「衝突就停」 | subagent 會自己解決然後回報「完成」,而 hash 是它改完才算的 |
-| 缺席類問題只記 WARNING | 那類寫不出失敗測試;靠 G8 可達性擋 |
+| 外派實作不用 `green-writer`(「衝突就停」寫在它的定義裡) | 別的 agent 會自己解決然後回報「完成」,而 hash 是它改完才算的 |
+| 缺席類問題只記 WARNING | 那類寫不出失敗測試;靠 G7 可達性擋 |
 | 外包正則給 `git grep -E` | POSIX ERE 不支援 `\b` / `\s`,會靜默匹配不到 |
 | 機械改檔不 assert 錨點命中 | 格式化過的檔案會讓字串比對靜默失敗 |
 | **用一個「會過的案例」去驗一個檢查** | 見下方 —— 這是最一致的失誤模式 |
@@ -927,7 +925,7 @@ scripts/bench/recall run q.json --model fable --effort xhigh --setup "npm ci" --
 
 ## Related
 
-- `scripts/gates/*` —— 關卡的實作;S7 以後新增 `test-review` `smoke` `findings` `loop` `pr-comment` `config-check`
+- `scripts/gates/*` —— 關卡的實作
 - `agents/*` —— 各站的 agent 定義。模型看 `dispatch`(專案 `pipeline.yaml` 的 `models`,預設在 `_config.DEFAULTS`);frontmatter 只是缺省
 - `templates/ci/*` —— S12 的 CI 範本(要裝進專案是人的決定)
 - `commands/workflow/init.md` —— S0 問卷

@@ -44,13 +44,13 @@ Claude 扮演資深 QA/RD，以規格驗收條件為基準撰寫完整單元測�
 | `TestScope` + `runTest` | 所有 coroutine 測試 |
 | `Turbine` | Flow / StateFlow / SharedFlow 測試 |
 
-**測試方法命名**：可使用中文，清楚描述情境與預期結果：
+**測試方法命名**：以 Scenario 編號開頭（`SC-nnn`，traceability 靠它對回規格），可使用中文，清楚描述情境與預期結果：
 ```kotlin
 @Test
-fun `申請憑證成功時，UiState 應更新為成功狀態`() { ... }
+fun `SC-001 申請憑證成功時，UiState 應更新為成功狀態`() { ... }
 
 @Test
-fun `API 回傳 E001 時，應發送 ShowError 事件`() { ... }
+fun `SC-002 API 回傳 E001 時，應發送 ShowError 事件`() { ... }
 ```
 
 ---
@@ -121,23 +121,14 @@ app/src/test/java/{PACKAGE_PATH}/
 
 ## 執行流程
 
+> **由 pipeline 派遣（red-writer）讀這份時**：只取上面的慣例與規則，以及下面各 Step 裡這個 stack 的寫法。Step 3 的「等使用者確認」、Step 5.5 的覆蓋率、Step 7 的回報格式是單獨使用本 skill 的流程，派遣時不適用 —— 流程與回報格式以 agent 定義為準。
+
 ### Step 1 — 讀取規格
 
-**優先讀取 規格結構：**
-
-```
-specs/{name}/
-├── specs/*.md     → 取得 Requirement + Scenario（SHALL/WHEN/THEN）
-├── android.md     → 取得 API 契約、錯誤碼定義
-├── design.md      → 取得 Domain Model 設計
-└── proposal.md    → 取得功能動機與範圍
-```
-
-從 `specs/*.md` 擷取：
-- 每個 Requirement 名稱
-- 每個 Scenario 的 WHEN/THEN 條件
-- UI Behavior 章節的狀態描述
-- Error scenario 的錯誤觸發與處理
+規格是單一檔 `specs/{name}/spec.yaml`（凍結，不能動；結構見 pipeline 的 `references/spec-template.yaml`）。
+從 `requirements[].scenarios[]` 擷取：
+- 每條 Scenario 的 `id`、`mode`、given / when / then
+- 每條 Scenario 的 `examples`（`in` / `out` 的具體值）—— 這是契約，測試斷言的就是它
 
 將每個 Scenario 記錄，供後續覆蓋率報告使用。
 
@@ -162,7 +153,7 @@ cat app/src/main/java/{PACKAGE_PATH}/ui/feature/xxx/XxxViewModel.kt
 - ViewModel 的 UiState、Event、Action 定義
 - 所有可能的狀態轉換路徑
 
-**TDD 模式**（Stage 2 of workflow）：production code 可能尚未存在。此時依據規格中的 Domain Model 與介面定義來撰寫測試，測試引用的 class/method 會在 Stage 3 實作時建立。
+**TDD 模式**（pipeline 的 S7）：production code 可能尚未存在。此時依規格的介面定義先放哨兵 stub（見上「RED 證據的紀律」）讓測試可編譯、可執行；編譯不過不算 RED。真正的實作在 S8。
 
 若找不到對應檔案且非 TDD 模式，停止並告知使用者確認路徑。
 
@@ -238,7 +229,7 @@ class XxxUseCaseTest {
 
         // Then
         assertThat(result.isFailure).isTrue()
-        assertThat(result.exceptionOrNull()).isInstanceOf(XxxException.DataUnavailable::class.java)
+        assertThat(result.exceptionOrNull()).isEqualTo(XxxException.DataUnavailable)   // 斷言完整的錯誤值，不只型別
     }
 }
 ```
@@ -400,7 +391,7 @@ cd {PROJECT_ROOT}
 3. 從報告中擷取本次功能相關類別的覆蓋率數字（line coverage %）
 4. 若覆蓋率 < 90%，列出未覆蓋的分支/行，建議補寫測試
 
-**TDD 模式例外**：若在 workflow Stage 2（RED phase），測試預期全部 FAIL，跳過覆蓋率檢查。
+**TDD 模式例外**：若在 pipeline 的 S7（RED），測試預期全部 FAIL，跳過覆蓋率檢查。
 
 ---
 
@@ -441,7 +432,7 @@ cd {PROJECT_ROOT}
 | 狀況 | 處理方式 |
 |---|---|
 | Production code 路徑找不到（非 TDD 模式） | 停止，請使用者提供正確路徑 |
-| Production code 不存在（TDD 模式） | 正常，依據規格的介面定義撰寫測試 |
+| Production code 不存在（TDD 模式） | 正常；依規格的介面定義先放哨兵 stub，再寫測試 |
 | specs/*.md 的 Scenario 不存在 | 停止，提示先完善規格再執行 /test |
 | 程式碼與規格行為不一致 | 不自行決定，回報給使用者 |
 | 規格不存在 | 停止，請使用者先建立或遷移成 specs/{name}/spec.yaml |

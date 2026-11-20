@@ -51,6 +51,6 @@ cd - && git worktree remove "$wt"
 
 - `auto_push: false` → 停在 commit,把表給人看,人說推才推
 - PR 由人 merge;不要自動合
-- 兩筆還沒合的 PR 都在檔尾加一行,後合的那個會衝突 → rebase 到最新的整合分支,兩行都留
+- 兩筆還沒合的 PR 都在檔尾加一行,後合的那個會衝突 → 把最新的整合分支 merge 進來(不 rebase:推過的分支 rebase 之後要 force push),兩行都留
 
 **看統計:** `scripts/gates/escape list`(讀的是當前 checkout 的檔;要看整合分支上的,先在主 checkout 拉到最新)。

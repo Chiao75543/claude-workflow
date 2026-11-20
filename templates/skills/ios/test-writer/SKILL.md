@@ -38,7 +38,7 @@ Claude 扮演資深 QA/RD，以規格驗收條件為基準撰寫完整單元測�
 
 ## 測試型態分類（6a / 6b / 6c / 6d）
 
-依 Scenario 內容分類，一個 change 可混用三種：
+依 Scenario 內容分類，一個 change 可混用：
 
 | 型態 | 判斷依據 | 產出 |
 |---|---|---|
@@ -61,12 +61,12 @@ Claude 扮演資深 QA/RD，以規格驗收條件為基準撰寫完整單元測�
 
 **非同步等待**：直接 `await` 結果或用 Swift Testing 的 `confirmation`；**禁 `Task.sleep` / 輪詢真實時鐘**（flaky 主因）。時間相關邏輯把 clock 注入（`ContinuousClock` 之類走 protocol），測試端換假 clock。
 
-**測試方法命名**：`@Test` 的 display name 用中文，清楚描述情境與預期結果；function 名用簡短英文：
+**測試方法命名**：`@Test` 的 display name 以 Scenario 編號開頭（`SC-nnn`，traceability 靠它對回規格），用中文清楚描述情境與預期結果；function 名用簡短英文：
 ```swift
-@Test("登入成功時，ViewModel 應更新為已登入狀態")
+@Test("SC-001 登入成功時，ViewModel 應更新為已登入狀態")
 func signInSuccess() async throws { ... }
 
-@Test("API 回傳 {error} 時，應直顯繁中文案")
+@Test("SC-002 API 回傳 {error} 時，應直顯繁中文案")
 func serverErrorShowsMessage() async { ... }
 ```
 
@@ -144,23 +144,14 @@ func serverErrorShowsMessage() async { ... }
 
 ## 執行流程
 
+> **由 pipeline 派遣（red-writer）讀這份時**：只取上面的慣例與規則，以及下面各 Step 裡這個 stack 的寫法。Step 3 的「等使用者確認」、Step 5.5 的覆蓋率、Step 7 的回報格式是單獨使用本 skill 的流程，派遣時不適用 —— 流程與回報格式以 agent 定義為準。
+
 ### Step 1 — 讀取規格
 
-**優先讀取 規格結構：**
-
-```
-specs/{name}/
-├── specs/*.md     → 取得 Requirement + Scenario（SHALL/WHEN/THEN）
-├── ios.md         → 取得 API 契約、錯誤碼定義
-├── design.md      → 取得 Domain Model 設計
-└── proposal.md    → 取得功能動機與範圍
-```
-
-從 `specs/*.md` 擷取：
-- 每個 Requirement 名稱
-- 每個 Scenario 的 WHEN/THEN 條件
-- UI Behavior 章節的狀態描述
-- Error scenario 的錯誤觸發與處理
+規格是單一檔 `specs/{name}/spec.yaml`（凍結，不能動；結構見 pipeline 的 `references/spec-template.yaml`）。
+從 `requirements[].scenarios[]` 擷取：
+- 每條 Scenario 的 `id`、`mode`、given / when / then
+- 每條 Scenario 的 `examples`（`in` / `out` 的具體值）—— 這是契約，測試斷言的就是它
 
 將每個 Scenario 記錄並標定型態（6a/6b/6c/6d），供後續各階段證據與覆蓋率報告使用。
 
@@ -194,11 +185,11 @@ public struct SignInUseCase {
     let auth: AuthRepository
     public init(auth: AuthRepository) { self.auth = auth }
     public func callAsFunction(email: String, password: String) async throws {
-        fatalError("未實作")   // implement 階段填肉
+        throw DomainError.server(status: 0, message: "STUB-NOT-IMPLEMENTED")   // 哨兵；implement 階段填肉
     }
 }
 ```
-3. 測試以「未實作」行為 FAIL = true RED（若 `fatalError` crash 中斷整包測試回報，空殼可改丟 `DomainError.notConfigured`，RED 效果相同）
+3. 測試以哨兵錯誤 FAIL = true RED。不用 `fatalError`（crash 會讓它後面的測試靜默不執行），也不丟沒帶標記的 `DomainError.notConfigured`（可能剛好是某條 Scenario 預期的值，`red-capture` 也認不出它是哨兵）
 
 空殼只有型別簽名、沒有邏輯，不算違反「不修改 production code」原則。
 
@@ -283,7 +274,8 @@ struct SignInUseCaseTests {
         repo.signInResult = .failure(.server(status: 401, message: "帳號或密碼錯誤"))
         let useCase = SignInUseCase(auth: repo)
 
-        await #expect(throws: DomainError.self) {
+        // 斷言完整的錯誤值，不只型別（DomainError 需為 Equatable）
+        await #expect(throws: DomainError.server(status: 401, message: "帳號或密碼錯誤")) {
             try await useCase(email: "test+1@example.com", password: "wrong")
         }
     }
@@ -516,7 +508,7 @@ xcrun xccov view --report build/tests.xcresult
 | 狀況 | 處理方式 |
 |---|---|
 | Production code 路徑找不到（非 TDD 模式） | 停止，請使用者提供正確路徑 |
-| Production code 不存在（TDD 模式） | 正常；先建 Repository protocol + `fatalError("未實作")` 空殼讓測試可編譯（見 Step 2） |
+| Production code 不存在（TDD 模式） | 正常；先建 Repository protocol + 拋哨兵錯誤（`STUB-NOT-IMPLEMENTED`）的空殼讓測試可編譯（見 Step 2） |
 | 測試 target 編不過（protocol conformance 不完整） | 補齊空殼 conformance 簽名，不填業務邏輯 |
 | specs/*.md 的 Scenario 不存在 | 停止，提示先完善規格再執行 /test |
 | 程式碼與規格行為不一致 | 不自行決定，回報給使用者 |

@@ -28,15 +28,12 @@ into the dispatch-time prompt.
 
 ## Security Baseline
 
-Reviewers may raise a security CRITICAL **only by citing a rule below** (rule
-number). Speculative concerns without a citation are WARNING at most, and must
-carry a fix-cost estimate. Projects may **extend** (append new numbered rules)
-and **amend** (reword a rule to fit the project — the project's version then
-takes precedence over this template's default). Numbering is append-only:
-never renumber or insert mid-list — archived review.md entries cite rule
-numbers permanently. Keep every entry concrete and checkable. (A default
-copy of rules 1–10 is embedded in the orchestrator's reviewer severity
-rubric for projects missing this section — keep the two lists in sync.)
+The pipeline's adversarial review (G10) raises a violation of a rule below as
+`must_fix`, and must attach a search or scan command that hits it; a concern
+with no rule to cite and no reproduction is discarded. Projects may **extend**
+(append new numbered rules) and **amend** (reword a rule to fit the project).
+Numbering is append-only: never renumber or insert mid-list, so a rule number
+keeps meaning the same rule. Keep every entry concrete and checkable.
 
 1. No secrets in git — keystores, service accounts, API keys, tokens,
    `google-services.json`, `.env`. CI injects them (e.g. File variables).
@@ -75,7 +72,7 @@ Read by the workflow-orchestrator skill (see its "Project bindings"
 section). Declare concrete values — the orchestrator stops and asks
 rather than guess a missing one:
 
-- `{TICKET_PREFIX}`: {e.g. AIP / JIRA / GH — ticket-id prefix used in branch names, commit footers, and disposition tags}
+- `{TICKET_PREFIX}`: {e.g. AIP / JIRA / GH — ticket-id prefix used in branch names and commit footers}
 - `{INTEGRATION_BRANCH}`: {e.g. developer / main — MR/PR target and Stage 2 worktree base}
 - `{LAYERING_CONVENTION}`: {e.g. Domain → Data → DI → Presentation → Navigation}
 
@@ -114,6 +111,13 @@ integration_branch: {integration_branch}
 auto_push: true
 ci: none                           # none | github | gitlab
 rules_files: [AGENTS.md]
+risk_paths:                        # 必填,六類都要寫,沒有就寫 []
+  permissions: []
+  privacy: []
+  payments: []
+  irreversible_data: []
+  critical_security: []
+  core_entrypoint: []
 ```
 
 ## Pre-commit 驗證
@@ -123,8 +127,8 @@ commit 之前必須:
 1. `{lint_command}` —— **只看變更的檔案**。真實 repo 都有歷史債,
    要求整包乾淨等於這關從第一天就失效。lint 綠了之後,風格類意見一律禁提。
 2. 相關測試全綠。
-3. `scripts/gates/` 的八道腳本關卡全綠(規格檢查、凍結、lint、測試、
-   RED 對帳、追溯、範例覆蓋、可達性),才啟動付費關卡。
+3. `scripts/gates/` 的腳本關卡 G0–G7 全綠(規格檢查、凍結、測試審過、lint、測試、
+   RED 對帳、追溯、可達性)、smoke 過,才啟動付費關卡。
 4. stage 這次 commit 的完整內容（含 `evidence/spec.approved.yaml`），再跑
    `scripts/gates/dashboard specs/{name}/spec.yaml --pre-commit --trigger <first|fix|merge-main|ci-red>`。這只證明候選樹可提交；
    staged 快照不等於 owner 批准，且絕不允許 auto-push。

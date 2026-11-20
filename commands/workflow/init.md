@@ -1,6 +1,6 @@
 ---
 name: "workflow:init"
-description: "第一次在一個專案用 pipeline:問一輪設定問卷(技術棧 / 指令含 smoke / 主線與自動推 / CI 有無 / 邊界 / 模型),寫成 specs/pipeline.yaml,config-check 過了才算完成。"
+description: "第一次在一個專案用 pipeline:問一輪設定問卷(技術棧 / 指令含 smoke / 主線與自動推 / CI 有無 / 邊界 / 風險路徑),寫成 specs/pipeline.yaml,config-check 過了才算完成。"
 category: Workflow
 tags: [workflow, init, config]
 ---

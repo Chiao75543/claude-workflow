@@ -79,7 +79,8 @@ Claude 扮演資深 iOS RD，嚴格依照核准並凍結的規格逐層實作程
 **不能動**:`spec/` 命名空間的測試、`specs/{name}/spec.yaml`。兩個都靠指紋在 S9 擋。
 
 實作到一半發現規格對環境的假設是錯的(SDK 行為跟規格寫的不一樣、
-既有慣例與規格衝突),那是**明確事件**,不是偷偷改測試讓它變綠:
+既有慣例與規格衝突),那是**明確事件**:停下來回報「規格說 X,實測是 Y,證據在 Z」,
+不自己改規格、不放寬測試、不在實作裡繞過去。規格改動由 orchestrator 走:
 
 ```
 改規格(寫明為什麼) → 把該處實作還原成 stub → 重新擷取那條的 RED → 再實作回去
@@ -89,29 +90,21 @@ Claude 扮演資深 iOS RD，嚴格依照核准並凍結的規格逐層實作程
 
 ## 執行流程
 
+> **由 pipeline 派遣（green-writer）讀這份時**：只取上面的規則與下面各 Phase 的分層慣例。Step 3 的「等使用者確認」、各 Phase 的「告知使用者」、煙霧測試與覆蓋率、Step 7 的 commit / PR 是單獨使用本 skill 的流程，派遣時不適用 —— 流程、自檢與回報格式以 agent 定義為準。
+
 ### Step 1 — 讀取規格
 
-**優先讀取 規格結構：**
+規格是單一檔 `specs/{name}/spec.yaml`（凍結，不能動；結構見 pipeline 的 `references/spec-template.yaml`）：
 
-```
-specs/{name}/
-├── tasks.md       → 取得實作清單（Phase 分層）
-├── specs/*.md     → 取得需求細節（SHALL/WHEN/THEN）
-├── ios.md         → 取得 API 契約、Navigation/深連結路由、影響範圍
-├── design.md      → 取得 Domain Model 設計、設計決策
-└── proposal.md    → 取得功能動機與範圍
-```
+| 欄位 | 取得什麼 |
+|---|---|
+| `requirements[].scenarios[]` | 每條 Scenario 的 given / when / then 與 `examples` —— 做到哪算夠就看它 |
+| `design` | 設計決定與理由 |
+| `impact` | 會動到的檔案、既有呼叫點、已接受的風險 |
+| `why` / `what` | 動機、範圍、非目標 |
+| `tasks` | 實作清單 |
 
 **找不到規格**:先要求使用者建立 `specs/{name}/spec.yaml`(或把舊規格遷移過來),不另走 fallback。
-
-擷取以下資訊：
-- 功能名稱
-- 實作清單（`tasks.md`）
-- API 契約（`ios.md`）
-- Domain Model（`design.md`）
-- UI 行為規格（`specs/*.md`）
-- Navigation / 深連結（`ios.md`）
-- web 對照元件（`ios.md` 或 `proposal.md` 指認的 `{PROJECT_ROOT}/web/` 路徑）
 
 ---
 
@@ -230,14 +223,9 @@ Phase 5: View / Navigation
 
 ---
 
-### Step 6 — 更新 tasks.md
+### Step 6 — 實作清單
 
-將 `tasks.md` 中已完成的項目勾選：
-
-```markdown
-- [x] 1.1 建立 Profile entity
-- [x] 1.2 建立 ProfileRepository protocol
-```
+`tasks` 寫在凍結的 `spec.yaml` 裡，實作者不能動它。完成了哪些項目，寫在 Step 7 的回報裡。
 
 ---
 

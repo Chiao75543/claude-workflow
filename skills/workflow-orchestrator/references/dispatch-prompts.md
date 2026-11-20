@@ -166,7 +166,7 @@ Agent(subagent_type="red-writer", description="S7 red-writer {name}", prompt=...
 Agent(subagent_type="test-reviewer", description="S7½ test-reviewer {name}", prompt=...)
 ```
 
-素材:規格路徑(它要對 examples)、測試檔路徑、輸出檔路徑 `evidence/test-review.agent.json`。
+素材:規格路徑(它要對 examples)、測試檔路徑。它沒有寫檔工具:回傳的 JSON 由你原樣存成 `evidence/test-review.agent.json`。
 **不給實作** —— 它審的是「這批測試值得被凍結嗎」,實作根本還沒寫。
 
 先跑過 `scripts/gates/test-review --mechanical-only`,把機械擋得住的先清掉再派 —— 省它的力氣。

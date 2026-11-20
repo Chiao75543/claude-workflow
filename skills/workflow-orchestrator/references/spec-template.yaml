@@ -100,4 +100,4 @@ tasks:
   - {done: false, text: "Domain:實體與介面"}
   - {done: false, text: "Data:實作"}
   - {done: false, text: "Presentation:畫面與狀態"}
-  - {done: false, text: "接線:讓新東西真的到得了(G8 會擋)"}
+  - {done: false, text: "接線:讓新東西真的到得了(G7 會擋)"}

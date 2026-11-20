@@ -37,7 +37,7 @@ tools: Read, Grep, Glob
 
 ## 輸出
 
-寫到派遣訊息指定的 `evidence/test-review.agent.json`:
+你沒有寫檔工具。回覆只放下面這份 JSON,orchestrator 會原樣存成 `evidence/test-review.agent.json`:
 
 ```json
 {
