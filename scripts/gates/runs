@@ -8,6 +8,7 @@
                                           沒有 remote 才讀本機的);同一關 30 天內被豁免 ≥3 次會點名
                                           每個「站 × 車道 × 起始模型」第一次就過的比例與升級率,升級率 >30% 點名
   runs --cost                             每張卡、每一站用了多少 token,以及花了多久、等人多久
+                                          每張卡派了幾次 subagent(依站分;改造方案 2.4 的驗收拿它比基準)
 
 狀態寫在 <spec 目錄>/evidence/status.json(含追加式 history)。
 在飛 = 這個 worktree 自己改過、還沒落地的規格(_common.in_flight_specs);判定前先 git fetch 整合分支。
@@ -253,6 +254,7 @@ def show_cost(root: pathlib.Path) -> int:
         return 0
     histories = card_histories(root)
     totals: dict = collections.defaultdict(lambda: dict.fromkeys(TOKEN_KEYS.values(), 0))
+    dispatches: dict = collections.defaultdict(collections.Counter)   # 卡 → 站 → 派了幾次(一個 subagent 紀錄算一次)
     seen: set = set()
     try:
         for d in dirs:
@@ -264,6 +266,7 @@ def show_cost(root: pathlib.Path) -> int:
             for path in sorted(d.glob("*/subagents/*.jsonl")):
                 m = DISPATCH_DESCRIPTION.match((read_json(path.with_suffix(".meta.json")) or {}).get("description") or "")
                 card, station = (m["card"], m["station"]) if m else (UNATTRIBUTED, "?")
+                dispatches[card][station] += 1
                 for _, _, model, usage in read_usage(path, seen):
                     for k, v in usage.items():
                         totals[(card, station, model)][k] += v
@@ -280,6 +283,10 @@ def show_cost(root: pathlib.Path) -> int:
               f" {t['cache_read']:>14,} {t['cache_write']:>14,}")
     share = lost / grand * 100 if grand else 0.0
     print(f"  合計 {grand:,} token · 未歸屬 {share:.1f}%(太高代表這個歸屬方法不可靠)")
+    if dispatches:
+        print("▸ 派遣次數(每張卡;一個 subagent 紀錄算一次)")
+        for card, by_station in sorted(dispatches.items(), key=lambda kv: (kv[0] == UNATTRIBUTED, kv[0])):
+            print(f"  {card}  {sum(by_station.values())} 次(" + " · ".join(f"{st} {n}" for st, n in sorted(by_station.items())) + ")")
 
     if histories:
         print("▸ 時間(status.json 的 history,首筆到末筆)")

@@ -1,6 +1,6 @@
 ---
 name: "workflow:verify"
-description: "跑 S9:腳本關卡 G0–G7 全綠 → smoke(真的入口跑一次)→ 才派付費審查 G9/G10;審查結果四類分流,迴圈由 loop 腳本數。"
+description: "跑 S9:腳本關卡 G0–G7 全綠 → smoke(真的入口跑一次)→ 才派付費審查 G9/G10;審查結果三類分流,迴圈由 loop 腳本數。"
 category: Workflow
 tags: [workflow, verify, gates]
 ---
@@ -11,7 +11,7 @@ tags: [workflow, verify, gates]
 
 1. `scripts/gates/` 的 G0–G7 依序跑;沒過退回 S8
 2. `scripts/gates/smoke specs/{name}/spec.yaml`;**沒過就停,不派審查**。判定只讀 `smoke.json`,不 `Read` 截圖
-3. 派 `spec-oracle` 與 `code-adversary`(先 `scripts/gates/dispatch specs/{name}/spec.yaml G9|G10`,照它印的派;**lite 車道只派 `code-adversary`**),派完立刻 `scripts/gates/findings dispatched --gate G9|G10 --model <dispatch 印的>`;
+3. 派 `spec-oracle` 與 `code-adversary`(先 `scripts/gates/dispatch specs/{name}/spec.yaml G9|G10`,照它印的派;**lite 車道只派 `code-adversary`**;full 的 G9 只在金流 / 權限 / 不可逆資料或 S4 有分歧時派,`dispatch` 拒絕就不派,證據表標「G9 未派(條件不符)」),派完立刻 `scripts/gates/findings dispatched --gate G9|G10 --model <dispatch 印的>`;
    Fable 額度用完 → `dispatch … --degraded`,照印的(opus)重派一次,`findings dispatched` 加 `--degraded`
    每條 finding 用 `findings add` 收,實跑重現 → `set confirmed` / `set void`(停在 proposed 算沒處理完)
 4. `must_fix` / `overbuilt` → `scripts/gates/loop fix F-n` → 修 → 重跑 G0–G7 + smoke + 重現 →
@@ -19,7 +19,7 @@ tags: [workflow, verify, gates]
    不算 G10 重派)→ 已解才 `loop resolved` + `findings set fixed`。它提出的新 finding 用 `--gate G10-fix` 收,照常分流
 5. `ask_user` **不修**:`findings add` 帶 `--files`(bug 所在的產品檔)。先比對 `specs/policy.yaml` 的常設決策,
    對到就 `findings set F-n <決定> --policy P-n`;沒對到就預設接受、PR 留言頂端列出,
-   檔案命中 risk_paths(或沒寫 files)才留給 PR 留言問人。`style` 記下不動
+   檔案命中 risk_paths(或沒寫 files)才留給 PR 留言問人
 6. `scripts/gates/findings check` 乾淨(或只剩 ask_user)後，stage 這次 commit 的完整內容（含
    `evidence/spec.approved.yaml`），再跑 `scripts/gates/dashboard specs/{name}/spec.yaml --pre-commit --trigger <first|fix|merge-main|ci-red>`
 7. pre-commit 全綠才進 S10；它只允許 commit，絕不允許 auto-push。commit 後立即重跑不帶

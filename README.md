@@ -41,10 +41,10 @@ S5  ⏸ 你批准說明頁     白話 + 分歧選擇題 + N/A 主張 + 碰撞警
 S6  定稿凍結          spec-lint + 反向回譯 + 指紋
 S7  測試 RED          stub-first → 格式化 → red-capture
 S7½ 審測試            test-review + test-reviewer → 才凍結
-S8  實作 GREEN        green-writer:只做 examples 涵蓋的事
+S8  實作 GREEN        green-writer:只做 examples 涵蓋的事;交回前自跑 G3/G4/G7(dashboard --self-check)
 S9a 腳本關卡 G0–G7
 S9b smoke             真的入口跑一次;沒過不派審查
-S9c 付費審查 G9/G10   四類分流,loop 腳本數次數;卡住時只有你能豁免(loop waive)
+S9c 付費審查 G9/G10   三類分流,loop 腳本數次數;卡住時只有你能豁免(loop waive)
 S9d pre-commit 證據表  候選快照已 stage 才能 commit;絕不自動推
 S10 commit
 S10½ delivery 證據表   批准快照已 commit 且乾淨才可推
@@ -77,8 +77,8 @@ S13 ⏸ 你按 merge      merge 後 cleanup 清掉這張卡的 worktree(先確�
 ────────────────────────────────────────────
 付費判定
   G8   變異測試        有工具才跑
-  G9   spec-oracle     隔離的第二讀者,只憑規格寫驗收測試
-  G10  code-adversary  每條主張附可執行的重現;must_fix / ask_user / overbuilt / style
+  G9   spec-oracle     隔離的第二讀者,只憑規格寫驗收測試;full 卡只在金流 / 權限 / 不可逆資料或 S4 有分歧時派
+  G10  code-adversary  每條主張附可執行的重現;must_fix / ask_user / overbuilt
        fix-reviewer    審查後的修正只派增量審查:修好了沒、有沒有帶進新問題
   G11  UI 截圖         smoke 順便截
 ```

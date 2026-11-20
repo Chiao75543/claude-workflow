@@ -2974,6 +2974,164 @@ def test_dispatch(tmp: pathlib.Path) -> None:
 
 # ---------------------------------------------------------------- 對抗審查(S7 以後改版)的回歸
 
+def test_fewer_dispatch(tmp: pathlib.Path) -> None:
+    """改造方案 2.4:full 卡的 G9 只在金流 / 權限 / 不可逆資料(旗標或路徑)或 S4 讀出分歧時派,沒記 S4 照派;
+    G10 / G10-fix 不再出 style;green-writer 交回前 dashboard --self-check 自跑 G3/G4/G7,什麼都不寫。"""
+    if str(GATES) not in sys.path:
+        sys.path.insert(0, str(GATES))
+    from _common import RISK_FLAGS, g9_reasons
+    import yaml
+    NO_HITS = {"risk_paths": {k: [] for k in RISK_FLAGS}}
+    FLAGS = "  risk_flags: {permissions: false, privacy: true, payments: false, irreversible_data: false, critical_security: false, core_entrypoint: false}\n"
+    with_flags = lambda line: VALID_SPEC.replace("meta: {name: demo, ticket: null, capability: demo, change_type: ADDED}\n",
+                                                 "meta:\n  name: demo\n  ticket: null\n  capability: demo\n  change_type: ADDED\n" + line)
+    s4 = lambda *results: {"S4": [{"model": ["opus", "sonnet"], **({"result": r} if r else {})} for r in results]}
+    quiet = yaml.safe_load(with_flags(FLAGS))   # full(privacy),三個 G9 旗標都 false
+    check("G9 條件:三個旗標 false、沒命中、S4 記過沒分歧 → 不派",
+          g9_reasons(quiet, NO_HITS, s4("pass")) == [], str(g9_reasons(quiet, NO_HITS, s4("pass"))))
+    for flag in ("payments", "permissions", "irreversible_data"):
+        spec = yaml.safe_load(with_flags(FLAGS.replace(f"{flag}: false", f"{flag}: true")))
+        check(f"G9 條件:{flag} 旗標 true → 派", g9_reasons(spec, NO_HITS, s4("pass")) == [f"旗標 {flag}"],
+              str(g9_reasons(spec, NO_HITS, s4("pass"))))
+    check("G9 條件:privacy 等其他旗標 true 不算",
+          g9_reasons(yaml.safe_load(with_flags(FLAGS.replace("core_entrypoint: false", "core_entrypoint: true"))), NO_HITS, s4("pass")) == [])
+    check("G9 條件:旗標沒寫 → 三個都算(從嚴)",
+          g9_reasons(yaml.safe_load(VALID_SPEC), NO_HITS, s4("pass")) == ["旗標 payments", "旗標 permissions", "旗標 irreversible_data"])
+    check("G9 條件:旗標不是 false(null)→ 算",
+          g9_reasons(yaml.safe_load(with_flags(FLAGS.replace("payments: false", "payments: null"))), NO_HITS, s4("pass")) == ["旗標 payments"])
+    hit = {"risk_paths": {**NO_HITS["risk_paths"], "irreversible_data": ["src/*"], "privacy": ["src/*"]}}
+    check("G9 條件:路徑命中 irreversible_data → 派;命中 privacy 不算",
+          g9_reasons(quiet, hit, s4("pass")) == ["路徑命中 irreversible_data"], str(g9_reasons(quiet, hit, s4("pass"))))
+    check("G9 條件:risk_paths 沒設 → 派", g9_reasons(quiet, {}, s4("pass")) == ["risk_paths 沒設或格式不對"])
+    for label, state, want in (("沒有 dispatch.json", {}, ["S4 沒記比對結果"]),
+                               ("S4 派了沒記結果", s4(None), ["S4 沒記比對結果"]),
+                               ("第一輪分歧、第二輪沒有 → 出現過就算", s4("fail", "pass"), ["S4 讀出分歧"]),
+                               ("第一輪沒分歧、後來又派一輪沒記", s4("pass", None), ["S4 沒記比對結果"]),
+                               ("S4 紀錄格式壞掉", {"S4": "pass"}, ["S4 沒記比對結果"]),
+                               ("dispatch.json 不是 mapping", ["S4"], ["S4 沒記比對結果"])):
+        check(f"G9 條件:{label} → 派", g9_reasons(quiet, NO_HITS, state) == want, str(g9_reasons(quiet, NO_HITS, state)))
+
+    # dispatch:G9 條件不符就拒絕;符合就印原因。S4 的 --result 記分歧,不升級
+    spec = "specs/demo/spec.yaml"
+    rp = "risk_paths: {permissions: [], privacy: [], payments: [], irreversible_data: [], critical_security: [], core_entrypoint: []}\n"
+    root = make_repo(tmp / "fewer-dispatch", with_flags(FLAGS))
+    (root / "specs" / "pipeline.yaml").write_text(rp)
+    disp = lambda *a: run_gate("dispatch", spec, *a, cwd=root)
+    code, out = disp("G9")
+    check("dispatch G9:full 卡沒記 S4 → 照派,講出原因",
+          code == 0 and "要派:S4 沒記比對結果" in out and 'subagent_type="spec-oracle"' in out, out)
+    disp("S4")
+    code, out = disp("S4", "--result", "pass")
+    code, out = disp("G9")
+    check("dispatch G9:S4 記了沒分歧、三個旗標 false → 拒絕,講出條件與證據表的標記",
+          code == 1 and "G9 條件不符" in out and "G9 未派(條件不符)" in out and "Agent(" not in out, out)
+    disp("S4")
+    disp("S4", "--result", "fail")
+    code, out = disp("G9")
+    check("dispatch G9:第二輪 S4 讀出分歧 → 派", code == 0 and "要派:S4 讀出分歧" in out, out)
+    (root / "specs" / "pipeline.yaml").write_text(rp + "models:\n  S4: {full: sonnet}\n")
+    for _ in range(2):
+        disp("S4")
+        disp("S4", "--result", "fail")
+    code, out = disp("S4")
+    check("dispatch S4:單一模型連 2 次 fail(= 分歧)也不升級 —— 歧義是規格的事",
+          code == 0 and 'model="sonnet"' in out and "升級" not in out, out)
+    lite = make_repo(tmp / "fewer-lite", with_flags(FLAGS.replace("privacy: true", "privacy: false")))
+    (lite / "specs" / "pipeline.yaml").write_text(rp)
+    code, out = run_gate("dispatch", spec, "G9", cwd=lite)
+    check("dispatch G9:lite 照舊「車道不派」", code == 1 and "在 lite 車道不派" in out, out)
+
+    # dashboard:full 卡全綠、只派 G10
+    def repo(name: str, spec_text: str) -> pathlib.Path:
+        root = make_repo(tmp / name, spec_text)
+        freeze(root)
+        shutil.copy(root / "specs/demo/spec.yaml", root / "specs/demo/evidence/spec.approved.yaml")
+        (root / "Tests").mkdir()
+        (root / "Tests" / "DemoTests.swift").write_text(
+            '@Test("SC-001 a") func a() { #expect(x == .emptyList) }\n'
+            '@Test("SC-002 b") func b() { #expect(e == NetworkError.offline) }\n')
+        (root / "specs/demo/evidence/red.json").write_text(json.dumps({
+            "counts": {"assertion": 2}, "reconciliation": [{"reconciled": True}], "tests": []}))
+        (root / "specs/demo/evidence/test-review.agent.json").write_text('{"findings": []}')
+        (root / "specs" / "pipeline.yaml").write_text(
+            'runner: swift-testing\ntests:\n  globs: ["Tests/**/*.swift"]\nreachability:\n  globs: ["App/**/*.swift"]\n'
+            'lint: "true"\ntest: "true"\nsmoke: "true"\n' + rp)
+        run_gate("test-review", spec, cwd=root)
+        freeze(root, ["Tests/DemoTests.swift"])
+        commit_base(root)
+        run_gate("smoke", spec, cwd=root)
+        run_gate("findings", spec, "dispatched", "--gate", "G10", cwd=root)
+        return root
+
+    root = repo("fewer-dash", with_flags(FLAGS))
+    review = lambda: next(g for g in json.loads((root / "specs/demo/evidence/dashboard.json").read_text())["gates"]
+                          if g["id"] == "G9/10")
+    code, out = run_gate("dashboard", spec, cwd=root)
+    check("dashboard:full 卡沒記 S4、只派 G10 → 照舊要 G9", code == 1 and "沒有派過的紀錄(G9)" in out, out[:500])
+    (root / "specs/demo/evidence/dispatch.json").write_text(json.dumps(s4("pass")))
+    code, out = run_gate("dashboard", spec, cwd=root)
+    check("dashboard:條件不符 → 不要求 G9,標「G9 未派(條件不符)」,不算失敗、可自動推",
+          code == 0 and review()["ok"] and "G9 未派(條件不符)" in review()["note"] and "自動推:可以" in out,
+          f"{review()} | {out[-200:]}")
+    (root / "specs/demo/evidence/dispatch.json").write_text(json.dumps(s4("fail")))
+    code, out = run_gate("dashboard", spec, cwd=root)
+    check("dashboard:S4 讀出分歧 → 要 G9", code == 1 and "沒有派過的紀錄(G9)" in out, out[:500])
+    dispatched(root)
+    code, out = run_gate("dashboard", spec, cwd=root)
+    check("dashboard:要 G9 也派了 → 過,不標「未派」", code == 0 and "未派" not in review()["note"], str(review()))
+    root = repo("fewer-dash-pay", with_flags(FLAGS.replace("payments: false", "payments: true")))
+    (root / "specs/demo/evidence/dispatch.json").write_text(json.dumps(s4("pass")))
+    code, out = run_gate("dashboard", spec, cwd=root)
+    check("dashboard:payments 旗標 → S4 沒分歧也要 G9", code == 1 and "沒有派過的紀錄(G9)" in out, out[:500])
+
+    # --self-check:只印 G3/G4/G7,不寫任何檔
+    root = repo("fewer-self", with_flags(FLAGS))
+    ev = root / "specs/demo/evidence"
+    snapshot = lambda: {str(p.relative_to(ev)): p.read_bytes() for p in ev.rglob("*") if p.is_file()}
+    before = snapshot()
+    (root / "specs/_yield.jsonl").unlink(missing_ok=True)
+    code, out = run_gate("dashboard", spec, "--self-check", cwd=root)
+    check("--self-check:全過 → exit 0,只印 G3/G4/G7",
+          code == 0 and "✔ G3" in out and "✔ G4" in out and "✔ G7" in out and "G0" not in out
+          and "G9" not in out and "自檢:G3、G4、G7 都過" in out, out)
+    check("--self-check:什麼都不寫(evidence 不變、沒有 _yield、沒有 dashboard.json / status.json)",
+          snapshot() == before and not (root / "specs/_yield.jsonl").exists(),
+          str(sorted(set(snapshot()) ^ set(before))))
+    (root / "App").mkdir()
+    (root / "App" / "Orphan.swift").write_text("final class Orphan {}\n")
+    subprocess.run(["git", "add", "App/Orphan.swift"], cwd=root, check=True)
+    code, out = run_gate("dashboard", spec, "--self-check", cwd=root)
+    check("--self-check:stage 了沒有建構點的新型別 → G7 擋、點名,exit 1",
+          code == 1 and "✘ G7" in out and "Orphan(App/Orphan.swift)沒有任何建構點" in out and "自檢:沒過" in out, out)
+    pipeline = root / "specs" / "pipeline.yaml"
+    # 失敗的指令要有輸出:沒輸出就失敗的指令會讓 dashboard 本身爆掉(既有問題,不在本列範圍,已回報)
+    pipeline.write_text(pipeline.read_text().replace('test: "true"', 'test: "ls /no-such-dir-fewer"'))
+    code, out = run_gate("dashboard", spec, "--self-check", cwd=root)
+    check("--self-check:測試紅 → G4 擋", code == 1 and "✘ G4" in out, out)
+    pipeline.write_text(pipeline.read_text().replace('test: "ls /no-such-dir-fewer"', 'test: "true"')
+                        .replace('lint: "true"', 'lint: "ls /no-such-dir-fewer"'))
+    code, out = run_gate("dashboard", spec, "--self-check", cwd=root)
+    check("--self-check:lint 擋 → G3 擋", code == 1 and "✘ G3" in out, out)
+    root = repo("fewer-self-lite", with_flags(FLAGS.replace("privacy: true", "privacy: false")))
+    (root / "App").mkdir()
+    (root / "App" / "Orphan.swift").write_text("final class Orphan {}\n")
+    subprocess.run(["git", "add", "App/Orphan.swift"], cwd=root, check=True)
+    code, out = run_gate("dashboard", spec, "--self-check", cwd=root)
+    check("--self-check:lite 卡 G7 照舊豁免(標 –、不點名)→ exit 0",
+          code == 0 and "– G7" in out and "lite 車道不要求" in out and "Orphan(" not in out, out)
+    pipeline = root / "specs" / "pipeline.yaml"
+    pipeline.write_text(pipeline.read_text().replace('test: "true"', 'test: "ls /no-such-dir-fewer"'))
+    code, out = run_gate("dashboard", spec, "--self-check", cwd=root)
+    check("--self-check:lite 只豁免 G7,測試紅照擋", code == 1 and "✘ G4" in out, out)
+
+    # 文件:G10 / G10-fix 不再有 style 類;green-writer 的完成條件有自檢
+    agents = GATES.parents[1] / "agents"
+    for name in ("code-adversary.md", "fix-reviewer.md"):
+        text = (agents / name).read_text()
+        check(f"{name}:分類表沒有 style 類、寫明三類", "| `style` |" not in text and "三類之一" in text)
+    check("green-writer.md:交回前要跑 --self-check", "--self-check" in (agents / "green-writer.md").read_text())
+
+
 def test_adversary_s7plus(tmp: pathlib.Path) -> None:
     """第二輪對抗審查抓到的 10 條 must_fix + 4 條 ask_user(人說全防)+ 3 條缺席類。每條當時都紅。"""
     sys.path.insert(0, str(GATES))
@@ -3205,6 +3363,9 @@ def test_cost_ledger(tmp: pathlib.Path) -> None:
     (sub / "agent-a.meta.json").write_text(json.dumps({"description": "S7 red-writer demo"}))
     write_jsonl(sub / "agent-b.jsonl", [assistant("b1", "2026-11-01T03:41:00.000Z", wt, "claude-fable-5-2", 16)])
     (sub / "agent-b.meta.json").write_text(json.dumps({"description": "red-writer for demo"}))
+    for name, desc in (("agent-c", "S7 red-writer demo"), ("agent-d", "S8 green-writer demo")):   # 沒有用量也算一次派遣
+        write_jsonl(sub / f"{name}.jsonl", [])
+        (sub / f"{name}.meta.json").write_text(json.dumps({"description": desc}))
 
     def cost(home_dir: pathlib.Path) -> tuple[int, str]:
         saved = os.environ.get("CLAUDE_CONFIG_DIR")
@@ -3232,6 +3393,9 @@ def test_cost_ledger(tmp: pathlib.Path) -> None:
           row(out, "(未歸屬) · ? · claude-fable-5-2") == [16, 160, 1600, 16000]
           and row(out, "(未歸屬) · ? · claude-opus-5-5") == [4, 40, 400, 4000], out[:800])
     check("runs --cost:印出未歸屬佔比", "未歸屬 64.5%" in out, out[-300:])   # 22220 / 34441
+    check("runs --cost:每張卡派了幾次 subagent,依站分;未歸屬列最後(改造方案 2.4 的驗收用)",
+          "▸ 派遣次數" in out and "  demo  3 次(S7 2 · S8 1)" in out and "  (未歸屬)  1 次(? 1)" in out
+          and out.index("  demo  3 次") < out.index("  (未歸屬)  1 次"), out[-400:])
     check("runs --cost:時間 = history 首筆到末筆,等人 = blocked_on human 的區段",
           "demo  總 2.0h · 等人 1.0h(50%)" in out, out[-300:])
 
@@ -3493,6 +3657,7 @@ def main() -> int:
                    test_test_review, test_loop, test_findings, test_smoke,
                    test_dashboard_gating_order, test_dashboard_approval_anchor_phases,
                    test_config_check, test_adversary_s7plus, test_risk_lanes, test_standing_decisions, test_release_checklist, test_dispatch,
+                   test_fewer_dispatch,
                    test_cost_ledger,
                    test_recall_bench, test_escape):
             try:

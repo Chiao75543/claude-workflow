@@ -2,13 +2,15 @@
 """dispatch — 派遣 subagent 之前問它:這張卡的這一站用哪個模型(改造方案 2.1、2.3)。
 
   dispatch <spec.yaml> <站>                     印出這次的 Agent(...)(含 model),記一筆派遣
-  dispatch <spec.yaml> <站> --result pass|fail   剛才那次交回後,這一站對應的關卡過了沒(寫程式的站才記)
+  dispatch <spec.yaml> <站> --result pass|fail   剛才那次交回後,這一站對應的關卡過了沒(寫程式的站才記;
+                                                 S4 例外:記三張表有沒有分歧,fail = 有分歧,G9 要不要派看它)
   dispatch <spec.yaml> <站> --degraded           剛才那次撞到額度上限、派不出去:改記退一級的模型,照印的重派
 
 模型查 specs/pipeline.yaml 的 models(站 × 車道),沒寫的格子用 _config.DEFAULTS。派遣一律照印的傳 model。
 升級:這一站最近 2 次是同一個模型、都記 fail → 這次升一級(haiku → sonnet → opus,最高到 opus),記 escalated。
 只影響這張卡的這一站,不改 pipeline.yaml。紀錄在 evidence/dispatch.json,dashboard 每次把它帶進 _yield.jsonl,
 runs --yield 拿它算每個「站 × 車道 × 模型」第一次就過的比例和升級率。
+G9 只在金流、權限、不可逆資料(旗標或路徑),或 S4 讀出分歧時才派;條件不符這支會拒絕(改造方案 2.4)。
 
 站:S3 S4 S7 S7½ S8 S9c S12 G9 G10 G10-fix
 """
@@ -21,7 +23,7 @@ import sys
 
 sys.path.insert(0, str(pathlib.Path(__file__).parent))
 import _config  # noqa: E402
-from _common import evidence_dir, lane, load_spec, read_json, write_json  # noqa: E402
+from _common import evidence_dir, g9_reasons, lane, load_spec, read_json, write_json  # noqa: E402
 
 LADDER = _config.MODEL_LADDER
 
@@ -80,6 +82,11 @@ def main(argv: list[str]) -> int:
     if cell is None:
         print(f"✘ {station} 在 {card_lane} 車道不派")
         return 1
+    g9_why = g9_reasons(spec, config, state) if station == "G9" else []
+    if station == "G9" and not g9_why:
+        print("✘ G9 條件不符,不派:金流、權限、不可逆資料都沒有(旗標與路徑),S4 也沒讀出分歧"
+              " —— 證據表會標「G9 未派(條件不符)」")
+        return 1
     if problem := _config.cell_problem(station, cell):
         print(f"✘ specs/pipeline.yaml 的 models.{station}.{card_lane} {problem} —— 先跑 config-check")
         return 1
@@ -101,9 +108,11 @@ def main(argv: list[str]) -> int:
     # 升過級就留在那一級;沒升過就照表(表改了也跟著)
     current = max([base] + [a["model"] for a in attempts if a.get("escalated") and a.get("model") in LADDER],
                   key=LADDER.index)
-    model, note = current, ""
+    model, note = current, (f" —— 要派:{'、'.join(g9_why)}" if g9_why else "")
     last_two = attempts[-2:]
-    if len(last_two) == 2 and all(a.get("result") == "fail" and a.get("model") == current for a in last_two):
+    # S4 的 fail 是規格有歧義,不是讀者不夠強:不升級
+    if station != "S4" and len(last_two) == 2 and all(
+            a.get("result") == "fail" and a.get("model") == current for a in last_two):
         if LADDER.index(current) < LADDER.index(_config.ESCALATION_CAP):
             model = LADDER[LADDER.index(current) + 1]
             record.update(escalated=True, **{"from": current})

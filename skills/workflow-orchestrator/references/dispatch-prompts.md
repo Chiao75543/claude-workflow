@@ -60,6 +60,9 @@ SC-001:
     out: {具體字面值}
 ```
 
+比對完(加上 grill 的表共三張)記 `scripts/gates/dispatch specs/{name}/spec.yaml S4 --result pass`(沒有分歧)
+或 `fail`(有分歧)。G9 要不要派看這筆;沒記就照派。
+
 ---
 
 ## G9 · spec-oracle
@@ -67,6 +70,9 @@ SC-001:
 ```
 Agent(subagent_type="spec-oracle", description="G9 spec-oracle {name}", prompt=...)
 ```
+
+只在 `dispatch … G9` 印得出來時派:金流、權限、不可逆資料(旗標或路徑),或 S4 讀出分歧。
+它拒絕就是條件不符,不派,證據表標「G9 未派(條件不符)」。
 
 **規格 + public API 簽章直接貼在 prompt 裡。不給實作、不給既有測試。**
 
@@ -176,10 +182,12 @@ Agent(subagent_type="green-writer", description="S8 green-writer {name}", prompt
 ```
 
 素材:凍結測試的路徑、專案 `rd-implementer` skill 的路徑、測試指令、`rules_files` 的路徑、
-**已知並已接受的取捨**(不列的話它會重提)。
+**已知並已接受的取捨**(不列的話它會重提)、**自檢指令**(腳本的實際路徑 +
+`dashboard specs/{name}/spec.yaml --self-check`;它交回前要 G3、G4、G7 都過)。
 
 **不要叫它處理例子外的情況** —— 它定義裡寫了只做 examples 涵蓋的事;
 派遣訊息若說「順便也防一下 X」,等於 orchestrator 自己在改契約。
 
-驗收:報告必須含測試結果原文,以及「規格與現實的衝突」一節(沒有就明寫沒有)。
+驗收:報告必須含測試結果原文、`--self-check` 的輸出原文,以及「規格與現實的衝突」一節(沒有就明寫沒有)。
+沒附自檢輸出 → 退回;自檢沒過又沒說明哪一關、為什麼修不了 → 退回。修 finding(S9c)、修 CI 紅(S12)的 green-writer 一樣。
 收到衝突回報 → orchestrator 走 `spec-diff` 流程,**不要叫它自己解**。

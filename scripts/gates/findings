@@ -4,7 +4,7 @@
   must_fix   違反某組 example / 資安或架構違規   必附重現(會紅的測試、會命中的指令)→ 必修
   ask_user   example 沒涵蓋的 bug、極端 edge case   必附重現 + 問句 → 問人,不自動修
   overbuilt  example 外的公開介面、多一層抽象       必指名哪個介面沒有任何 example 用到 → 擋,拿掉
-  style      內部囉嗦、命名                          不需證明 → 提醒,不擋
+  style      內部囉嗦、命名                          不需證明 → 提醒,不擋(G10 / G10-fix 已不再提;留著給舊卡)
 
 沒附重現的 must_fix / ask_user / overbuilt **收不進來**(證據規則)。
 狀態:proposed → confirmed(重現實跑會紅)/ void(跑不紅)→ fixed / accepted_risk / added_example

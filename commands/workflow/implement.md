@@ -10,6 +10,7 @@ tags: [workflow, implement]
 **動作**
 
 派 `green-writer`(先 `scripts/gates/dispatch specs/{name}/spec.yaml S8`,照它印的派;交回後跑 G0–G7 + smoke,用 `--result pass|fail` 記);它會讀專案自備的 `rd-implementer` skill 與 `rules_files`。
+派遣訊息附上自檢指令(`scripts/gates/dashboard specs/{name}/spec.yaml --self-check`,寫實際路徑):它交回前要 G3、G4、G7 都過,報告附輸出原文;沒附就退回。
 
 **注意**
 

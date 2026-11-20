@@ -13,10 +13,10 @@ S5  ⏸ 你批准說明頁    白話 + 分歧選擇題 + N/A 主張 + 碰撞警�
 S6  定稿凍結          spec-lint + 反向回譯 + hash
 S7  測試 RED          stub-first → 格式化 → red-capture
 S7½ 審測試            test-review + test-reviewer → 才凍結
-S8  實作 GREEN        green-writer:只做 examples 涵蓋的事
+S8  實作 GREEN        green-writer:只做 examples 涵蓋的事;交回前自跑 G3/G4/G7(dashboard --self-check)
 S9a 腳本關卡 G0–G7
 S9b smoke             真的入口跑一次;沒過不派審查
-S9c 付費審查 G9/G10   四類分流:must_fix / ask_user / overbuilt / style;loop 腳本數次數
+S9c 付費審查 G9/G10   三類分流:must_fix / ask_user / overbuilt;G9 有理由才派;loop 腳本數次數
 S9d pre-commit 證據表  候選快照已 stage 才能 commit;絕不自動推
 S10 commit
 S10½ delivery 證據表   批准快照已 commit 且乾淨才可推
