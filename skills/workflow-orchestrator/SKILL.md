@@ -862,7 +862,7 @@ scripts/bench/recall run q.json --model fable --effort xhigh --setup "npm ci" --
 - `scan-siblings` —— 跨 worktree 掃規格,得到能力清單與碰撞警告
 - `runs` —— 跨 worktree 狀態列表,一眼看完誰卡在哪、誰在等你
 - 兄弟分支 merge 進整合分支後,其他 worktree 的基準線失效 →
-  rebase 後**重跑 G0–G7**(呼叫點清單與 lint 基準都要重算)
+  把最新的整合分支 merge 進來(只 merge、不 rebase,理由見 S10¾)後**重跑 G0–G7**(呼叫點清單與 lint 基準都要重算)
 
 ## Common Mistakes
 
