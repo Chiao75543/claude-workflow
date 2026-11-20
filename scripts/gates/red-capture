@@ -19,6 +19,10 @@
 輸入清單放在 evidence/red-inputs.json:
   [{"layer": "domain", "output": "/tmp/domain.txt", "tests": ["path/a.swift"]}]
 
+output 的格式看 specs/pipeline.yaml 的 runner:
+  swift-testing   swift test 的文字輸出
+  vitest          JSON reporter 的輸出檔(完整指令寫在 parse_vitest)
+
 用法: red-capture <spec.yaml> [--marker STUB-NOT-IMPLEMENTED]
 退出碼: 0 證據齊全 / 1 有問題
 """
@@ -26,6 +30,7 @@
 from __future__ import annotations
 
 import datetime
+import json
 import pathlib
 import re
 import sys
@@ -75,7 +80,117 @@ def parse_swift_testing(raw: str, marker: str) -> dict:
     }
 
 
-PARSERS = {"swift-testing": parse_swift_testing}
+VITEST_TIMEOUT = re.compile(r"Error: (?:Test|Hook) timed out in \d+ms")
+ANSI = re.compile(r"\x1b\[[0-9;]*m")
+
+
+def parse_vitest(raw: str, marker: str) -> dict:
+    """Vitest 的 JSON reporter 輸出。用 Vitest 5.1.0 實跑的輸出驗證過。
+
+    指令(red-inputs 的 output 填 --outputFile 的那個路徑):
+      vitest run <測試檔…> --reporter=json --outputFile=<路徑> --includeTaskLocation
+
+    用 JSON 不用文字輸出:欄位固定,不必猜排版;而且它是跑完才一次寫出,
+    程序中途被砍就沒有檔(→「找不到測試輸出」),不會留下半份看起來正常的結果。
+
+    怎麼數 —— it.each 會把原始碼的 1 個宣告展開成 N 條:
+      宣告   原始碼裡 it / test 呼叫的個數,it.each 算 1 個(見 count_declared)
+      runner 同一個宣告位置(檔案 + 行 + 欄)展開出來的 N 條收成 1 個
+      啟動   同上,但只算真的執行過的(passed / failed)
+    所以一定要 --includeTaskLocation;沒有 location 就對不回原始碼,直接擋。
+    分類仍然逐條做:展開出來的每一條都要各自紅過。
+
+    測試名用 fullName(describe 標題 + it 標題),SC 編號要寫在最外層 describe 的開頭。
+    """
+    errors: list[str] = []
+    try:
+        data = json.loads(raw)
+        files = data["testResults"]
+    except (ValueError, KeyError, TypeError):
+        data, files = {}, None
+        errors.append("不是 Vitest JSON reporter 的輸出 —— 要用 --reporter=json --outputFile=<路徑> 跑")
+
+    rows: list[dict] = []
+    load_failures = 0
+    for entry in files or []:
+        results = entry.get("assertionResults") or []
+        # 檔案載不進來(語法錯、import 不到)時,它的測試一條都不會被收集 ——
+        # 只看測試數的話,這個檔等於不存在,三個數字照樣對得上。
+        if entry.get("message") or not results:
+            load_failures += 1
+            reason = " ".join(ANSI.sub("", str(entry.get("message") or "沒有收集到任何測試")).split())
+            errors.append(f"測試檔沒載入成功,裡面的測試全部沒跑: {entry.get('name')} —— {reason[:200]}")
+        for a in results:
+            loc = a.get("location") or {}
+            rows.append({
+                "name": a.get("fullName") or " ".join([*a.get("ancestorTitles", []), a.get("title", "")]),
+                "status": a.get("status"),
+                # 每則失敗訊息只留 stack 之前的部分:錯誤型別 + 訊息
+                "heads": [ANSI.sub("", m).split("\n    at ")[0] for m in a.get("failureMessages") or []],
+                "site": (entry.get("name"), loc.get("line"), loc.get("column")) if loc else None,
+            })
+
+    if any(r["site"] is None for r in rows):
+        errors.append("輸出沒有 location —— 要加 --includeTaskLocation,"
+                      "否則 it.each 展開的 N 條對不回原始碼的 1 個宣告")
+        for i, r in enumerate(rows):
+            r["site"] = ("?", i)      # 退回逐條數;it.each 會對不上,那正是要擋的
+
+    total = data.get("numTotalTests")
+    if isinstance(total, int) and total != len(rows):
+        errors.append(f"輸出自己對不上:numTotalTests 是 {total},實際列出 {len(rows)} 條")
+
+    by_name: dict[str, list[dict]] = {}
+    for r in rows:
+        by_name.setdefault(r["name"], []).append(r)
+    for name, same in by_name.items():
+        if len(same) > 1:
+            errors.append(f"測試名重複 {len(same)} 次: {name!r} —— RED 證據以名字記,"
+                          f"重複的會被吃掉;it.each 的標題要帶參數(%s / $欄位)")
+
+    issues: dict[str, str] = {}
+    for r in rows:
+        if r["status"] not in ("passed", "failed"):
+            issues.setdefault(r["name"], f"{r['status']} —— 沒有執行")
+            errors.append(f"{r['name']!r} 是 {r['status']} —— 沒有執行,不能算紅過")
+        elif r["heads"]:
+            issues.setdefault(r["name"], r["heads"][0].splitlines()[0])
+
+    def row_class(row: dict) -> str:
+        if row["status"] == "passed":
+            return "passed"
+        if row["status"] != "failed":
+            return "error"                      # skipped / todo:不算綠,也不算紅
+        heads = row["heads"]
+        if any(VITEST_TIMEOUT.match(h) for h in heads):
+            return "hang"
+        # 順序不能換:stub 回傳哨兵值時,斷言的失敗訊息裡也會有標記字串,
+        # 但那是斷言真的評估過了 —— 先看是不是斷言失敗,再看標記。
+        if any(h.startswith("AssertionError") for h in heads):
+            return "assertion"
+        if any(marker in h for h in heads):
+            return "stub_sentinel"
+        return "error"
+
+    def classify(name: str) -> str:
+        # 同名的多條取最壞的那個(同名本身已經另外報錯)
+        classes = {row_class(r) for r in by_name.get(name, [])}
+        return next((k for k in ("passed", "hang", "error", "stub_sentinel", "assertion") if k in classes), "error")
+
+    collected = {r["site"] for r in rows}
+    ran = {r["site"] for r in rows if r["status"] in ("passed", "failed")}
+    return {
+        "started": set(by_name),
+        "issues": issues,
+        "runner_total": None if files is None else len(collected),
+        "started_count": len(ran),
+        "compile_error": load_failures > 0,
+        "errors": errors,
+        "classify": classify,
+    }
+
+
+PARSERS = {"swift-testing": parse_swift_testing, "vitest": parse_vitest}
 
 
 # ---------------------------------------------------------------- main
@@ -90,7 +205,11 @@ def count_declared(root: pathlib.Path, test_files: list[str], runner: str) -> tu
 
     找不到的檔案**不能靜默算 0** —— 那會讓對帳的三個數字一起變成 0 而「一致」,
     等於整個 G5 形同虛設(對抗審查實證)。"""
-    marker = {"swift-testing": r"^\s*@Test\b"}.get(runner, r"^\s*(@Test|def test_|func test)")
+    marker = {
+        "swift-testing": r"^\s*@Test\b",
+        # it( / test( / it.each( / it.skip( / test.each`…` 各算一個宣告;describe 不算
+        "vitest": r"^\s*(?:it|test)(?:\.[\w$]+)*\s*[(`]",
+    }.get(runner, r"^\s*(@Test|def test_|func test)")
     desc = DESC.get(runner)
     total, names, missing_files = 0, [], []
     for rel in test_files:
@@ -150,6 +269,9 @@ def main(argv: list[str]) -> int:
             continue
         raw = out_path.read_text(errors="ignore")
         parsed = parser(raw, marker)
+        # 解析器自己看得出來的問題(載入失敗、測試名重複、格式不對…)
+        for parser_error in parsed.get("errors", ()):
+            f.error(layer, parser_error)
 
         declared, declared_names, missing_files = count_declared(root, entry.get("tests", []), runner)
         for rel in missing_files:
@@ -158,6 +280,8 @@ def main(argv: list[str]) -> int:
             f.error(layer, "red-inputs 沒有列任何測試檔 —— 對帳沒有可比對的基準")
         started = parsed["started"]
         runner_total = parsed["runner_total"]
+        # 會把一個宣告展開成多條的 runner(Vitest 的 it.each)自己給「啟動了幾個宣告」
+        started_count = parsed.get("started_count", len(started))
 
         if parsed["compile_error"]:
             f.error(layer, "編譯錯誤 —— 編不過的東西沒有資格談紅不紅")
@@ -165,16 +289,16 @@ def main(argv: list[str]) -> int:
             tests.append({"layer": layer, "scenario": None, "test": "(整層編譯失敗)",
                           "failure_class": "compile", "message": None})
         # 對帳:三個數字必須一致。不一致 = 有測試沒跑(掛住/程序被砍),證據不完整。
-        reconciled = declared == runner_total == len(started)
+        reconciled = declared == runner_total == started_count
         if not reconciled:
             f.error(
                 layer,
-                f"對帳不符 —— 原始碼宣告 {declared} · runner 回報 {runner_total} · 實際啟動 {len(started)}\n"
+                f"對帳不符 —— 原始碼宣告 {declared} · runner 回報 {runner_total} · 實際啟動 {started_count}\n"
                 f"      代表有測試沒跑完(可能掛住),後面的測試會靜默不執行",
             )
         recon.append({
             "layer": layer, "declared_in_source": declared,
-            "reported_by_runner": runner_total, "started": len(started),
+            "reported_by_runner": runner_total, "started": started_count,
             "reconciled": reconciled,
         })
         # 對帳不符時,能指名就指名:原始碼有宣告、輸出裡沒有 started 的,就是掛住或被拖死的那些。

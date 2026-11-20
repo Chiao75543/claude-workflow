@@ -143,7 +143,7 @@ if [ -n "$remaining" ]; then
   echo "  {GITLAB_API_HOST}     — GitLab API host or IP"
   echo "  {GITLAB_WEB_HOST}     — GitLab web UI host"
   echo "  {INTEGRATION_BRANCH}  — e.g. developer / main"
-  echo "  {TEST_OUTPUT_FORMAT}  — red-capture parser: swift-testing (add more in scripts/gates/red-capture)"
+  echo "  {TEST_OUTPUT_FORMAT}  — red-capture parser: swift-testing | vitest (add more in scripts/gates/red-capture)"
   echo "  {TEST_GLOB}           — where the tests live"
   echo "  {APP_SOURCE_GLOB}     — where G8 looks for construction sites"
   echo "  {LINT_COMMAND}        — lint command (checked on changed files only)"

@@ -4,7 +4,7 @@ AGENTS.md 是寫給 AI 讀的散文;腳本需要真正的設定檔。
 放在 <repo>/specs/pipeline.yaml,缺檔時用下面的預設值。
 
 範例:
-    runner: swift-testing          # red-capture 用哪個輸出解析器
+    runner: swift-testing          # red-capture 用哪個輸出解析器:swift-testing | vitest
     tests:
       globs:
         - "Packages/*/Tests/**/*.swift"

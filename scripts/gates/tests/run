@@ -505,6 +505,108 @@ def test_red_capture(tmp: pathlib.Path) -> None:
     check("實作前就綠但規格寫了豁免理由 → 過", code == 0 and "exempt" in out, out[:160])
 
 
+# ---------------------------------------------------------------- red-capture · vitest
+
+VITEST = FIXTURES / "vitest"
+
+
+def setup_red_vitest(tmp: pathlib.Path, name: str, output: pathlib.Path, tests: list[str],
+                     spec: str = VALID_SPEC) -> pathlib.Path:
+    """fixtures/vitest 是一個真的小專案:*.json 是 Vitest 5.1.0 跑它的輸出原文
+    (只把機器上的絕對路徑前綴換成 /work/fixture),tests/ 是當時跑的測試檔。
+
+    重跑:在那個目錄 vitest run tests/<案例> --reporter=json --outputFile=<案例>.json --includeTaskLocation
+    (noloc.json 是 tests/red 不加 --includeTaskLocation)。"""
+    root = make_repo(tmp / name, spec)
+    for rel in tests:
+        if (VITEST / rel).exists():
+            (root / rel).parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy(VITEST / rel, root / rel)
+    ev = root / "specs" / "demo" / "evidence"
+    (ev / "red-inputs.json").write_text(json.dumps(
+        [{"layer": "spec", "output": str(output), "tests": tests}]))
+    (root / "specs" / "pipeline.yaml").write_text("runner: vitest\n")
+    return root
+
+
+def test_red_capture_vitest(tmp: pathlib.Path) -> None:
+    def run_case(name: str, fixture: str, tests: list[str], spec: str = ONE_SCENARIO) -> tuple[int, str, dict]:
+        root = setup_red_vitest(tmp, name, VITEST / fixture, tests, spec)
+        code, out = run_gate("red-capture", "specs/demo/spec.yaml", cwd=root)
+        red_path = root / "specs/demo/evidence/red.json"
+        return code, out, json.loads(red_path.read_text()) if red_path.exists() else {"tests": [], "reconciliation": []}
+
+    def recon(red: dict) -> list[tuple]:
+        return [(r["declared_in_source"], r["reported_by_runner"], r["started"], r["reconciled"])
+                for r in red["reconciliation"]]
+
+    # 全紅:1 個 it.each(展開 3 條)+ 2 個 it。stub 一種回傳哨兵值、一種丟哨兵錯誤
+    code, out, red = run_case("vt-red", "red.json", ["tests/red/red.test.ts"], VALID_SPEC)
+    classes = {t["test"]: t["failure_class"] for t in red["tests"]}
+    check("vitest 全紅 → 過;it.each 的 3 條收成 1 個宣告,三方對帳 3 · 3 · 3",
+          code == 0 and recon(red) == [(3, 3, 3, True)], out[:300])
+    returned = [t for t in red["tests"] if t["scenario"] == "SC-001"]
+    check("vitest it.each 展開的每一條各自分類、各自對回 Scenario",
+          len(classes) == 5 and len(returned) == 3, str(classes))
+    check("vitest stub 回傳哨兵值:訊息裡有標記字串,但斷言評估過 → assertion,不是 stub_sentinel",
+          len(returned) == 3 and all(t["failure_class"] == "assertion" and "STUB-NOT-IMPLEMENTED" in (t["message"] or "")
+                                     for t in returned), str(returned))
+    check("vitest stub 丟哨兵錯誤、斷言沒跑到 → stub_sentinel",
+          classes.get("SC-002 丟哨兵錯誤的 stub 錯誤直接逸出 → 斷言沒跑到") == "stub_sentinel", str(classes))
+
+    code, out, red = run_case("vt-green", "green.json", ["tests/green/green.test.ts"])
+    check("vitest 實作前就綠 → 擋", code == 1 and "空測試" in out, out[:200])
+
+    code, out, red = run_case("vt-error", "error.json", ["tests/error/error.test.ts"])
+    check("vitest 不帶哨兵標記的錯誤逸出 → 擋(不能算成 stub_sentinel)",
+          code == 1 and "failure_class = error" in out and red.get("counts") == {"error": 1}, out[:250])
+
+    # 測試檔載不進來:它的測試一條都不會被收集
+    code, out, red = run_case("vt-loadfail", "loadfail.json",
+                              ["tests/loadfail/ok.test.ts", "tests/loadfail/syntax.test.ts"], VALID_SPEC)
+    check("vitest 測試檔語法錯、載不進來 → 擋,而且指得出是哪個檔",
+          code == 1 and "沒載入成功" in out and "syntax.test.ts" in out, out[:300])
+    check("vitest 載入失敗會以 failure_class=compile 寫進 red.json",
+          any(t["failure_class"] == "compile" for t in red["tests"]), str(red.get("counts")))
+    # 最危險的情況:red-inputs 只列了載得進來的那個檔 → 宣告 1 · runner 1 · 啟動 1,三個數字對得上
+    code, out, red = run_case("vt-loadfail-hidden", "loadfail.json", ["tests/loadfail/ok.test.ts"])
+    check("vitest 載入失敗的檔沒列在 red-inputs、三個數字對得上 → 仍然擋",
+          code == 1 and recon(red) == [(1, 1, 1, True)] and "沒載入成功" in out, out[:300])
+    code, out, red = run_case("vt-importfail", "importfail.json", ["tests/importfail/ok.test.ts"])
+    check("vitest 測試檔 import 不到東西 → 擋", code == 1 and "badimport.test.ts" in out, out[:300])
+
+    code, out, red = run_case("vt-badpath", "green.json", ["tests/green/does-not-exist.test.ts"])
+    check("vitest red-inputs 列的測試檔不存在 → 擋(不能靜默算 0)", code == 1 and "不存在" in out, out[:200])
+
+    code, out, red = run_case("vt-partial", "red.json",
+                              ["tests/red/red.test.ts", "tests/green/green.test.ts"], VALID_SPEC)
+    check("vitest 列了兩個測試檔、輸出只有一個檔的結果 → 對帳不符", code == 1 and "對帳不符" in out, out[:250])
+
+    code, out, red = run_case("vt-skip", "skip.json", ["tests/skip/skip.test.ts"])
+    idle = [t for t in red["tests"] if "skip" in t["test"] or "還沒寫" in t["test"]]
+    check("vitest skipped / todo 不算綠也不算紅 → 擋,而且點名",
+          code == 1 and len(idle) == 2 and all(t["failure_class"] == "error" for t in idle)
+          and "skipped" in out and "todo" in out, out[:300])
+    check("vitest skipped / todo 不算啟動:宣告 3 · runner 3 · 啟動 1",
+          recon(red) == [(3, 3, 1, False)], str(red["reconciliation"]))
+
+    code, out, red = run_case("vt-dup", "dup.json", ["tests/dup/dup.test.ts"])
+    check("vitest 測試名重複 → 擋(名字是集合,重複的會被吃掉)", code == 1 and "測試名重複 2 次" in out, out[:300])
+
+    code, out, red = run_case("vt-timeout", "timeout.json", ["tests/timeout/timeout.test.ts"])
+    check("vitest 逾時 → hang", code == 1 and red.get("counts") == {"hang": 1}, out[:250])
+
+    code, out, red = run_case("vt-noloc", "noloc.json", ["tests/red/red.test.ts"], VALID_SPEC)
+    check("vitest 輸出沒帶 location(沒加 --includeTaskLocation)→ 擋,不默默逐條數",
+          code == 1 and "includeTaskLocation" in out, out[:300])
+
+    (tmp / "vt-text.txt").write_text(" ❯ tests/red/red.test.ts (5 tests | 5 failed)\n Test Files  1 failed (1)\n")
+    root = setup_red_vitest(tmp, "vt-notjson", tmp / "vt-text.txt", ["tests/green/green.test.ts"], ONE_SCENARIO)
+    code, out = run_gate("red-capture", "specs/demo/spec.yaml", cwd=root)
+    check("vitest 餵的是文字輸出而不是 JSON → 擋,不 traceback",
+          code == 1 and "JSON reporter" in out and "Traceback" not in out, out[:300])
+
+
 # ---------------------------------------------------------------- traceability
 
 def test_traceability(tmp: pathlib.Path) -> None:
@@ -3666,7 +3768,7 @@ def main() -> int:
     with tempfile.TemporaryDirectory() as td:
         tmp = pathlib.Path(td)
         for fn in (test_spec_lint, test_spec_size_warning, test_spec_lint_allow_vague,
-                   test_freeze_check, test_red_capture,
+                   test_freeze_check, test_red_capture, test_red_capture_vitest,
                    test_traceability, test_spec_diff,
                    test_dashboard_requires_verification, test_in_flight_and_cleanup,
                    test_reachability, test_reachability_hardening,
