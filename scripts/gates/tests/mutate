@@ -283,6 +283,12 @@ MUTATIONS: list[tuple[str, str, str, str]] = [
      '        gates.append({"id": "G3", "what": "lint(變更的檔案)", "ok": False,\n'
      '                      "note": "specs/pipeline.yaml 沒設 lint"})',
      '        gates.append({"id": "G3", "what": "lint(變更的檔案)", "ok": True, "note": "略過"})'),
+    ("dashboard", "lint 失敗又沒輸出 → dashboard 爆掉",
+     'f"{len(changed)} 個檔案" if ok else (out.strip().splitlines() or ["失敗,沒有輸出"])[-1][:60]',
+     'f"{len(changed)} 個檔案" if ok else out.strip().splitlines()[-1][:60]'),
+    ("dashboard", "test 失敗又沒輸出 → dashboard 爆掉",
+     '"全綠" if ok else (out.strip().splitlines() or ["失敗,沒有輸出"])[-1][:60]',
+     '"全綠" if ok else out.strip().splitlines()[-1][:60]'),
     # ---- S7½ test-review ----
     ("test-review", "零斷言不擋",
      '                f.error(where, "沒有任何斷言 —— 空測試")',

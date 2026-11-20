@@ -857,6 +857,22 @@ def test_dashboard_requires_verification(tmp: pathlib.Path) -> None:
     check("沒設 reachability.globs → G7 判失敗(不是讓測試檔當建構點)",
           "沒設 reachability.globs" in out, out[:300])
 
+    # 指令失敗但什麼都沒印:照樣判 G3 / G4 失敗,dashboard 本身不能爆掉
+    root = make_repo(tmp / "dash-silent")
+    freeze(root)
+    (root / "specs" / "pipeline.yaml").write_text('runner: swift-testing\nlint: "false"\ntest: "false"\n')
+    commit_base(root)
+    (root / "src").mkdir()
+    (root / "src" / "Thing.ext").write_text("x\n")
+    subprocess.run(["git", "add", "-A"], cwd=root, check=True)
+    code, out = run_gate("dashboard", "specs/demo/spec.yaml", cwd=root)
+    by = {g["id"]: g for g in json.loads((root / "specs/demo/evidence/dashboard.json").read_text())["gates"]} \
+        if (root / "specs/demo/evidence/dashboard.json").exists() else {}
+    check("lint / test 失敗又沒有輸出 → G3、G4 判失敗、note 講明,不爆掉",
+          code == 1 and "Traceback" not in out and not by.get("G3", {}).get("ok", True)
+          and not by.get("G4", {}).get("ok", True)
+          and by["G3"]["note"] == by["G4"]["note"] == "失敗,沒有輸出", out[-400:])
+
     root = make_repo(tmp / "dash-anchor")
     freeze(root)
     (root / "specs" / "pipeline.yaml").write_text("runner: swift-testing\n")
