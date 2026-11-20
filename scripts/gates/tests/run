@@ -3485,16 +3485,19 @@ def test_cost_ledger(tmp: pathlib.Path) -> None:
         write_jsonl(sub / f"{name}.jsonl", [])
         (sub / f"{name}.meta.json").write_text(json.dumps({"description": desc}))
 
-    def cost(home_dir: pathlib.Path) -> tuple[int, str]:
-        saved = os.environ.get("CLAUDE_CONFIG_DIR")
+    def cost(home_dir: pathlib.Path, *args: str, tz: str | None = None) -> tuple[int, str]:
+        saved = {k: os.environ.get(k) for k in ("CLAUDE_CONFIG_DIR", "TZ")}
         os.environ["CLAUDE_CONFIG_DIR"] = str(home_dir)
+        if tz:
+            os.environ["TZ"] = tz
         try:
-            return run_gate("runs", "--cost", cwd=root)
+            return run_gate("runs", "--cost", *args, cwd=root)
         finally:
-            if saved is None:
-                os.environ.pop("CLAUDE_CONFIG_DIR", None)
-            else:
-                os.environ["CLAUDE_CONFIG_DIR"] = saved
+            for key, value in saved.items():
+                if value is None:
+                    os.environ.pop(key, None)
+                else:
+                    os.environ[key] = value
 
     def row(out: str, label: str) -> list[int] | None:
         line = next((ln for ln in out.splitlines() if ln.strip().startswith(label + " ")), None)
@@ -3516,6 +3519,31 @@ def test_cost_ledger(tmp: pathlib.Path) -> None:
           and out.index("  demo  3 次") < out.index("  (未歸屬)  1 次"), out[-400:])
     check("runs --cost:時間 = history 首筆到末筆,等人 = blocked_on human 的區段",
           "demo  總 2.0h · 等人 1.0h(50%)" in out, out[-300:])
+
+    # ---- --since:只算某個時間之後的。舊 session 的未歸屬不該蓋過新的漏失
+    cut = "2026-11-02T00:00:00+00:00"     # m3 剛好落在這一刻;其他有時間的紀錄都在它之前
+    code, out = cost(home, "--since", cut)
+    check("runs --cost --since:之前的主 session 用量不算,剛好在那一刻的算",
+          code == 0 and row(out, "demo · S5 · claude-opus-5-5") is None
+          and row(out, "demo · S8 · claude-opus-5-5") is None
+          and row(out, "(未歸屬) · ? · claude-opus-5-5") == [4, 40, 400, 4000], out[:600])
+    check("runs --cost --since:之前開始的派遣整個不算(次數與用量),舊的未歸屬不再出現",
+          row(out, "demo · S7 · claude-fable-5-2") is None and row(out, "(未歸屬) · ? · claude-fable-5-2") is None
+          and "(未歸屬)  1 次" not in out and "  demo  2 次(S7 1 · S8 1)" in out, out[-400:])
+    check("runs --cost --since:整段都在之前的卡不列時間;標頭寫明只算哪之後",
+          "demo  總 2.0h" not in out and "--since" in out, out[-300:])
+    old = datetime.datetime(2026, 10, 1, tzinfo=datetime.timezone.utc).timestamp()
+    os.utime(sub / "agent-c.jsonl", (old, old))
+    code, out = cost(home, "--since", cut)
+    check("runs --cost --since:沒有用量的派遣看檔案時間", "  demo  1 次(S8 1)" in out, out[-400:])
+    code, out = cost(home, "--since", "2026-11-01", tz="Pacific/Honolulu")   # 當地 0 點 = 10:00Z,m1 / m2 都在它之前
+    check("runs --cost --since:只寫日期 = 當地時間 0 點(不是 UTC)",
+          code == 0 and row(out, "demo · S5 · claude-opus-5-5") is None
+          and row(out, "(未歸屬) · ? · claude-opus-5-5") == [4, 40, 400, 4000], out[:600])
+    for bad in (["--since", "last-week"], ["--since"]):
+        code, out = cost(home, *bad)
+        check(f"runs --cost {' '.join(bad)}:報錯說明寫法,不 traceback",
+              code == 2 and "--since 要接時間" in out and "Traceback" not in out, out[:300])
 
     for name, extra, drop, needle in (
         ("new-token-key", {"cache_creation_ephemeral_tokens": 5}, None, "不認得的 token 欄位"),
