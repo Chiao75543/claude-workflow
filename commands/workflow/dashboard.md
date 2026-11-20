@@ -28,7 +28,7 @@ scripts/gates/pr-comment specs/{name}/spec.yaml --check   # 退出碼 1 = 有事
   - 併 main 的衝突解決改到本卡的行,那次併 main 有 `--merge` 的增量審查
 
   另外,審查後併 main 的衝突解決只要動到 `impact.files` 的檔,那次就一定要有 `--merge` 的增量審查,沒有就判過期。
-  這個 PR 之前派的審查沒有本卡改動的指紋,照舊比整棵樹。
+  派遣紀錄裡沒有本卡改動指紋的審查(舊紀錄),照舊比整棵樹。
 - G9/10 有 chiao 的豁免(`loop waive`)、而且是給現在這棵樹的 → 放行,備註寫「chiao 豁免 W-n」、原本沒過的原因照留,
   另列「已豁免」(不是待決,不擋自動推)。豁免只蓋審查過期 / 沒派,不蓋沒處理完的 finding;
   `_yield.jsonl` 記這筆豁免,被豁免的關記沒過。

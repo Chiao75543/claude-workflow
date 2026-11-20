@@ -4,7 +4,7 @@
 沒有一次需要讀程式碼。**
 
 ```
-S0  第一次:問卷      技術棧 / 指令含 smoke / 主線與自動推 / CI / 邊界 / 模型 → specs/pipeline.yaml
+S0  第一次:問卷      技術棧 / 指令含 smoke / 主線與自動推 / CI / 邊界 / 風險路徑 → specs/pipeline.yaml
 S1  識別              scan-siblings:誰在飛、會不會撞
 S2  worktree
 S3  起草              全 codebase scope audit + spec-grill

@@ -76,11 +76,9 @@ S13 ⏸ 你按 merge      merge 後 cleanup 清掉這張卡的 worktree(先確�
   S   smoke            用真的入口跑一次;沒過下面全部不跑
 ────────────────────────────────────────────
 付費判定
-  G8   變異測試        有工具才跑
   G9   spec-oracle     隔離的第二讀者,只憑規格寫驗收測試;full 卡只在金流 / 權限 / 不可逆資料或 S4 有分歧時派
   G10  code-adversary  每條主張附可執行的重現;must_fix / ask_user / overbuilt
        fix-reviewer    審查後的修正只派增量審查:修好了沒、有沒有帶進新問題
-  G11  UI 截圖         smoke 順便截
 ```
 
 **絕不花錢請 AI 去審一個腳本本來就會擋掉的東西。**
