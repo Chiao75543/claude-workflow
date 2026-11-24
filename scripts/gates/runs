@@ -9,6 +9,8 @@
                                           每個「站 × 車道 × 起始模型」第一次就過的比例與升級率,升級率 >30% 點名
   runs --cost                             每張卡、每一站用了多少 token,以及花了多久、等人多久
                                           每張卡派了幾次 subagent(依站分;改造方案 2.4 的驗收拿它比基準)
+  runs --cost --since 2026-11-20          只算那個時間之後的用量與派遣(只寫日期 = 當地時間 0 點);
+                                          舊 session 的未歸屬就不會蓋過新的
 
 狀態寫在 <spec 目錄>/evidence/status.json(含追加式 history)。
 在飛 = 這個 worktree 自己改過、還沒落地的規格(_common.in_flight_specs);判定前先 git fetch 整合分支。
@@ -244,7 +246,20 @@ def attribute(when, cwd: str, histories: dict) -> tuple:
     return card, past[-1][1] if past else "?"
 
 
-def show_cost(root: pathlib.Path) -> int:
+def parse_since(text: str) -> datetime.datetime:
+    """--since 的值:完整時間,或只有日期(= 當地時間 0 點)。"""
+    at = parse_time(text)
+    return at if at.tzinfo is not None else at.astimezone()
+
+
+def started(path: pathlib.Path, rows: list) -> datetime.datetime:
+    """一次派遣算在哪個時間:第一則回應;一則都沒有就看檔案時間。"""
+    if rows:
+        return rows[0][0]
+    return datetime.datetime.fromtimestamp(path.stat().st_mtime, datetime.timezone.utc)
+
+
+def show_cost(root: pathlib.Path, since: datetime.datetime | None = None) -> int:
     checkout = main_checkout(root)
     base = pathlib.Path(os.environ.get("CLAUDE_CONFIG_DIR") or pathlib.Path.home() / ".claude") / "projects"
     slug = re.sub(r"[^A-Za-z0-9]", "-", str(checkout))
@@ -260,14 +275,19 @@ def show_cost(root: pathlib.Path) -> int:
         for d in dirs:
             for path in sorted(d.glob("*.jsonl")):
                 for when, cwd, model, usage in read_usage(path, seen):
+                    if since and when < since:
+                        continue
                     card, station = attribute(when, cwd, histories)
                     for k, v in usage.items():
                         totals[(card, station, model)][k] += v
             for path in sorted(d.glob("*/subagents/*.jsonl")):
                 m = DISPATCH_DESCRIPTION.match((read_json(path.with_suffix(".meta.json")) or {}).get("description") or "")
                 card, station = (m["card"], m["station"]) if m else (UNATTRIBUTED, "?")
+                rows = list(read_usage(path, seen))
+                if since and started(path, rows) < since:
+                    continue      # 一次派遣整個算在它開始的時間,次數與用量一起
                 dispatches[card][station] += 1
-                for _, _, model, usage in read_usage(path, seen):
+                for _, _, model, usage in rows:
                     for k, v in usage.items():
                         totals[(card, station, model)][k] += v
     except ValueError as exc:
@@ -277,6 +297,8 @@ def show_cost(root: pathlib.Path) -> int:
     grand = sum(sum(t.values()) for t in totals.values())
     lost = sum(sum(t.values()) for (card, _, _), t in totals.items() if card == UNATTRIBUTED)
     print(f"▸ token 用量({slug};同一則回應只算一次;訂閱制只記數量,不換算金額)")
+    if since:
+        print(f"  只算 {since.astimezone():%Y-%m-%d %H:%M} 之後的用量與派遣(--since)")
     print(f"  {'卡 · 站 · 模型':<52} {'input':>12} {'output':>12} {'cache 讀':>14} {'cache 寫':>14}")
     for (card, station, model), t in sorted(totals.items(), key=lambda kv: (kv[0][0] == UNATTRIBUTED, kv[0])):
         print(f"  {f'{card} · {station} · {model}':<52} {t['input']:>12,} {t['output']:>12,}"
@@ -291,6 +313,8 @@ def show_cost(root: pathlib.Path) -> int:
     if histories:
         print("▸ 時間(status.json 的 history,首筆到末筆)")
         for card, h in sorted(histories.items()):
+            if since and h[-1][0] < since:
+                continue      # 整段都在 --since 之前的卡
             span = (h[-1][0] - h[0][0]).total_seconds()
             waiting = sum((h[i + 1][0] - h[i][0]).total_seconds() for i in range(len(h) - 1) if h[i][2] == "human")
             pct = f"{waiting / span * 100:.0f}%" if span else "—"
@@ -302,7 +326,14 @@ def main(argv: list[str]) -> int:
     if argv and argv[0] == "--yield":
         return show_yield(repo_root())
     if argv and argv[0] == "--cost":
-        return show_cost(repo_root())
+        since = None
+        if "--since" in argv:
+            try:
+                since = parse_since(argv[argv.index("--since") + 1])
+            except (IndexError, ValueError):
+                print("✘ --since 要接時間:2026-11-20(當地時間 0 點)或 2026-11-20T15:00:00+08:00")
+                return 2
+        return show_cost(repo_root(), since)
     if argv and argv[0] == "--set":
         return set_status(argv[1:])
 
