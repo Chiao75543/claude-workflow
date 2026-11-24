@@ -600,6 +600,15 @@ def test_red_capture_vitest(tmp: pathlib.Path) -> None:
     check("vitest 輸出沒帶 location(沒加 --includeTaskLocation)→ 擋,不默默逐條數",
           code == 1 and "includeTaskLocation" in out, out[:300])
 
+    # .resolves / .rejects / expect.poll:斷言失敗的訊息開頭是 Error,不是 AssertionError
+    code, out, red = run_case("vt-promise", "promise.json", ["tests/promise/promise.test.ts"], VALID_SPEC)
+    classes = {t["test"]: t["failure_class"] for t in red["tests"]}
+    check("vitest .resolves / .rejects / expect.poll 的斷言失敗 → assertion(訊息裡有沒有哨兵字串都一樣)",
+          code == 0 and red.get("counts") == {"assertion": 6, "stub_sentinel": 1}
+          and recon(red) == [(7, 7, 7, True)], out[:300] + str(classes))
+    check("vitest 非同步 stub 的 reject 沒包在 expect 裡、直接逸出 → 仍是 stub_sentinel",
+          classes.get("SC-002 非同步的 stub reject 哨兵錯誤 沒包 expect,錯誤直接逸出") == "stub_sentinel", str(classes))
+
     (tmp / "vt-text.txt").write_text(" ❯ tests/red/red.test.ts (5 tests | 5 failed)\n Test Files  1 failed (1)\n")
     root = setup_red_vitest(tmp, "vt-notjson", tmp / "vt-text.txt", ["tests/green/green.test.ts"], ONE_SCENARIO)
     code, out = run_gate("red-capture", "specs/demo/spec.yaml", cwd=root)

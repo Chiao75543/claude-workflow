@@ -82,6 +82,9 @@ def parse_swift_testing(raw: str, marker: str) -> dict:
 
 VITEST_TIMEOUT = re.compile(r"Error: (?:Test|Hook) timed out in \d+ms")
 ANSI = re.compile(r"\x1b\[[0-9;]*m")
+# expect 自己丟的失敗,訊息開頭不一定是 AssertionError:.resolves / .rejects / expect.poll 的開頭是 Error,
+# 只有第一個 stack frame 看得出是 expect 內部丟的(Vitest 5.1.0 實測)。
+VITEST_EXPECT_FRAME = re.compile(r"(?:async )?\S*__VITEST_(?:RESOLVES|REJECTS|POLL_CHAIN)__ ")
 
 
 def parse_vitest(raw: str, marker: str) -> dict:
@@ -99,6 +102,10 @@ def parse_vitest(raw: str, marker: str) -> dict:
       啟動   同上,但只算真的執行過的(passed / failed)
     所以一定要 --includeTaskLocation;沒有 location 就對不回原始碼,直接擋。
     分類仍然逐條做:展開出來的每一條都要各自紅過。
+
+    斷言失敗怎麼認:訊息開頭是 AssertionError(expect、expect.soft、node:assert),
+    或第一個 stack frame 是 expect 內部(.resolves / .rejects / expect.poll,它們的訊息開頭是 Error)。
+    還認不出來的:snapshot 不符、expect.assertions / hasAssertions 數量不符 —— 會判成 error 而擋下。
 
     測試名用 fullName(describe 標題 + it 標題),SC 編號要寫在最外層 describe 的開頭。
     """
@@ -122,11 +129,13 @@ def parse_vitest(raw: str, marker: str) -> dict:
             errors.append(f"測試檔沒載入成功,裡面的測試全部沒跑: {entry.get('name')} —— {reason[:200]}")
         for a in results:
             loc = a.get("location") or {}
+            messages = [ANSI.sub("", m).split("\n    at ") for m in a.get("failureMessages") or []]
             rows.append({
                 "name": a.get("fullName") or " ".join([*a.get("ancestorTitles", []), a.get("title", "")]),
                 "status": a.get("status"),
                 # 每則失敗訊息只留 stack 之前的部分:錯誤型別 + 訊息
-                "heads": [ANSI.sub("", m).split("\n    at ")[0] for m in a.get("failureMessages") or []],
+                "heads": [parts[0] for parts in messages],
+                "expect_threw": any(VITEST_EXPECT_FRAME.match(parts[1]) for parts in messages if len(parts) > 1),
                 "site": (entry.get("name"), loc.get("line"), loc.get("column")) if loc else None,
             })
 
@@ -167,6 +176,8 @@ def parse_vitest(raw: str, marker: str) -> dict:
         # 順序不能換:stub 回傳哨兵值時,斷言的失敗訊息裡也會有標記字串,
         # 但那是斷言真的評估過了 —— 先看是不是斷言失敗,再看標記。
         if any(h.startswith("AssertionError") for h in heads):
+            return "assertion"
+        if row["expect_threw"]:                 # .resolves / .rejects / expect.poll
             return "assertion"
         if any(marker in h for h in heads):
             return "stub_sentinel"
